@@ -1,0 +1,5 @@
+# Test-only. Merged by the S001.1 tests so a client can be configured by DNS name.
+services:
+  decisions:
+    extra_hosts:
+      - "older-child.household.test:192.0.2.41"

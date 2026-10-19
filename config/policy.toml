@@ -1,0 +1,23 @@
+# Household policy. Loaded into the policy service's database each time it starts.
+# Restart the decisions service after editing: docker compose restart decisions
+
+[household]
+# IANA timezone that decides what "today" and "now" mean for every rule.
+# Leave it commented out to use the timezone of the machine running Compose.
+# timezone = "America/Toronto"
+
+# One [[clients]] table per computer. address is the computer's DHCP reservation,
+# written as an IP or as a DNS name. DNS names are looked up when the service
+# starts, not on every request, so restart the service if a reservation changes.
+# A computer that is not listed here still gets the household rules. Listing it
+# gives it a name, and later its own revision tasks and usage.
+
+[[clients]]
+name = "Younger child"
+address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved IP or DNS name
+
+# The older child is not enrolled yet. To enrol them, uncomment this table, set
+# their reserved address, and add their computer to the proxy alias on the firewall.
+# [[clients]]
+# name = "Older child"
+# address = "older-child.lan"

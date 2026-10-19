@@ -1,7 +1,9 @@
 # Start with: make up
 # The listen port and the CA directory are set in .env.
 # Hosts that skip authorization are listed in config/bypass.txt.
-# config/decision.json is the stand-in decision until the policy service exists.
+# The decisions service is the policy service. Clients and the household
+# timezone are in config/policy.toml and are kept in the policy-data volume.
+# config/decision.json is the household decision until the rule engine exists.
 # The observations service records POST /v1/observations until the ledger exists.
 # The proxy still forwards if that service is down.
 
@@ -9,16 +11,19 @@ name: smartproxy
 
 services:
   decisions:
-    image: mitmproxy/mitmproxy:12.2.3
-    entrypoint:
-      - python3
-      - /opt/smartproxy/stub.py
+    build: ./policy
+    image: smartproxy-policy:local
+    pull_policy: build
     environment:
       DECISION_FILE: /etc/smartproxy/decision.json
-      STUB_PORT: "8090"
+      POLICY_FILE: /etc/smartproxy/policy.toml
+      POLICY_DB: /var/lib/smartproxy/policy.sqlite3
+      MACHINE_LOCALTIME: /etc/host-localtime
     volumes:
-      - ./decisions/stub.py:/opt/smartproxy/stub.py:ro
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
+      - policy-data:/var/lib/smartproxy
+      # Used for the household timezone when policy.toml does not set one.
+      - /etc/localtime:/etc/host-localtime:ro
     healthcheck:
       test:
         - CMD
@@ -99,3 +104,6 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
+
+volumes:
+  policy-data:
