@@ -1,0 +1,15 @@
+# Test-only origin. Merged by the tests; `docker compose up` does not start it.
+services:
+  origin:
+    image: mitmproxy/mitmproxy:12.2.3
+    entrypoint:
+      - python3
+      - -m
+      - http.server
+      - "80"
+      - --bind
+      - 0.0.0.0
+      - --directory
+      - /www
+    volumes:
+      - ./tests/origin:/www:ro
