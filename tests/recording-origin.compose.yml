@@ -1,0 +1,24 @@
+# Test-only origin. Merged by the S000.2 tests. `docker compose up` does not start it.
+services:
+  origin:
+    image: mitmproxy/mitmproxy:12.2.3
+    entrypoint:
+      - python3
+      - /opt/smartproxy/recording_origin.py
+    volumes:
+      - ./tests/recording_origin.py:/opt/smartproxy/recording_origin.py:ro
+    networks:
+      default:
+        aliases:
+          - class.google.test
+          - tasks.smartproxy.test
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import socket; s = socket.create_connection(("127.0.0.1", 80), 2); s.close()'
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 2s

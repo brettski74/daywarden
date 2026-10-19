@@ -1,0 +1,9 @@
+# Hosts that skip the decision API, one glob per line.
+# Matching is against the hostname only, and it ignores case.
+# * matches any run of characters. ? matches one character.
+# Lines starting with # are comments.
+#
+# Put the task site and the Classroom hosts here so they keep working
+# when the decision service is down. The sample list arrives with S001.6.
+*github.com
+

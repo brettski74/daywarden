@@ -34,3 +34,7 @@ Avoid writing pointless tests, such as tests that do nothing but mirror a set of
 verify that the other copy is still the same. Similarly, don't write tests whose only purpose is to verify that static
 UI elements are still the same statis UI elements we just put into the UI layer. Tests should primarily be about testing
 functional code and verifying that the code behaves the way it should, not a duplicate of static content elsewhere.
+
+# Implementation Summary
+
+After implementing a story, append an Implementation section (L1 heading) to the end of the ticket's markdown document with level 2 headings for Files Added/Changed/Removed, Change Summary and Suggested Acceptance Testing. That last section is most important as it should provided a bullet-point list of items that a human reviewer should consider performing on the delivered work.
