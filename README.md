@@ -28,7 +28,7 @@ data/ca/mitmproxy-ca-cert.pem
 
 The name stays `mitmproxy-ca-cert.pem` when `CA_VOLUME_PATH` changes. Do not copy `mitmproxy-ca.pem`; that file also holds the private key.
 
-Installing the certificate on a child computer is a separate step. Both of those computers run Arch Linux.
+Installing the certificate, and pointing Firefox or Chromium at the proxy, is written up in [docs/child-computer.md](docs/child-computer.md). Both of those computers run Arch Linux. Firefox is the one they use.
 
 ## Configuration
 
