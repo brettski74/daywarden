@@ -14,6 +14,8 @@ The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` o
 
 Every request is sent to the decision stub as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The stub answers with `config/decision.json`. The file shipped here allows every request. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the stub is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
+A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. The service in this repo only records the calls. The ledger that stores them comes later.
+
 ## Certificate authority
 
 The CA is created the first time the proxy starts and reused after that. The directory is `CA_VOLUME_PATH` in `.env` (default `data/ca`).
