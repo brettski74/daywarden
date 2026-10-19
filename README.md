@@ -1,14 +1,18 @@
 # smartproxy
 
-Household explicit proxy. `docker compose up` starts mitmproxy with a certificate authority that stays on disk across container restarts.
+Household explicit proxy. `make up` starts mitmproxy with a certificate authority that stays on disk across container restarts.
 
 ## Start
 
 ```sh
-docker compose up -d
+make up
 ```
 
-The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose. Nothing in this stack asks for an authorization decision yet.
+`make down` stops the stack and removes the containers. The CA directory stays on disk.
+
+The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
+
+Every request is sent to the decision stub as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The stub answers with `config/decision.json`. The file shipped here allows every request. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the stub is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
 ## Certificate authority
 
@@ -34,6 +38,21 @@ Installing the certificate on a child computer is a separate step. Both of those
 | `CA_VOLUME_PATH` | Directory that holds the CA across container restarts |
 
 If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it before the first start, so the certificate is readable by you.
+
+| File | Meaning |
+| --- | --- |
+| `config/decision.json` | The decision the stub returns until the policy service replaces it |
+| `config/bypass.txt` | Host globs that are forwarded without asking, including while the stub is down |
+
+`config/decision.json` is one of:
+
+```json
+{ "action": "allow" }
+{ "action": "deny", "status": 403, "message": "Time is up for today." }
+{ "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
+```
+
+The stub reads that file on every request. A redirect location is an absolute `http` or `https` URL.
 
 ## Tests
 

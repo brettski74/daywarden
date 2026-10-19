@@ -157,8 +157,6 @@ def test_listen_port_and_ca_path_come_from_configuration(tmp_path):
     command = service["command"]
     assert command[0] == "mitmdump"
     assert "regular" in command
-    assert "--scripts" not in command
-    assert "-s" not in command
 
 
 def test_http_request_reaches_the_origin(proxy):
