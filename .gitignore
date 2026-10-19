@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# The CA private key is generated on first start. Do not commit it.
+data/ca/*
+!data/ca/.gitkeep
