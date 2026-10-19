@@ -1,8 +1,8 @@
 Ticket: S000
 Title: Proxy decision loop
-Status: Draft
+Status: Done
 Story Points: 13
-Last Updated: 2026-10-18 15:05:00
+Last Updated: 2026-10-19 03:26:32
 ---
 
 # User Voice
@@ -19,9 +19,9 @@ As a parent, I want my child's browser to reach the internet only through a prox
 
 # Acceptance Criteria
 
-- [ ] S000.1, S000.2, S000.3, and S000.4 are done.
-- [ ] The addon contains no rule about weekdays, quotas, or quizzes. It enforces a decision and reports observations.
-- [ ] Replacing mitmproxy later would mean rewriting the addon, not the policy service. The decision and observation APIs are plain HTTP.
+- [x] S000.1, S000.2, S000.3, and S000.4 are done.
+- [x] The addon contains no rule about weekdays, quotas, or quizzes. It enforces a decision and reports observations.
+- [x] Replacing mitmproxy later would mean rewriting the addon, not the policy service. The decision and observation APIs are plain HTTP.
 
 # Child stories
 
@@ -35,3 +35,5 @@ As a parent, I want my child's browser to reach the internet only through a prox
 # Notes
 
 Squid plus ICAP remains the documented fallback in `implementation_plan.md` if this epic cannot intercept the child's browser. Do not start that fallback inside this epic.
+
+S000.4 closed the epic on 2026-10-19. The addon still only enforces a decision and reports observations. Both calls are plain HTTP.
