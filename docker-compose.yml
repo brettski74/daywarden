@@ -2,6 +2,8 @@
 # The listen port and the CA directory are set in .env.
 # Hosts that skip authorization are listed in config/bypass.txt.
 # config/decision.json is the stand-in decision until the policy service exists.
+# The observations service records POST /v1/observations until the ledger exists.
+# The proxy still forwards if that service is down.
 
 name: smartproxy
 
@@ -29,6 +31,28 @@ services:
       start_period: 2s
     restart: unless-stopped
 
+  observations:
+    image: mitmproxy/mitmproxy:12.2.3
+    entrypoint:
+      - python3
+      - /opt/smartproxy/stub.py
+    environment:
+      OBSERVATION_LOG: /tmp/observations.jsonl
+      STUB_PORT: "8091"
+    volumes:
+      - ./observations/stub.py:/opt/smartproxy/stub.py:ro
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8091/health", timeout=2).read()'
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    restart: unless-stopped
+
   proxy:
     image: mitmproxy/mitmproxy:12.2.3
     entrypoint:
@@ -50,6 +74,9 @@ services:
       - /opt/smartproxy/addon.py
     environment:
       DECISION_URL: http://decisions:8090/v1/decisions
+      OBSERVATION_URL: http://observations:8091/v1/observations
+      OBSERVATION_INTERVAL: ${OBSERVATION_INTERVAL:-60}
+      OBSERVATION_TIMEOUT: ${OBSERVATION_TIMEOUT:-2}
       BYPASS_PATH: /etc/smartproxy/bypass.txt
       DECISION_TIMEOUT: "2"
     ports:
