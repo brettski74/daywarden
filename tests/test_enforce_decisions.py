@@ -92,7 +92,7 @@ class Stack:
         self.run(["up", "-d", "--wait", "--wait-timeout", "90"])
 
     def down(self):
-        self.run(["down", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
+        self.run(["down", "-v", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
 
     def logs(self) -> str:
         completed = self.run(["logs", "--no-color"], check=False, timeout=30)
@@ -217,7 +217,10 @@ def test_allow_returns_the_origin_response(stack):
     assert body == b"smartproxy-origin-ok /index.html?v=abc"
     assert _paths(stack.jsonl("origin", ORIGIN_LOG)) == ["/index.html?v=abc"]
 
-    entry = stack.jsonl("decisions", DECISION_LOG)[-1]
+    logged = stack.jsonl("decisions", DECISION_LOG)[-1]
+    assert logged["client"] is None
+    assert logged["decision"] == {"action": "allow"}
+    entry = logged["request"]
     assert set(entry) == {"client_ip", "method", "url", "occurred_at"}
     ipaddress.ip_address(entry["client_ip"])
     assert entry["method"] == "GET"
@@ -246,7 +249,7 @@ def test_deny_returns_403_and_the_origin_sees_nothing(stack):
     assert DENY_MESSAGE.encode() in body
     assert _paths(stack.jsonl("origin", ORIGIN_LOG)) == []
 
-    entry = stack.jsonl("decisions", DECISION_LOG)[-1]
+    entry = stack.jsonl("decisions", DECISION_LOG)[-1]["request"]
     assert entry["method"] == "POST"
     assert entry["url"] == "http://origin/posted"
     assert "body" not in entry

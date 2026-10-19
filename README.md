@@ -8,11 +8,21 @@ Household explicit proxy. `make up` starts mitmproxy with a certificate authorit
 make up
 ```
 
-`make down` stops the stack and removes the containers. The CA directory stays on disk.
+`make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
 
 The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
 
-Every request is sent to the decision stub as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The stub answers with `config/decision.json`. The file shipped here allows every request. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the stub is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
+Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. Until the rule engine exists, the policy service answers every request with `config/decision.json`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
+
+## Clients and the household timezone
+
+`config/policy.toml` names the household computers and sets the household timezone. The policy service loads it into its SQLite database (the `policy-data` volume) each time it starts, so edit the file and then run `docker compose restart decisions`. If the file is missing, the service keeps using what it stored last time.
+
+Each client is a display name and an `address`, which is the computer's DHCP reservation written as an IP or a DNS name. DNS names are looked up once, when the service starts. If a name does not resolve then, the client keeps the IPs it resolved to last time. A computer that is not listed still gets the household rules. Listing it gives the decision log a name to show, and later stories hang that computer's revision tasks and usage off the same record.
+
+`household.timezone` is an IANA name such as `America/Toronto`. It decides what "today" and "now" mean for every rule. Leave it out to use the timezone of the machine running Compose, which is read from that machine's `/etc/localtime`.
+
+Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the client name (or `null`), the household-local time, and the decision returned.
 
 A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. The service in this repo only records the calls. The ledger that stores them comes later.
 
@@ -43,8 +53,9 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 
 | File | Meaning |
 | --- | --- |
-| `config/decision.json` | The decision the stub returns until the policy service replaces it |
-| `config/bypass.txt` | Host globs that are forwarded without asking, including while the stub is down |
+| `config/policy.toml` | Household timezone and the client computers |
+| `config/decision.json` | The decision the policy service returns until the rule engine replaces it |
+| `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down |
 
 `config/decision.json` is one of:
 
@@ -54,7 +65,7 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 { "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
 ```
 
-The stub reads that file on every request. A redirect location is an absolute `http` or `https` URL.
+The policy service reads that file on every request. A redirect location is an absolute `http` or `https` URL.
 
 ## Tests
 
@@ -62,4 +73,4 @@ The stub reads that file on every request. A redirect location is an absolute `h
 python -m pytest
 ```
 
-The tests start Compose, so Docker has to be available. They use their own port and CA directory, and they do not touch `data/ca`.
+Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. Tests named `test_policy_*` that do not start Compose need only the standard library.

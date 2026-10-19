@@ -64,7 +64,7 @@ class Stack:
         self.run(["up", "-d", "--wait", "--wait-timeout", "90"])
 
     def down(self):
-        self.run(["down", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
+        self.run(["down", "-v", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
 
     def logs(self) -> str:
         completed = self.run(["logs", "--no-color"], check=False, timeout=30)
@@ -184,7 +184,7 @@ def _open(stack: Stack, home: Path) -> subprocess.CompletedProcess[str]:
 def _urls(stack: Stack, *, wait_for_url: bool) -> list[str]:
     deadline = time.time() + (5 if wait_for_url else 0)
     while True:
-        found = [entry.get("url", "") for entry in stack.jsonl("decisions", DECISION_LOG)]
+        found = [entry["request"].get("url", "") for entry in stack.jsonl("decisions", DECISION_LOG)]
         if URL in found or time.time() >= deadline:
             return found
         time.sleep(0.2)
@@ -283,7 +283,7 @@ def _firefox_urls(stack: Stack, profile: Path, url: str, *, stop_on_rejection: b
         rejected_before = stack.logs().count("bad certificate")
         found: list[str] = []
         while time.time() < deadline:
-            found = [entry.get("url", "") for entry in stack.jsonl("decisions", DECISION_LOG)]
+            found = [entry["request"].get("url", "") for entry in stack.jsonl("decisions", DECISION_LOG)]
             rejected = stack.logs().count("bad certificate") > rejected_before
             if url in found or (stop_on_rejection and rejected):
                 return found, stderr_path.read_text(errors="replace"), rejected

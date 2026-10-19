@@ -72,7 +72,7 @@ class ProxyStack:
         self.run(["up", "-d", "--wait", "--wait-timeout", "60"])
 
     def down(self):
-        self.run(["down", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
+        self.run(["down", "-v", "--remove-orphans", "--timeout", "5"], check=False, timeout=60)
 
     def logs(self) -> str:
         completed = self.run(["logs", "--no-color"], check=False, timeout=30)
