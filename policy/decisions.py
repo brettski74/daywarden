@@ -3,8 +3,11 @@
 Every request is judged by the household rules, whether or not its source IP
 belongs to a client. The client only supplies a name now, and later the tasks
 and usage that belong to that computer. A URL that is in no site group is
-denied. Until the rule engine exists, every site group answers with the single
-decision in DECISION_FILE.
+denied. A URL in a group is judged by that group's rules.
+
+DECISION_STUB is the old single-file answer. The addon tests set it so they
+can still hand the proxy a decision, including one the rules would never
+produce. The household does not set it.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from pathlib import Path
 from policy.clients import Client, ClientDirectory, normalize_ip
 from policy.clock import HouseholdClock
 from policy.groups import SiteGroup, SiteGroups
+from policy.rules import evaluate
 
 UNGROUPED_MESSAGE = "This site is not in a configured group."
 
@@ -77,11 +81,58 @@ def context_for(
     )
 
 
-def decide(context: DecisionContext, decision_file: Path) -> bytes | None:
-    """Deny a URL in no site group. Otherwise answer with the household decision."""
+def decide(
+    context: DecisionContext,
+    *,
+    revision_task: str | None = None,
+    tasks_complete: bool = False,
+    quota_remaining: bool = True,
+) -> bytes:
+    """Judge the request by its site group's rules.
+
+    tasks_complete and quota_remaining are the stand-in for S001.4 and S001.5.
+    """
     if context.group is None:
-        return json.dumps({"action": "deny", "status": 403, "message": UNGROUPED_MESSAGE}).encode()
-    return household_decision(decision_file)
+        return _deny(UNGROUPED_MESSAGE)
+    return _encode(
+        evaluate(
+            context.group.rules,
+            context.local_time,
+            tasks_complete=tasks_complete,
+            quota_remaining=quota_remaining,
+            revision_task=revision_task,
+        )
+    )
+
+
+def answer(
+    context: DecisionContext,
+    decision_file: Path,
+    *,
+    stub: bool = False,
+    revision_task: str | None = None,
+    tasks_complete: bool = False,
+    quota_remaining: bool = True,
+) -> bytes | None:
+    """Return the body to send. A grouped URL uses the decision file only when stub is set."""
+    if context.group is None:
+        return _deny(UNGROUPED_MESSAGE)
+    if stub:
+        return household_decision(decision_file)
+    return decide(
+        context,
+        revision_task=revision_task,
+        tasks_complete=tasks_complete,
+        quota_remaining=quota_remaining,
+    )
+
+
+def _deny(message: str) -> bytes:
+    return _encode({"action": "deny", "status": 403, "message": message})
+
+
+def _encode(decision: dict) -> bytes:
+    return json.dumps(decision).encode()
 
 
 def household_decision(decision_file: Path) -> bytes | None:

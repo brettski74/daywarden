@@ -2,9 +2,9 @@
 # The listen port and the CA directory are set in .env.
 # Hosts that skip authorization are listed in config/bypass.txt.
 # The decisions service is the policy service. Clients, the household
-# timezone, and site groups are in config/policy.toml and are kept in the
-# policy-data volume. config/decision.json is the decision for a URL in a site
-# group until the rule engine exists.
+# timezone, site groups, and rules are in config/policy.toml and are kept in
+# the policy-data volume. A group with no rules denies the request.
+# DECISION_FILE is read only when DECISION_STUB=1, which the addon tests set.
 # The observations service records POST /v1/observations until the ledger exists.
 # The proxy still forwards if that service is down.
 

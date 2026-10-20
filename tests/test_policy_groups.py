@@ -178,7 +178,14 @@ def test_a_version_1_database_is_upgraded_and_keeps_its_clients(tmp_path):
     with PolicyStore(database) as store:
         config.apply(config.parse('[[clients]]\nname = "A"\naddress = "10.0.0.1"\n'), store, warn=_quiet)
         store.connection.executescript(
-            "DROP TABLE site_group_patterns; DROP TABLE site_groups; PRAGMA user_version = 1;"
+            """
+            DROP TABLE rule_actions;
+            DROP TABLE rule_windows;
+            DROP TABLE rules;
+            DROP TABLE site_group_patterns;
+            DROP TABLE site_groups;
+            PRAGMA user_version = 1;
+            """
         )
     with PolicyStore(database) as upgraded:
         (version,) = upgraded.connection.execute("PRAGMA user_version").fetchone()
@@ -214,7 +221,7 @@ def test_the_sample_has_one_default_group():
         ('[[groups]]\nname = "A"\npriority = 1\npatterns = "*.youtube.com"\n', "patterns must be a list"),
         ('[[groups]]\nname = "A"\npriority = 1\npatterns = ["ok", ""]\n', "patterns must be a list"),
         ('[[groups]]\nname = "A"\npriority = 1\npatterns = [1]\n', "patterns must be a list"),
-        ('[[groups]]\nname = "A"\npriority = 1\nrules = []\n', "unknown setting rules"),
+        ('[[groups]]\nname = "A"\npriority = 1\nlabel = "x"\n', "unknown setting label"),
         ('groups = "A"\n', "[[groups]]"),
     ],
 )

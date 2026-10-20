@@ -72,6 +72,8 @@ class Stack:
             "docker-compose.yml",
             "-f",
             "tests/recording-origin.compose.yml",
+            "-f",
+            "tests/decision-stub.compose.yml",
         ]
 
     @property

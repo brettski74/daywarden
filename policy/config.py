@@ -2,7 +2,7 @@
 
 DNS names are resolved here, once per load, so a decision only does a
 dictionary lookup. A name that does not resolve keeps the addresses stored
-by the last load that did resolve it.
+by the last load that did resolve it. Rules are stored with their group.
 """
 
 from __future__ import annotations
@@ -11,12 +11,26 @@ import socket
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
 from policy.groups import SiteGroup
+from policy.rules import REVISION_TASK, Action, Rule, TimeWindow, absolute_http_url
 from policy.store import PolicyStore
+
+_CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "always"}
+_ACTIONS = {"continue", "deny", "redirect", "allow"}
+_WEEKDAYS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 
 
 class ConfigError(ValueError):
@@ -34,6 +48,7 @@ class HouseholdConfig:
     timezone: str | None
     clients: tuple[ClientConfig, ...]
     groups: tuple[SiteGroup, ...] = ()
+    revision_task: str | None = None
 
 
 def load(path: str | Path) -> HouseholdConfig:
@@ -50,7 +65,7 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
     household = document.get("household", {})
     if not isinstance(household, dict):
         raise ConfigError(f"{source}: household must be a table")
-    _only(household, {"timezone"}, f"{source}: [household]")
+    _only(household, {"timezone", "revision_task"}, f"{source}: [household]")
     timezone = household.get("timezone")
     if timezone is not None:
         if not isinstance(timezone, str) or not timezone.strip():
@@ -60,6 +75,7 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
             named_zone(timezone)
         except ValueError as exc:
             raise ConfigError(f"{source}: household.timezone: {exc}") from exc
+    revision_task = _revision_task(household.get("revision_task"), source)
 
     entries = document.get("clients", [])
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
@@ -73,7 +89,12 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         if any(client.name == name for client in clients):
             raise ConfigError(f"{where}: the name {name!r} is used twice")
         clients.append(ClientConfig(name, address))
-    return HouseholdConfig(timezone, tuple(clients), _groups(document, source))
+    groups = _groups(document, source)
+    if _uses_revision_token(groups) and revision_task is None:
+        raise ConfigError(
+            f"{source}: a rule redirects to revision_task, but household.revision_task is not set"
+        )
+    return HouseholdConfig(timezone, tuple(clients), groups, revision_task)
 
 
 def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
@@ -83,7 +104,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
     groups: list[SiteGroup] = []
     for number, entry in enumerate(entries, start=1):
         where = f"{source}: group {number}"
-        _only(entry, {"name", "priority", "patterns", "default"}, where)
+        _only(entry, {"name", "priority", "patterns", "default", "rules"}, where)
         name = _text(entry, "name", where)
         priority = entry.get("priority")
         if not isinstance(priority, int) or isinstance(priority, bool):
@@ -105,8 +126,145 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
                 )
             if other.default and default:
                 raise ConfigError(f"{source}: groups {other.name!r} and {name!r} are both the default")
-        groups.append(SiteGroup(name, priority, tuple(pattern.strip() for pattern in patterns), default))
+        groups.append(
+            SiteGroup(
+                name,
+                priority,
+                tuple(pattern.strip() for pattern in patterns),
+                default,
+                _rules(entry.get("rules", []), where),
+            )
+        )
     return tuple(groups)
+
+
+def _rules(entries: object, where: str) -> tuple[Rule, ...]:
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        raise ConfigError(f"{where}: rules must be written as [[groups.rules]] tables")
+    return tuple(
+        _rule(entry, f"{where}: rule {number}") for number, entry in enumerate(entries, start=1)
+    )
+
+
+def _rule(entry: dict, where: str) -> Rule:
+    _only(entry, {"condition", "when_true", "when_false", "windows"}, where)
+    condition = entry.get("condition")
+    if condition not in _CONDITIONS:
+        raise ConfigError(
+            f"{where}: condition must be time_window, tasks_complete, quota_remaining, or always"
+        )
+    if "when_true" not in entry or "when_false" not in entry:
+        raise ConfigError(f"{where}: when_true and when_false are both required")
+    if condition == "time_window":
+        windows_value = entry.get("windows", [])
+        if not isinstance(windows_value, list) or not windows_value:
+            raise ConfigError(f"{where}: time_window needs at least one window")
+        windows = tuple(
+            _window(window, f"{where}: window {number}")
+            for number, window in enumerate(windows_value, start=1)
+        )
+    elif "windows" in entry:
+        raise ConfigError(f"{where}: {condition} does not take windows")
+    else:
+        windows = ()
+    return Rule(
+        condition,
+        _action(entry["when_true"], f"{where}: when_true"),
+        _action(entry["when_false"], f"{where}: when_false"),
+        windows,
+    )
+
+
+def _window(entry: object, where: str) -> TimeWindow:
+    if not isinstance(entry, dict):
+        raise ConfigError(f"{where} must be a table")
+    _only(entry, {"start", "end", "days"}, where)
+    if "start" not in entry or "end" not in entry:
+        raise ConfigError(f"{where}: start and end are required")
+    start = _clock(entry["start"], f"{where}: start")
+    end = _clock(entry["end"], f"{where}: end")
+    if start == end:
+        raise ConfigError(f"{where}: start and end are the same, and the end is exclusive")
+    weekdays = _weekdays(entry["days"], where) if "days" in entry else None
+    return TimeWindow(start, end, weekdays)
+
+
+def _clock(value: object, where: str) -> time:
+    if isinstance(value, time):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = time.fromisoformat(value)
+        except ValueError:
+            raise ConfigError(f"{where} must be a time like 07:00") from None
+    else:
+        raise ConfigError(f"{where} must be a time like 07:00")
+    if parsed.tzinfo is not None:
+        raise ConfigError(f"{where} must be a time without a timezone")
+    return parsed.replace(tzinfo=None)
+
+
+def _weekdays(value: object, where: str) -> frozenset[int]:
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"{where}: days must list at least one weekday, or be left out")
+    found: list[int] = []
+    for day in value:
+        name = day.strip().lower() if isinstance(day, str) else ""
+        number = _WEEKDAYS.get(name)
+        if number is None:
+            raise ConfigError(f"{where}: {day!r} is not a weekday")
+        if number in found:
+            raise ConfigError(f"{where}: {name} is listed twice")
+        found.append(number)
+    return frozenset(found)
+
+
+def _action(value: object, where: str) -> Action:
+    if not isinstance(value, dict):
+        raise ConfigError(f"{where} must be a table")
+    _only(value, {"action", "message", "location"}, where)
+    kind = value.get("action")
+    if kind not in _ACTIONS:
+        raise ConfigError(f"{where}: action must be continue, deny, redirect, or allow")
+    if kind in {"continue", "allow"}:
+        if "message" in value or "location" in value:
+            raise ConfigError(f"{where}: {kind} takes no other settings")
+        return Action(kind)
+    if kind == "deny":
+        if "location" in value:
+            raise ConfigError(f"{where}: deny takes a message, not a location")
+        message = value.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ConfigError(f"{where}: deny needs a message")
+        return Action("deny", message.strip())
+    if "message" in value:
+        raise ConfigError(f"{where}: redirect takes a location, not a message")
+    location = value.get("location")
+    if not isinstance(location, str) or not location.strip():
+        raise ConfigError(f"{where}: redirect needs a location")
+    location = location.strip()
+    if location != REVISION_TASK and not absolute_http_url(location):
+        raise ConfigError(
+            f"{where}: location must be an absolute http or https URL, or revision_task"
+        )
+    return Action("redirect", location=location)
+
+
+def _revision_task(value: object, source: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not absolute_http_url(value.strip()):
+        raise ConfigError(f"{source}: household.revision_task must be an absolute http or https URL")
+    return value.strip()
+
+
+def _uses_revision_token(groups: tuple[SiteGroup, ...]) -> bool:
+    return any(
+        action.location == REVISION_TASK
+        for group in groups
+        for rule in group.rules
+        for action in (rule.when_true, rule.when_false)
+    )
 
 
 def apply(
@@ -149,6 +307,7 @@ def apply(
             for client in config.clients
         ],
         config.groups,
+        config.revision_task,
     )
 
 

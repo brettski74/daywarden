@@ -1,0 +1,6 @@
+# Test-only. The addon tests still choose allow, deny, and redirect by rewriting
+# decision.json, including documents the rule engine would never produce.
+services:
+  decisions:
+    environment:
+      DECISION_STUB: "1"

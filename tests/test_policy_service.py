@@ -1,12 +1,12 @@
-"""S001.1 and S001.2: the policy service stores clients, the timezone, and site groups,
-and keeps them across a restart."""
+"""S001.1 through S001.3: the policy service stores clients, the timezone, site groups,
+and rules, and keeps them across a restart."""
 
 import json
 import os
 import socket
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,7 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 POLICY = """
 [household]
 timezone = "Australia/Sydney"
+revision_task = "http://tasks.example/next"
 
 [[clients]]
 name = "Younger child"
@@ -29,16 +30,66 @@ name = "Older child"
 address = "older-child.household.test"
 
 [[groups]]
+name = "School work"
+priority = 10
+patterns = ["classroom.google.com"]
+
+[[groups.rules]]
+condition = "always"
+when_true = { action = "allow" }
+when_false = { action = "continue" }
+
+[[groups]]
 name = "Entertainment"
 priority = 30
 patterns = ["*.youtube.com", "youtu.be"]
 
-[[groups]]
-name = "School work"
-priority = 10
-patterns = ["classroom.google.com"]
+[[groups.rules]]
+condition = "time_window"
+when_true = { action = "deny", message = "It's bedtime." }
+when_false = { action = "continue" }
+
+[[groups.rules.windows]]
+start = "00:00"
+end = "07:00"
+days = ["monday", "tuesday", "wednesday", "thursday"]
+
+[[groups.rules]]
+condition = "time_window"
+when_true = { action = "redirect", location = "revision_task" }
+when_false = { action = "continue" }
+
+[[groups.rules.windows]]
+start = "07:00"
+end = "15:00"
+days = ["monday", "tuesday", "wednesday", "thursday"]
+
+[[groups.rules]]
+condition = "time_window"
+when_true = { action = "continue" }
+when_false = { action = "deny", message = "YouTube is closed for today." }
+
+[[groups.rules.windows]]
+start = "15:00"
+end = "19:00"
+days = ["monday", "tuesday", "wednesday", "thursday"]
+
+[[groups.rules]]
+condition = "tasks_complete"
+when_true = { action = "continue" }
+when_false = { action = "redirect", location = "revision_task" }
+
+[[groups.rules]]
+condition = "quota_remaining"
+when_true = { action = "allow" }
+when_false = { action = "deny", message = "Time is up for today." }
 """
 UNGROUPED = {"action": "deny", "status": 403, "message": "This site is not in a configured group."}
+PLACEHOLDER = "http://tasks.example/next"
+BEDTIME = {"action": "deny", "status": 403, "message": "It's bedtime."}
+CLOSED = {"action": "deny", "status": 403, "message": "YouTube is closed for today."}
+REDIRECT = {"action": "redirect", "status": 302, "location": PLACEHOLDER}
+ALLOW = {"action": "allow"}
 
 # Runs inside the container, so the test does not need a published port.
 POST = """
@@ -130,7 +181,7 @@ def stack(request):
         (root / "ca").mkdir()
         config_dir = root / "config"
         config_dir.mkdir()
-        (config_dir / "decision.json").write_text('{"action": "allow"}')
+        (config_dir / "decision.json").write_text('{"action": "allow", "marker": "from the file"}')
         (config_dir / "policy.toml").write_text(POLICY)
         running = Stack(root / "ca", config_dir, f"smartproxy-s0011-{os.getpid()}")
         try:
@@ -145,10 +196,16 @@ def stack(request):
             running.down()
 
 
+def _local(hour: int, minute: int, day: int = 21) -> str:
+    """UTC instant for a Sydney wall time. 21 October 2026 is a Wednesday."""
+    return datetime(2026, 10, day, hour, minute, tzinfo=SYDNEY).astimezone(timezone.utc).isoformat()
+
+
 def _assert_household(stack: Stack):
     status, body, entry = stack.decide(_request("192.0.2.40"))
     assert status == 200
-    assert json.loads(body) == {"action": "allow"}
+    assert json.loads(body) == CLOSED
+    assert "from the file" not in body
     assert entry["client"] == "Younger child"
     assert entry["request"] == _request("192.0.2.40")
     local = datetime.fromisoformat(entry["local_time"])
@@ -163,12 +220,13 @@ def _assert_household(stack: Stack):
 
 
 def _assert_groups(stack: Stack):
-    _status, _body, entry = stack.decide(_request("192.0.2.40"))
+    _status, body, entry = stack.decide(_request("192.0.2.40"))
+    assert json.loads(body) == CLOSED
     assert entry["group"] == "Entertainment"
 
     status, body, entry = stack.decide(_request("192.0.2.40", url="https://Classroom.Google.com/u/0/h"))
     assert status == 200
-    assert json.loads(body) == {"action": "allow"}
+    assert json.loads(body) == ALLOW
     assert entry["group"] == "School work"
 
     status, body, entry = stack.decide(_request("192.0.2.40", url="https://example.org/"))
@@ -177,20 +235,36 @@ def _assert_groups(stack: Stack):
     assert entry["group"] is None
     assert entry["decision"] == UNGROUPED
 
+    wednesday = {
+        (6, 30): BEDTIME,
+        (10, 0): REDIRECT,
+        (16, 0): REDIRECT,
+        (20, 0): CLOSED,
+    }
+    for (hour, minute), expected in wednesday.items():
+        status, body, entry = stack.decide(_request("192.0.2.40", _local(hour, minute)))
+        assert status == 200
+        assert json.loads(body) == expected
+        assert entry["group"] == "Entertainment"
+        assert datetime.fromisoformat(entry["local_time"]) == datetime(2026, 10, 21, hour, minute, tzinfo=SYDNEY)
+
 
 def test_clients_are_named_and_time_is_household_local(stack):
     _assert_household(stack)
 
 
-def test_urls_are_put_in_site_groups_and_the_rest_are_denied(stack):
+def test_urls_are_put_in_site_groups_and_rules_decide(stack):
     _assert_groups(stack)
-    assert "no default group" in stack.logs()
+    logs = stack.logs()
+    assert "no default group" in logs
+    assert "revision task placeholder http://tasks.example/next" in logs
+    assert "group Entertainment: priority 30, 2 patterns, 5 rules" in logs
 
 
 def test_an_unenrolled_ip_still_gets_a_decision(stack):
     status, body, entry = stack.decide(_request("192.0.2.99"))
     assert status == 200
-    assert json.loads(body) == {"action": "allow"}
+    assert json.loads(body) == CLOSED
     assert entry["client"] is None
 
 
@@ -200,7 +274,7 @@ def test_a_malformed_request_is_refused(stack):
     assert entry["decision"] is None
 
 
-def test_clients_timezone_and_groups_survive_a_new_container_without_the_file(stack):
+def test_clients_timezone_groups_and_rules_survive_a_new_container_without_the_file(stack):
     (stack.config_dir / "policy.toml").unlink()
     stack.up_decisions("--force-recreate", "--no-deps")
     assert "using the stored policy" in stack.logs()

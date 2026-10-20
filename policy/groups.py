@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlsplit
 
+from policy.rules import Rule
+
 
 @dataclass(frozen=True)
 class SiteGroup:
@@ -20,6 +22,7 @@ class SiteGroup:
     priority: int
     patterns: tuple[str, ...] = ()
     default: bool = False
+    rules: tuple[Rule, ...] = ()
 
 
 def matches(pattern: str, url: str) -> bool:

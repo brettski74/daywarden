@@ -51,7 +51,16 @@ class Stack:
         self.env["PROXY_PORT"] = str(port)
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.cmd = ["docker", "compose", "-p", project, "-f", "docker-compose.yml"]
+        self.cmd = [
+            "docker",
+            "compose",
+            "-p",
+            project,
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            "tests/decision-stub.compose.yml",
+        ]
 
     @property
     def cert_pem(self) -> Path:
