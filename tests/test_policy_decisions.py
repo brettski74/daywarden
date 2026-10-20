@@ -1,5 +1,6 @@
-"""S001.1: a decision request is tied to a client, when there is one, and to local time."""
+"""S001.1 and S001.2: a decision request is tied to a client, local time, and a site group."""
 
+import json
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -12,10 +13,13 @@ sys.path.insert(0, str(ROOT))
 
 from policy.clients import Client, ClientDirectory
 from policy.clock import HouseholdClock
-from policy.decisions import context_for, household_decision, log_entry, parse_request
+from policy.decisions import context_for, decide, household_decision, log_entry, parse_request
+from policy.groups import SiteGroup, SiteGroups
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 YOUNGER = Client(1, "Younger child", "192.168.1.40", ("192.168.1.40",))
+ENTERTAINMENT = SiteGroup("Entertainment", 30, ("*.youtube.com",))
+EVERYTHING_ELSE = SiteGroup("Everything else", 1000, (), default=True)
 
 
 def _request(**overrides):
@@ -29,9 +33,9 @@ def _request(**overrides):
     return {key: value for key, value in document.items() if value is not None}
 
 
-def _context(document, clock=None):
+def _context(document, clock=None, groups=(ENTERTAINMENT,)):
     clock = clock or HouseholdClock(SYDNEY)
-    return context_for(parse_request(document), clock, ClientDirectory([YOUNGER]))
+    return context_for(parse_request(document), clock, ClientDirectory([YOUNGER]), SiteGroups(groups))
 
 
 def test_an_enrolled_ip_gets_its_display_name():
@@ -91,6 +95,7 @@ def test_the_log_entry_names_the_client_and_its_local_time():
         "request": document,
         "client": "Younger child",
         "local_time": "2026-10-19T23:59:59+11:00",
+        "group": "Entertainment",
         "decision": {"action": "allow"},
     }
 
@@ -100,3 +105,33 @@ def test_the_log_entry_for_an_unenrolled_ip_has_no_client():
     entry = log_entry(document, _context(document), b"not json")
     assert entry["client"] is None
     assert entry["decision"] == {"raw": "not json"}
+
+
+def test_a_url_in_a_group_gets_the_household_decision(tmp_path):
+    path = tmp_path / "decision.json"
+    path.write_text('{"action": "allow"}')
+    context = _context(_request())
+    assert context.group == ENTERTAINMENT
+    assert decide(context, path) == b'{"action": "allow"}'
+
+
+def test_an_unrecognized_url_goes_to_the_default_group(tmp_path):
+    path = tmp_path / "decision.json"
+    path.write_text('{"action": "allow"}')
+    context = _context(_request(url="https://example.org/"), groups=(ENTERTAINMENT, EVERYTHING_ELSE))
+    assert context.group == EVERYTHING_ELSE
+    assert decide(context, path) == b'{"action": "allow"}'
+
+
+def test_without_a_default_group_an_unrecognized_url_is_denied(tmp_path):
+    path = tmp_path / "decision.json"
+    path.write_text('{"action": "allow"}')
+    document = _request(url="https://example.org/")
+    context = _context(document)
+    decision = decide(context, path)
+    assert json.loads(decision) == {
+        "action": "deny",
+        "status": 403,
+        "message": "This site is not in a configured group.",
+    }
+    assert log_entry(document, context, decision)["group"] is None

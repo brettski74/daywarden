@@ -188,6 +188,9 @@ def stack(request):
             "# task site and classroom\n*.google.test\ntasks.smartproxy.test\n"
         )
         _write_decision(config_dir, {"action": "allow"})
+        (config_dir / "policy.toml").write_text(
+            '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
+        )
         running = Stack(
             ca_dir,
             config_dir,

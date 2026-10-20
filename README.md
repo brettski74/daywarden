@@ -12,7 +12,7 @@ make up
 
 The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
 
-Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. Until the rule engine exists, the policy service answers every request with `config/decision.json`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
+Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The policy service puts the URL in a site group. A URL in no group is denied. Until the rule engine exists, a URL in any group is answered with `config/decision.json`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
 ## Clients and the household timezone
 
@@ -22,7 +22,17 @@ Each client is a display name and an `address`, which is the computer's DHCP res
 
 `household.timezone` is an IANA name such as `America/Toronto`. It decides what "today" and "now" mean for every rule. Leave it out to use the timezone of the machine running Compose, which is read from that machine's `/etc/localtime`.
 
-Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the client name (or `null`), the household-local time, and the decision returned.
+## Site groups
+
+`config/policy.toml` also holds the site groups, one `[[groups]]` table each, with a `name`, a `priority` and a list of glob `patterns`. They are stored in the same database and loaded at the same time as the clients. Groups are tried lowest priority number first, and the first group with a matching pattern wins, so a `classroom.google.com` group at priority 10 is picked before a `*.google.com` group at priority 20. Two groups cannot share a priority.
+
+A pattern that contains `://` is matched against the whole URL, without its `#fragment`. Any other pattern is matched against the host only. Matching ignores case. `*` matches any run of characters, including `/`, and `?` matches one character. `*.youtube.com` matches `www.youtube.com` but not `youtube.com`, so list both if you need both.
+
+One group may set `default = true`. It takes every URL that no other group matches, whatever its priority number, and its patterns are ignored. If there is no default group, a URL outside every group is denied with "This site is not in a configured group." The sample file has a single default group, `Everything else`, so nothing changes until other groups are added.
+
+## Decision and observation logs
+
+Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the client name (or `null`), the household-local time, the site group (or `null`), and the decision returned.
 
 A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. The service in this repo only records the calls. The ledger that stores them comes later.
 
@@ -53,8 +63,8 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 
 | File | Meaning |
 | --- | --- |
-| `config/policy.toml` | Household timezone and the client computers |
-| `config/decision.json` | The decision the policy service returns until the rule engine replaces it |
+| `config/policy.toml` | Household timezone, the client computers, and the site groups |
+| `config/decision.json` | The decision the policy service returns for a URL in a site group, until the rule engine replaces it |
 | `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down |
 
 `config/decision.json` is one of:

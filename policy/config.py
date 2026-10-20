@@ -15,6 +15,7 @@ from pathlib import Path
 
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
+from policy.groups import SiteGroup
 from policy.store import PolicyStore
 
 
@@ -32,6 +33,7 @@ class ClientConfig:
 class HouseholdConfig:
     timezone: str | None
     clients: tuple[ClientConfig, ...]
+    groups: tuple[SiteGroup, ...] = ()
 
 
 def load(path: str | Path) -> HouseholdConfig:
@@ -43,7 +45,7 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         document = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{source}: {exc}") from exc
-    _only(document, {"household", "clients"}, source)
+    _only(document, {"household", "clients", "groups"}, source)
 
     household = document.get("household", {})
     if not isinstance(household, dict):
@@ -71,7 +73,40 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         if any(client.name == name for client in clients):
             raise ConfigError(f"{where}: the name {name!r} is used twice")
         clients.append(ClientConfig(name, address))
-    return HouseholdConfig(timezone, tuple(clients))
+    return HouseholdConfig(timezone, tuple(clients), _groups(document, source))
+
+
+def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
+    entries = document.get("groups", [])
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        raise ConfigError(f"{source}: groups must be written as [[groups]] tables")
+    groups: list[SiteGroup] = []
+    for number, entry in enumerate(entries, start=1):
+        where = f"{source}: group {number}"
+        _only(entry, {"name", "priority", "patterns", "default"}, where)
+        name = _text(entry, "name", where)
+        priority = entry.get("priority")
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise ConfigError(f"{where}: priority must be a whole number")
+        patterns = entry.get("patterns", [])
+        if not isinstance(patterns, list) or not all(
+            isinstance(pattern, str) and pattern.strip() for pattern in patterns
+        ):
+            raise ConfigError(f"{where}: patterns must be a list of non-empty strings")
+        default = entry.get("default", False)
+        if not isinstance(default, bool):
+            raise ConfigError(f"{where}: default must be true or false")
+        for other in groups:
+            if other.name == name:
+                raise ConfigError(f"{where}: the name {name!r} is used twice")
+            if other.priority == priority:
+                raise ConfigError(
+                    f"{source}: groups {other.name!r} and {name!r} both have priority {priority}"
+                )
+            if other.default and default:
+                raise ConfigError(f"{source}: groups {other.name!r} and {name!r} are both the default")
+        groups.append(SiteGroup(name, priority, tuple(pattern.strip() for pattern in patterns), default))
+    return tuple(groups)
 
 
 def apply(
@@ -80,7 +115,7 @@ def apply(
     lookup: Lookup = socket.getaddrinfo,
     warn: Callable[[str], None] = lambda message: print(message, flush=True),
 ) -> None:
-    """Store the timezone and clients, resolving each client address to IPs."""
+    """Store the timezone, clients and site groups, resolving each client address to IPs."""
     stored = {client.name: client for client in store.clients()}
     fresh: dict[str, tuple[str, ...]] = {}
     kept: dict[str, tuple[str, ...]] = {}
@@ -113,6 +148,7 @@ def apply(
             (client.name, client.address, fresh.get(client.name) or kept.get(client.name, ()))
             for client in config.clients
         ],
+        config.groups,
     )
 
 

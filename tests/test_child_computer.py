@@ -90,6 +90,9 @@ def stack(request):
         config_dir.mkdir()
         (config_dir / "bypass.txt").write_text("# none\n")
         (config_dir / "decision.json").write_text('{"action": "allow"}\n')
+        (config_dir / "policy.toml").write_text(
+            '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
+        )
         running = Stack(
             ca_dir,
             config_dir,
