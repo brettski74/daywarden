@@ -1,4 +1,5 @@
-"""S001.1: the policy service stores clients and the timezone, and keeps them across a restart."""
+"""S001.1 and S001.2: the policy service stores clients, the timezone, and site groups,
+and keeps them across a restart."""
 
 import json
 import os
@@ -26,7 +27,18 @@ address = "192.0.2.40"
 [[clients]]
 name = "Older child"
 address = "older-child.household.test"
+
+[[groups]]
+name = "Entertainment"
+priority = 30
+patterns = ["*.youtube.com", "youtu.be"]
+
+[[groups]]
+name = "School work"
+priority = 10
+patterns = ["classroom.google.com"]
 """
+UNGROUPED = {"action": "deny", "status": 403, "message": "This site is not in a configured group."}
 
 # Runs inside the container, so the test does not need a published port.
 POST = """
@@ -98,11 +110,15 @@ class Stack:
         return answer["status"], answer["body"], entries[0]
 
 
-def _request(client_ip: str, occurred_at: str = "2026-10-19T12:59:59+00:00") -> dict:
+def _request(
+    client_ip: str,
+    occurred_at: str = "2026-10-19T12:59:59+00:00",
+    url: str = "https://www.youtube.com/watch?v=abc",
+) -> dict:
     return {
         "client_ip": client_ip,
         "method": "GET",
-        "url": "https://www.youtube.com/watch?v=abc",
+        "url": url,
         "occurred_at": occurred_at,
     }
 
@@ -146,8 +162,29 @@ def _assert_household(stack: Stack):
     assert datetime.fromisoformat(entry["local_time"]).date().isoformat() == "2026-10-20"
 
 
+def _assert_groups(stack: Stack):
+    _status, _body, entry = stack.decide(_request("192.0.2.40"))
+    assert entry["group"] == "Entertainment"
+
+    status, body, entry = stack.decide(_request("192.0.2.40", url="https://Classroom.Google.com/u/0/h"))
+    assert status == 200
+    assert json.loads(body) == {"action": "allow"}
+    assert entry["group"] == "School work"
+
+    status, body, entry = stack.decide(_request("192.0.2.40", url="https://example.org/"))
+    assert status == 200
+    assert json.loads(body) == UNGROUPED
+    assert entry["group"] is None
+    assert entry["decision"] == UNGROUPED
+
+
 def test_clients_are_named_and_time_is_household_local(stack):
     _assert_household(stack)
+
+
+def test_urls_are_put_in_site_groups_and_the_rest_are_denied(stack):
+    _assert_groups(stack)
+    assert "no default group" in stack.logs()
 
 
 def test_an_unenrolled_ip_still_gets_a_decision(stack):
@@ -163,8 +200,9 @@ def test_a_malformed_request_is_refused(stack):
     assert entry["decision"] is None
 
 
-def test_clients_and_timezone_survive_a_new_container_without_the_file(stack):
+def test_clients_timezone_and_groups_survive_a_new_container_without_the_file(stack):
     (stack.config_dir / "policy.toml").unlink()
     stack.up_decisions("--force-recreate", "--no-deps")
     assert "using the stored policy" in stack.logs()
     _assert_household(stack)
+    _assert_groups(stack)

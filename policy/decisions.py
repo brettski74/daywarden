@@ -2,8 +2,9 @@
 
 Every request is judged by the household rules, whether or not its source IP
 belongs to a client. The client only supplies a name now, and later the tasks
-and usage that belong to that computer. Until the rule engine exists, the
-household rules are the single decision in DECISION_FILE.
+and usage that belong to that computer. A URL that is in no site group is
+denied. Until the rule engine exists, every site group answers with the single
+decision in DECISION_FILE.
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ from pathlib import Path
 
 from policy.clients import Client, ClientDirectory, normalize_ip
 from policy.clock import HouseholdClock
+from policy.groups import SiteGroup, SiteGroups
+
+UNGROUPED_MESSAGE = "This site is not in a configured group."
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class DecisionContext:
     request: DecisionRequest
     client: Client | None
     local_time: datetime
+    group: SiteGroup | None
 
 
 def parse_request(document: object) -> DecisionRequest:
@@ -58,10 +63,25 @@ def parse_request(document: object) -> DecisionRequest:
 
 
 def context_for(
-    request: DecisionRequest, clock: HouseholdClock, directory: ClientDirectory
+    request: DecisionRequest,
+    clock: HouseholdClock,
+    directory: ClientDirectory,
+    groups: SiteGroups,
 ) -> DecisionContext:
-    """Attach the client, if any, and the household-local time of the request."""
-    return DecisionContext(request, directory.find(request.client_ip), clock.local(request.occurred_at))
+    """Attach the client and site group, if any, and the household-local time of the request."""
+    return DecisionContext(
+        request,
+        directory.find(request.client_ip),
+        clock.local(request.occurred_at),
+        groups.classify(request.url),
+    )
+
+
+def decide(context: DecisionContext, decision_file: Path) -> bytes | None:
+    """Deny a URL in no site group. Otherwise answer with the household decision."""
+    if context.group is None:
+        return json.dumps({"action": "deny", "status": 403, "message": UNGROUPED_MESSAGE}).encode()
+    return household_decision(decision_file)
 
 
 def household_decision(decision_file: Path) -> bytes | None:
@@ -72,7 +92,7 @@ def household_decision(decision_file: Path) -> bytes | None:
 
 
 def log_entry(raw: object, context: DecisionContext | None, decision: bytes | None) -> dict:
-    """Record what the addon sent, who it was for, and what was answered."""
+    """Record what the addon sent, who it was for, its site group, and what was answered."""
     try:
         answered = json.loads(decision) if decision is not None else None
     except json.JSONDecodeError:
@@ -81,6 +101,7 @@ def log_entry(raw: object, context: DecisionContext | None, decision: bytes | No
         "request": raw,
         "client": context.client.name if context and context.client else None,
         "local_time": context.local_time.isoformat() if context else None,
+        "group": context.group.name if context and context.group else None,
         "decision": answered,
     }
 

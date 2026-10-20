@@ -19,10 +19,11 @@ from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
     DecisionLog,
     context_for,
-    household_decision,
+    decide,
     log_entry,
     parse_request,
 )
+from policy.groups import SiteGroups
 from policy.store import PolicyStore
 
 
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
             print(f"{policy_file} not found; using the stored policy", flush=True)
         timezone = store.timezone()
         clients = store.clients()
+        groups = store.groups()
 
     if timezone:
         zone = named_zone(timezone)
@@ -53,8 +55,14 @@ def create_app() -> FastAPI:
     print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
     for client in clients:
         print(f"client {client.name}: {', '.join(client.ips) or 'no IP'}", flush=True)
+    for group in sorted(groups, key=lambda group: (group.default, group.priority)):
+        detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
+        print(f"group {group.name}: {detail}", flush=True)
+    if not any(group.default for group in groups):
+        print("no default group; sites outside every group are denied", flush=True)
 
     directory = ClientDirectory(clients)
+    site_groups = SiteGroups(groups)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.get("/health")
@@ -69,15 +77,16 @@ def create_app() -> FastAPI:
         except json.JSONDecodeError:
             document = {"raw": raw.decode("utf-8", "replace")}
         try:
-            context = context_for(parse_request(document), clock, directory)
+            context = context_for(parse_request(document), clock, directory, site_groups)
         except ValueError as exc:
             decision_log.append(log_entry(document, None, None))
             return PlainTextResponse(str(exc), status_code=400)
-        decision = household_decision(decision_file)
+        decision = decide(context, decision_file)
         decision_log.append(log_entry(document, context, decision))
         who = context.client.name if context.client else context.request.client_ip
+        group = context.group.name if context.group else "no group"
         print(
-            f"decision {context.request.method} {context.request.url} "
+            f"decision {context.request.method} {context.request.url} ({group}) "
             f"for {who} at {context.local_time.isoformat(timespec='seconds')}",
             flush=True,
         )

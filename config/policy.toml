@@ -21,3 +21,27 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # [[clients]]
 # name = "Older child"
 # address = "older-child.lan"
+
+# One [[groups]] table per site group. Every request is put in exactly one group.
+# Groups are tried in priority order, lowest number first, and the first group
+# with a matching pattern wins. Each priority may be used by one group only.
+#
+# A pattern containing "://" is matched against the whole URL, without its
+# #fragment. Any other pattern is matched against the host name only. Matching
+# ignores case. "*" matches anything, including "/". "?" matches one character.
+# "*.youtube.com" matches www.youtube.com but not youtube.com itself.
+#
+# One group may say default = true. It is used for any site that no other group
+# matches, whatever its priority, and its patterns are ignored. With no default
+# group, a site outside every group is denied.
+#
+# For example:
+# [[groups]]
+# name = "School work"
+# priority = 10
+# patterns = ["classroom.google.com", "https://docs.google.com/*"]
+
+[[groups]]
+name = "Everything else"
+priority = 1000
+default = true
