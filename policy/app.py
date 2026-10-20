@@ -18,8 +18,8 @@ from policy.clients import ClientDirectory
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
     DecisionLog,
+    answer,
     context_for,
-    decide,
     log_entry,
     parse_request,
 )
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     policy_file = Path(os.environ.get("POLICY_FILE", "/etc/smartproxy/policy.toml"))
     database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
     decision_file = Path(os.environ.get("DECISION_FILE", "/etc/smartproxy/decision.json"))
+    decision_stub = os.environ.get("DECISION_STUB") == "1"
     decision_log = DecisionLog(Path(os.environ.get("DECISION_LOG", "/tmp/decisions.jsonl")))
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
         timezone = store.timezone()
         clients = store.clients()
         groups = store.groups()
+        revision_task = store.revision_task()
 
     if timezone:
         zone = named_zone(timezone)
@@ -55,9 +57,12 @@ def create_app() -> FastAPI:
     print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
     for client in clients:
         print(f"client {client.name}: {', '.join(client.ips) or 'no IP'}", flush=True)
+    if revision_task:
+        print(f"revision task placeholder {revision_task}", flush=True)
     for group in sorted(groups, key=lambda group: (group.default, group.priority)):
         detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
-        print(f"group {group.name}: {detail}", flush=True)
+        rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
+        print(f"group {group.name}: {detail}, {rules}", flush=True)
     if not any(group.default for group in groups):
         print("no default group; sites outside every group are denied", flush=True)
 
@@ -81,7 +86,7 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             decision_log.append(log_entry(document, None, None))
             return PlainTextResponse(str(exc), status_code=400)
-        decision = decide(context, decision_file)
+        decision = answer(context, decision_file, stub=decision_stub, revision_task=revision_task)
         decision_log.append(log_entry(document, context, decision))
         who = context.client.name if context.client else context.request.client_ip
         group = context.group.name if context.group else "no group"

@@ -6,6 +6,10 @@
 # Leave it commented out to use the timezone of the machine running Compose.
 # timezone = "America/Toronto"
 
+# Absolute URL substituted for the revision_task token until real tasks exist.
+# A rule that redirects to that token will not load while this is unset.
+# revision_task = "http://192.168.1.10:8080/tasks/next"
+
 # One [[clients]] table per computer. address is the computer's DHCP reservation,
 # written as an IP or as a DNS name. DNS names are looked up when the service
 # starts, not on every request, so restart the service if a reservation changes.
@@ -35,11 +39,44 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # matches, whatever its priority, and its patterns are ignored. With no default
 # group, a site outside every group is denied.
 #
-# For example:
+# Each group has an ordered list of rules, written as [[groups.rules]] under
+# that group. A rule has a condition and two actions, when_true and when_false.
+# An action is continue, deny with a message, redirect to an absolute URL or
+# to the revision_task token, or allow. The first action other than continue
+# is the decision. A group with no rules denies the request.
+#
+# A time_window is true when the household-local time is inside any of its
+# windows. The start is included and the end is excluded, so 15:00 belongs to
+# the later of two windows that meet there. A window may name weekdays, or
+# apply every day when days is left out. A window may cross midnight.
+#
+# tasks_complete and quota_remaining are conditions too. Until those counts
+# exist, tasks_complete is false and quota_remaining is true.
+#
 # [[groups]]
 # name = "School work"
 # priority = 10
 # patterns = ["classroom.google.com", "https://docs.google.com/*"]
+#
+# [[groups.rules]]
+# condition = "always"
+# when_true = { action = "allow" }
+# when_false = { action = "continue" }
+#
+# [[groups]]
+# name = "Entertainment"
+# priority = 30
+# patterns = ["*.youtube.com", "youtu.be"]
+#
+# [[groups.rules]]
+# condition = "time_window"
+# when_true = { action = "deny", message = "It's bedtime." }
+# when_false = { action = "continue" }
+#
+# [[groups.rules.windows]]
+# start = "00:00"
+# end = "07:00"
+# days = ["monday", "tuesday", "wednesday", "thursday"]
 
 [[groups]]
 name = "Everything else"

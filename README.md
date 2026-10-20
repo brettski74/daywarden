@@ -12,7 +12,7 @@ make up
 
 The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
 
-Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The policy service puts the URL in a site group. A URL in no group is denied. Until the rule engine exists, a URL in any group is answered with `config/decision.json`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
+Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The policy service puts the URL in a site group and runs that group's rules. A URL in no group is denied. A group with no rules is denied too. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not one of those three decisions, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
 ## Clients and the household timezone
 
@@ -28,7 +28,35 @@ Each client is a display name and an `address`, which is the computer's DHCP res
 
 A pattern that contains `://` is matched against the whole URL, without its `#fragment`. Any other pattern is matched against the host only. Matching ignores case. `*` matches any run of characters, including `/`, and `?` matches one character. `*.youtube.com` matches `www.youtube.com` but not `youtube.com`, so list both if you need both.
 
-One group may set `default = true`. It takes every URL that no other group matches, whatever its priority number, and its patterns are ignored. If there is no default group, a URL outside every group is denied with "This site is not in a configured group." The sample file has a single default group, `Everything else`, so nothing changes until other groups are added.
+One group may set `default = true`. It takes every URL that no other group matches, whatever its priority number, and its patterns are ignored. If there is no default group, a URL outside every group is denied with "This site is not in a configured group." The sample file has a single default group, `Everything else`, and no rules yet, so every site is denied until rules are added.
+
+## Rules
+
+Rules are `[[groups.rules]]` tables written under a group, in the order they should run. Each rule has a `condition` and two actions, `when_true` and `when_false`. An action is `continue`, `deny` with a message, `redirect` to an absolute `http` or `https` URL (or the token `revision_task`), or `allow`. The first action other than `continue` is the decision. If every rule continues, the request is denied.
+
+`household.revision_task` is the absolute URL substituted for that token. Real task selection replaces it later. A rule that uses the token will not load while the setting is missing.
+
+A `time_window` condition is true when the household-local clock is inside any of its windows. The start counts and the end does not, so `07:00–15:00` and `15:00–19:00` do not both match at 15:00. List `days` as weekday names, or leave `days` out to mean every day. A window may cross midnight: `22:00–07:00` on Saturday includes Saturday night and Sunday morning, and does not include Saturday morning. `tasks_complete` and `quota_remaining` are the other conditions. Until those counts are stored, no task is complete and the quota is still remaining.
+
+```toml
+[[groups.rules]]
+condition = "time_window"
+when_true = { action = "deny", message = "It's bedtime." }
+when_false = { action = "continue" }
+
+[[groups.rules.windows]]
+start = "00:00"
+end = "07:00"
+days = ["monday", "tuesday", "wednesday", "thursday"]
+```
+
+The three answers a rule can produce are:
+
+```json
+{ "action": "allow" }
+{ "action": "deny", "status": 403, "message": "Time is up for today." }
+{ "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
+```
 
 ## Decision and observation logs
 
@@ -63,19 +91,8 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 
 | File | Meaning |
 | --- | --- |
-| `config/policy.toml` | Household timezone, the client computers, and the site groups |
-| `config/decision.json` | The decision the policy service returns for a URL in a site group, until the rule engine replaces it |
+| `config/policy.toml` | Household timezone, the client computers, the site groups, and their rules |
 | `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down |
-
-`config/decision.json` is one of:
-
-```json
-{ "action": "allow" }
-{ "action": "deny", "status": 403, "message": "Time is up for today." }
-{ "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
-```
-
-The policy service reads that file on every request. A redirect location is an absolute `http` or `https` URL.
 
 ## Tests
 

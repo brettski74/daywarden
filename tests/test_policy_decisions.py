@@ -1,4 +1,4 @@
-"""S001.1 and S001.2: a decision request is tied to a client, local time, and a site group."""
+"""S001.1 through S001.3: a decision request is tied to a client, local time, a site group, and that group's rules."""
 
 import json
 import sys
@@ -13,8 +13,9 @@ sys.path.insert(0, str(ROOT))
 
 from policy.clients import Client, ClientDirectory
 from policy.clock import HouseholdClock
-from policy.decisions import context_for, decide, household_decision, log_entry, parse_request
+from policy.decisions import answer, context_for, decide, household_decision, log_entry, parse_request
 from policy.groups import SiteGroup, SiteGroups
+from policy.rules import Action, Rule
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 YOUNGER = Client(1, "Younger child", "192.168.1.40", ("192.168.1.40",))
@@ -107,28 +108,47 @@ def test_the_log_entry_for_an_unenrolled_ip_has_no_client():
     assert entry["decision"] == {"raw": "not json"}
 
 
-def test_a_url_in_a_group_gets_the_household_decision(tmp_path):
+def test_a_group_with_no_rules_is_denied():
+    context = _context(_request())
+    assert context.group == ENTERTAINMENT
+    assert json.loads(decide(context)) == {
+        "action": "deny",
+        "status": 403,
+        "message": "No rule allowed this request.",
+    }
+
+
+def test_decide_runs_the_rules_on_the_matching_group():
+    allowed = SiteGroup(
+        "Entertainment",
+        30,
+        ("*.youtube.com",),
+        rules=(Rule("always", Action("allow"), Action("deny", "no")),),
+    )
+    context = _context(_request(), groups=(allowed,))
+    assert json.loads(decide(context)) == {"action": "allow"}
+
+
+def test_the_decision_file_is_used_only_when_the_stub_is_on(tmp_path):
     path = tmp_path / "decision.json"
     path.write_text('{"action": "allow"}')
     context = _context(_request())
-    assert context.group == ENTERTAINMENT
-    assert decide(context, path) == b'{"action": "allow"}'
+    assert b"No rule allowed this request." in answer(context, path)
+    assert answer(context, path, stub=True) == b'{"action": "allow"}'
+    ungrouped = _context(_request(url="https://example.org/"))
+    assert b"not in a configured group" in answer(ungrouped, path, stub=True)
 
 
-def test_an_unrecognized_url_goes_to_the_default_group(tmp_path):
-    path = tmp_path / "decision.json"
-    path.write_text('{"action": "allow"}')
+def test_an_unrecognized_url_goes_to_the_default_group():
     context = _context(_request(url="https://example.org/"), groups=(ENTERTAINMENT, EVERYTHING_ELSE))
     assert context.group == EVERYTHING_ELSE
-    assert decide(context, path) == b'{"action": "allow"}'
+    assert json.loads(decide(context))["message"] == "No rule allowed this request."
 
 
-def test_without_a_default_group_an_unrecognized_url_is_denied(tmp_path):
-    path = tmp_path / "decision.json"
-    path.write_text('{"action": "allow"}')
+def test_without_a_default_group_an_unrecognized_url_is_denied():
     document = _request(url="https://example.org/")
     context = _context(document)
-    decision = decide(context, path)
+    decision = decide(context)
     assert json.loads(decision) == {
         "action": "deny",
         "status": 403,
