@@ -2,7 +2,8 @@
 
 On start, POLICY_FILE (when present) is loaded into the SQLite database at
 POLICY_DB. Without the file, the service uses what the database already holds.
-Each decision reads that database for today's revision count.
+Each decision reads that database for today's revision count and for the
+ended usage recorded against today's quota.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from policy.decisions import (
     DecisionLog,
     answer,
     completed_today,
+    consumed_today,
     context_for,
     log_entry,
     parse_request,
@@ -61,10 +63,12 @@ def create_app() -> FastAPI:
         print(f"client {client.name}: {', '.join(client.ips) or 'no IP'}", flush=True)
     if revision_task:
         print(f"revision task placeholder {revision_task}", flush=True)
+    print(f"usage buckets are {_span(store.bucket_length())}", flush=True)
     for group in sorted(groups, key=lambda group: (group.default, group.priority)):
         detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
         rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
-        print(f"group {group.name}: {detail}, {rules}", flush=True)
+        quota = "no quota" if group.quota is None else f"quota {_span(group.quota)}"
+        print(f"group {group.name}: {detail}, {rules}, {quota}", flush=True)
     if not any(group.default for group in groups):
         print("no default group; sites outside every group are denied", flush=True)
 
@@ -94,6 +98,7 @@ def create_app() -> FastAPI:
             stub=decision_stub,
             revision_task=revision_task,
             completed=completed_today(store, context),
+            consumed=consumed_today(store, context),
         )
         decision_log.append(log_entry(document, context, decision))
         who = context.client.name if context.client else context.request.client_ip
@@ -108,3 +113,12 @@ def create_app() -> FastAPI:
         return Response(decision, media_type="application/json")
 
     return app
+
+
+def _span(seconds: int) -> str:
+    """Return a short duration such as 2h, 5m, or 90s."""
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"

@@ -10,6 +10,9 @@
 # A rule that redirects to that token will not load while this is unset.
 # revision_task = "http://192.168.1.10:8080/tasks/next"
 
+# How long a new usage bucket is. The default is five minutes. This is not a quota.
+# bucket_length = "5m"
+
 # One [[clients]] table per computer. address is the computer's DHCP reservation,
 # written as an IP or as a DNS name. DNS names are looked up when the service
 # starts, not on every request, so restart the service if a reservation changes.
@@ -54,7 +57,15 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # least that many revision successes stored for the household-local date. A
 # [[groups.rules.weekdays]] table can set a different count for one weekday.
 # Nothing records a real completion yet, so the count stays zero unless it is
-# written into the database. quota_remaining is still treated as true.
+# written into the database.
+#
+# quota_remaining is true when today's ended usage for this client and this
+# group is strictly under the group's quota. quota is a duration such as 2h,
+# 120m, or 7200s. A bare number is rejected. Leave quota off and the condition
+# stays true. Buckets are household.bucket_length (five minutes by default).
+# A bucket counts only after it ends, at the length it was opened with.
+# Nothing records real traffic yet, so usage stays zero unless a bucket is
+# written into the database.
 #
 # [[groups]]
 # name = "School work"
@@ -69,6 +80,7 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # [[groups]]
 # name = "Entertainment"
 # priority = 30
+# quota = "2h"
 # patterns = ["*.youtube.com", "youtu.be"]
 #
 # [[groups.rules]]
@@ -90,6 +102,11 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # [[groups.rules.weekdays]]
 # day = "wednesday"
 # required = 1
+#
+# [[groups.rules]]
+# condition = "quota_remaining"
+# when_true = { action = "allow" }
+# when_false = { action = "deny", message = "Time is up for today." }
 
 [[groups]]
 name = "Everything else"

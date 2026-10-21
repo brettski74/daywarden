@@ -1,4 +1,4 @@
-"""S001.3: ordered rules and time windows. The task count is S001.4; quota is still a hook."""
+"""S001.3: ordered rules and time windows. The task count is S001.4. Quota is S001.5."""
 
 import re
 import sys
@@ -244,19 +244,20 @@ def test_the_entertainment_schedule_on_wednesday(hour, minute, expected):
 
 
 def test_the_boundary_between_school_and_the_evening_belongs_to_the_later_window():
-    assert _schedule(at=_at(14, 59), completed=2, quota_remaining=True) == REDIRECT
-    assert _schedule(at=_at(15, 0), completed=2, quota_remaining=True) == ALLOW
-    assert _schedule(at=_at(19, 0), completed=2, quota_remaining=True) == CLOSED
+    assert _schedule(at=_at(14, 59), completed=2) == REDIRECT
+    assert _schedule(at=_at(15, 0), completed=2) == ALLOW
+    assert _schedule(at=_at(19, 0), completed=2) == CLOSED
 
 
 def test_two_completions_at_1600_let_the_quota_rule_decide():
-    assert _schedule(at=_at(16, 0), completed=2, quota_remaining=True) == ALLOW
-    assert _schedule(at=_at(16, 0), completed=2, quota_remaining=False) == TIME_UP
+    two_hours = 2 * 60 * 60
+    assert _schedule(at=_at(16, 0), completed=2, quota=two_hours, consumed=0) == ALLOW
+    assert _schedule(at=_at(16, 0), completed=2, quota=two_hours, consumed=two_hours) == TIME_UP
 
 
 def test_completions_do_not_skip_an_earlier_rule():
-    assert _schedule(at=_at(10, 0), completed=2, quota_remaining=True) == REDIRECT
-    assert _schedule(at=_at(16, 0), completed=1, quota_remaining=False) == REDIRECT
+    assert _schedule(at=_at(10, 0), completed=2) == REDIRECT
+    assert _schedule(at=_at(16, 0), completed=1, quota=2 * 60 * 60, consumed=2 * 60 * 60) == REDIRECT
 
 
 def test_a_missing_placeholder_fails_closed():
@@ -320,6 +321,8 @@ def test_a_version_2_database_is_upgraded_and_keeps_its_groups(tmp_path):
         config.apply(config.parse(plain), store, warn=_quiet)
         store.connection.executescript(
             """
+            DROP TABLE usage_buckets;
+            ALTER TABLE site_groups DROP COLUMN quota_seconds;
             DROP TABLE rule_weekday_counts;
             DROP TABLE task_completions;
             DROP TABLE rule_actions;

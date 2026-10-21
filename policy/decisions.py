@@ -2,8 +2,9 @@
 
 Every request is judged by the household rules, whether or not its source IP
 belongs to a client. The client names the computer, which selects the revision
-count stored for that computer on the household-local date. A URL that is in
-no site group is denied. A URL in a group is judged by that group's rules.
+count and the usage ledger for that computer on the household-local date. A
+URL that is in no site group is denied. A URL in a group is judged by that
+group's rules.
 
 DECISION_STUB is the old single-file answer. The addon tests set it so they
 can still hand the proxy a decision, including one the rules would never
@@ -92,17 +93,29 @@ def completed_today(store: PolicyStore, context: DecisionContext) -> int:
     return store.task_completions(context.client.id, context.local_time.date())
 
 
+def consumed_today(store: PolicyStore, context: DecisionContext) -> int:
+    """Return today's ended usage, in seconds, for this client and site group.
+
+    An IP that is not a client has used none. A bucket that has not ended is
+    not included. The total is whatever the ledger currently holds.
+    """
+    if context.client is None or context.group is None:
+        return 0
+    return store.consumed_seconds(context.client.id, context.group.name, context.local_time)
+
+
 def decide(
     context: DecisionContext,
     *,
     revision_task: str | None = None,
     completed: int = 0,
-    quota_remaining: bool = True,
+    consumed: int = 0,
 ) -> bytes:
     """Judge the request by its site group's rules.
 
-    completed is today's stored revision count for the client. quota_remaining
-    is still the stand-in for S001.5.
+    completed is today's stored revision count for the client. consumed is
+    today's ended usage, in seconds, for the client and the group. A group
+    with no quota still passes quota_remaining.
     """
     if context.group is None:
         return _deny(UNGROUPED_MESSAGE)
@@ -111,7 +124,8 @@ def decide(
             context.group.rules,
             context.local_time,
             completed=completed,
-            quota_remaining=quota_remaining,
+            consumed=consumed,
+            quota=context.group.quota,
             revision_task=revision_task,
         )
     )
@@ -124,7 +138,7 @@ def answer(
     stub: bool = False,
     revision_task: str | None = None,
     completed: int = 0,
-    quota_remaining: bool = True,
+    consumed: int = 0,
 ) -> bytes | None:
     """Return the body to send. A grouped URL uses the decision file only when stub is set."""
     if context.group is None:
@@ -135,7 +149,7 @@ def answer(
         context,
         revision_task=revision_task,
         completed=completed,
-        quota_remaining=quota_remaining,
+        consumed=consumed,
     )
 
 

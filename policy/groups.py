@@ -23,6 +23,7 @@ class SiteGroup:
     patterns: tuple[str, ...] = ()
     default: bool = False
     rules: tuple[Rule, ...] = ()
+    quota: int | None = None
 
 
 def matches(pattern: str, url: str) -> bool:

@@ -1,5 +1,5 @@
-"""S001.1 through S001.4: the policy service stores clients, the timezone, site groups,
-rules, and today's revision count, and keeps them across a restart."""
+"""S001.1 through S001.5: the policy service stores clients, the timezone, site groups,
+rules, today's revision count, and today's usage, and keeps them across a restart."""
 
 import json
 import os
@@ -42,6 +42,7 @@ when_false = { action = "continue" }
 [[groups]]
 name = "Entertainment"
 priority = 30
+quota = "2h"
 patterns = ["*.youtube.com", "youtu.be"]
 
 [[groups.rules]]
@@ -91,6 +92,7 @@ BEDTIME = {"action": "deny", "status": 403, "message": "It's bedtime."}
 CLOSED = {"action": "deny", "status": 403, "message": "YouTube is closed for today."}
 REDIRECT = {"action": "redirect", "status": 302, "location": PLACEHOLDER}
 ALLOW = {"action": "allow"}
+TIME_UP = {"action": "deny", "status": 403, "message": "Time is up for today."}
 
 # Runs inside the container, so the test does not need a published port.
 POST = """
@@ -275,7 +277,37 @@ def test_urls_are_put_in_site_groups_and_rules_decide(stack):
     logs = stack.logs()
     assert "no default group" in logs
     assert "revision task placeholder http://tasks.example/next" in logs
-    assert "group Entertainment: priority 30, 2 patterns, 5 rules" in logs
+    assert "group Entertainment: priority 30, 2 patterns, 5 rules, quota 2h" in logs
+    assert "usage buckets are 5m" in logs
+
+
+MARK_BUCKETS = """
+import json, sys
+from datetime import datetime, timedelta
+from policy.store import PolicyStore
+document = json.load(sys.stdin)
+store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+row = store.connection.execute(
+    "SELECT id FROM clients WHERE name = ?", (document["name"],)
+).fetchone()
+if row is None:
+    raise SystemExit("no client " + document["name"])
+start = datetime.fromisoformat(document["start"])
+step = timedelta(minutes=5)
+for index in range(document["count"]):
+    store.mark_bucket(
+        row[0], document["group"], start + index * step, length_seconds=300
+    )
+store.close()
+"""
+
+CLEAR_BUCKETS = """
+from policy.store import PolicyStore
+store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+store.connection.execute("DELETE FROM usage_buckets")
+store.connection.commit()
+store.close()
+"""
 
 
 def _set_count(stack: Stack, name: str, day: str, count: int) -> None:
@@ -299,6 +331,36 @@ def test_a_stored_count_of_two_allows_wednesday_evening_and_one_redirects(stack)
         assert status == 200
         assert json.loads(body) == REDIRECT
     finally:
+        _set_count(stack, "Younger child", "2026-10-21", 0)
+
+
+def _mark_buckets(stack: Stack, name: str, group: str, start: str, count: int) -> None:
+    stack.run(
+        ["exec", "-T", "decisions", "python", "-c", MARK_BUCKETS],
+        stdin=json.dumps({"name": name, "group": group, "start": start, "count": count}),
+        timeout=30,
+    )
+
+
+def _clear_buckets(stack: Stack) -> None:
+    stack.run(["exec", "-T", "decisions", "python", "-c", CLEAR_BUCKETS], timeout=30)
+
+
+def test_twenty_three_buckets_allow_wednesday_evening_and_twenty_four_deny(stack):
+    try:
+        _set_count(stack, "Younger child", "2026-10-21", 2)
+        _mark_buckets(stack, "Younger child", "Entertainment", "2026-10-21T08:00:00", 23)
+        status, body, entry = stack.decide(_request("192.0.2.40", _local(16, 0)))
+        assert status == 200
+        assert json.loads(body) == ALLOW
+        assert entry["group"] == "Entertainment"
+
+        _mark_buckets(stack, "Younger child", "Entertainment", "2026-10-21T08:00:00", 24)
+        status, body, _entry = stack.decide(_request("192.0.2.40", _local(16, 0)))
+        assert status == 200
+        assert json.loads(body) == TIME_UP
+    finally:
+        _clear_buckets(stack)
         _set_count(stack, "Younger child", "2026-10-21", 0)
 
 
