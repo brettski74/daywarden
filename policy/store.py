@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 
 from policy.clients import Client
 from policy.groups import SiteGroup
-from policy.rules import Action, Rule, TimeWindow
+from policy.rules import Action, Rule, TaskRequirement, TimeWindow
 
 # _MIGRATIONS[n] takes a database from schema version n to n + 1.
 _MIGRATIONS = (
@@ -67,6 +67,23 @@ _MIGRATIONS = (
         message TEXT,
         location TEXT,
         PRIMARY KEY (rule_id, branch)
+    );
+    """,
+    # required is the tasks_complete count. A weekday row replaces it for that day.
+    # Completions are successes for one client on one household-local date.
+    """
+    ALTER TABLE rules ADD COLUMN required INTEGER;
+    CREATE TABLE rule_weekday_counts (
+        rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+        weekday INTEGER NOT NULL,
+        required INTEGER NOT NULL,
+        PRIMARY KEY (rule_id, weekday)
+    );
+    CREATE TABLE task_completions (
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        day TEXT NOT NULL,
+        completions INTEGER NOT NULL,
+        PRIMARY KEY (client_id, day)
     );
     """,
 )
@@ -161,20 +178,59 @@ class PolicyStore:
             windows.setdefault(rule_id, []).append(
                 TimeWindow(time.fromisoformat(start), time.fromisoformat(end), weekdays)
             )
+        overrides: dict[int, list[tuple[int, int]]] = {}
+        for rule_id, weekday, required in self.connection.execute(
+            "SELECT rule_id, weekday, required FROM rule_weekday_counts ORDER BY rule_id, weekday"
+        ):
+            overrides.setdefault(rule_id, []).append((int(weekday), int(required)))
         by_group: dict[int, list[Rule]] = {}
-        for rule_id, group_id, condition in self.connection.execute(
-            "SELECT id, group_id, condition FROM rules ORDER BY group_id, position"
+        for rule_id, group_id, condition, required in self.connection.execute(
+            "SELECT id, group_id, condition, required FROM rules ORDER BY group_id, position"
         ):
             branches = actions[rule_id]
+            requirement = None
+            if condition == "tasks_complete" and required is not None:
+                requirement = TaskRequirement(int(required), tuple(overrides.get(rule_id, ())))
             by_group.setdefault(group_id, []).append(
                 Rule(
                     condition,
                     branches["when_true"],
                     branches["when_false"],
                     tuple(windows.get(rule_id, ())),
+                    requirement,
                 )
             )
         return by_group
+
+    def task_completions(self, client_id: int, day: date) -> int:
+        """Return the stored revision successes for this client on this local date.
+
+        A day with no row is zero. The date is the household-local date, not UTC.
+        """
+        row = self.connection.execute(
+            "SELECT completions FROM task_completions WHERE client_id = ? AND day = ?",
+            (client_id, _day(day)),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def set_task_completions(self, client_id: int, day: date, count: int) -> None:
+        """Store how many revision tasks this client has finished on this local date.
+
+        This is the count tasks_complete reads. A test or an administrator writes
+        it until real completions do. The count replaces whatever was stored.
+        """
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("a completion count is a whole number, zero or more")
+        stored_day = _day(day)
+        with self.connection:
+            try:
+                self.connection.execute(
+                    "INSERT INTO task_completions (client_id, day, completions) VALUES (?, ?, ?) "
+                    "ON CONFLICT (client_id, day) DO UPDATE SET completions = excluded.completions",
+                    (client_id, stored_day, count),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f"client {client_id} is not in the household") from exc
 
     def save_household(
         self,
@@ -187,7 +243,8 @@ class PolicyStore:
 
         clients holds (name, address, ips). A client or a group keeps its id
         while its name stays the same, so later records stay attached. Rules are
-        rewritten each load; nothing refers to a rule id yet.
+        rewritten each load. A client's revision count is not in the file, so a
+        reload leaves it in place.
         """
         with self.connection:
             self.connection.executemany(
@@ -239,10 +296,23 @@ class PolicyStore:
     def _insert_rules(self, group_id: int, group: SiteGroup) -> None:
         for position, rule in enumerate(group.rules):
             cursor = self.connection.execute(
-                "INSERT INTO rules (group_id, position, condition) VALUES (?, ?, ?)",
-                (group_id, position, rule.condition),
+                "INSERT INTO rules (group_id, position, condition, required) VALUES (?, ?, ?, ?)",
+                (
+                    group_id,
+                    position,
+                    rule.condition,
+                    None if rule.requirement is None else rule.requirement.required,
+                ),
             )
             rule_id = cursor.lastrowid
+            if rule.requirement is not None:
+                self.connection.executemany(
+                    "INSERT INTO rule_weekday_counts (rule_id, weekday, required) VALUES (?, ?, ?)",
+                    [
+                        (rule_id, weekday, count)
+                        for weekday, count in rule.requirement.overrides
+                    ],
+                )
             self.connection.executemany(
                 "INSERT INTO rule_actions (rule_id, branch, kind, message, location) VALUES (?, ?, ?, ?, ?)",
                 [
@@ -268,3 +338,9 @@ class PolicyStore:
                     for position, window in enumerate(rule.windows)
                 ],
             )
+
+
+def _day(day: date) -> str:
+    if type(day) is not date:
+        raise ValueError("day must be a date")
+    return day.isoformat()

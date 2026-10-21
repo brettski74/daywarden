@@ -17,7 +17,7 @@ from pathlib import Path
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
 from policy.groups import SiteGroup
-from policy.rules import REVISION_TASK, Action, Rule, TimeWindow, absolute_http_url
+from policy.rules import REVISION_TASK, Action, Rule, TaskRequirement, TimeWindow, absolute_http_url
 from policy.store import PolicyStore
 
 _CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "always"}
@@ -147,7 +147,7 @@ def _rules(entries: object, where: str) -> tuple[Rule, ...]:
 
 
 def _rule(entry: dict, where: str) -> Rule:
-    _only(entry, {"condition", "when_true", "when_false", "windows"}, where)
+    _only(entry, {"condition", "when_true", "when_false", "windows", "required", "weekdays"}, where)
     condition = entry.get("condition")
     if condition not in _CONDITIONS:
         raise ConfigError(
@@ -156,6 +156,8 @@ def _rule(entry: dict, where: str) -> Rule:
     if "when_true" not in entry or "when_false" not in entry:
         raise ConfigError(f"{where}: when_true and when_false are both required")
     if condition == "time_window":
+        if "required" in entry or "weekdays" in entry:
+            raise ConfigError(f"{where}: time_window does not take a required count")
         windows_value = entry.get("windows", [])
         if not isinstance(windows_value, list) or not windows_value:
             raise ConfigError(f"{where}: time_window needs at least one window")
@@ -167,12 +169,58 @@ def _rule(entry: dict, where: str) -> Rule:
         raise ConfigError(f"{where}: {condition} does not take windows")
     else:
         windows = ()
+    if condition == "tasks_complete":
+        requirement = _requirement(entry, where)
+    elif "required" in entry or "weekdays" in entry:
+        raise ConfigError(f"{where}: {condition} does not take a required count")
+    else:
+        requirement = None
     return Rule(
         condition,
         _action(entry["when_true"], f"{where}: when_true"),
         _action(entry["when_false"], f"{where}: when_false"),
         windows,
+        requirement,
     )
+
+
+def _requirement(entry: dict, where: str) -> TaskRequirement:
+    if "required" not in entry:
+        raise ConfigError(f"{where}: tasks_complete needs a required count")
+    required = _count(entry["required"], f"{where}: required")
+    rows = entry.get("weekdays", [])
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ConfigError(f"{where}: weekdays must be written as [[groups.rules.weekdays]] tables")
+    overrides: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for number, row in enumerate(rows, start=1):
+        place = f"{where}: weekday {number}"
+        _only(row, {"day", "required"}, place)
+        if "day" not in row:
+            raise ConfigError(f"{place}: day is required")
+        weekday = _weekday(row["day"], place)
+        if weekday in seen:
+            name = row["day"].strip().lower() if isinstance(row["day"], str) else row["day"]
+            raise ConfigError(f"{place}: {name} is listed twice")
+        seen.add(weekday)
+        if "required" not in row:
+            raise ConfigError(f"{place}: needs a required count")
+        overrides.append((weekday, _count(row["required"], f"{place}: required")))
+    return TaskRequirement(required, tuple(sorted(overrides)))
+
+
+def _weekday(value: object, where: str) -> int:
+    name = value.strip().lower() if isinstance(value, str) else ""
+    number = _WEEKDAYS.get(name)
+    if number is None:
+        raise ConfigError(f"{where}: {value!r} is not a weekday")
+    return number
+
+
+def _count(value: object, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"{where} must be a whole number, zero or more")
+    return value
 
 
 def _window(entry: object, where: str) -> TimeWindow:

@@ -1,5 +1,5 @@
-"""S001.1 through S001.3: the policy service stores clients, the timezone, site groups,
-and rules, and keeps them across a restart."""
+"""S001.1 through S001.4: the policy service stores clients, the timezone, site groups,
+rules, and today's revision count, and keeps them across a restart."""
 
 import json
 import os
@@ -76,6 +76,7 @@ days = ["monday", "tuesday", "wednesday", "thursday"]
 
 [[groups.rules]]
 condition = "tasks_complete"
+required = 2
 when_true = { action = "continue" }
 when_false = { action = "redirect", location = "revision_task" }
 
@@ -249,6 +250,22 @@ def _assert_groups(stack: Stack):
         assert datetime.fromisoformat(entry["local_time"]) == datetime(2026, 10, 21, hour, minute, tzinfo=SYDNEY)
 
 
+SET_COUNT = """
+import json, sys
+from datetime import date
+from policy.store import PolicyStore
+document = json.load(sys.stdin)
+store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+row = store.connection.execute(
+    "SELECT id FROM clients WHERE name = ?", (document["name"],)
+).fetchone()
+if row is None:
+    raise SystemExit("no client " + document["name"])
+store.set_task_completions(row[0], date.fromisoformat(document["day"]), document["count"])
+store.close()
+"""
+
+
 def test_clients_are_named_and_time_is_household_local(stack):
     _assert_household(stack)
 
@@ -259,6 +276,30 @@ def test_urls_are_put_in_site_groups_and_rules_decide(stack):
     assert "no default group" in logs
     assert "revision task placeholder http://tasks.example/next" in logs
     assert "group Entertainment: priority 30, 2 patterns, 5 rules" in logs
+
+
+def _set_count(stack: Stack, name: str, day: str, count: int) -> None:
+    stack.run(
+        ["exec", "-T", "decisions", "python", "-c", SET_COUNT],
+        stdin=json.dumps({"name": name, "day": day, "count": count}),
+        timeout=30,
+    )
+
+
+def test_a_stored_count_of_two_allows_wednesday_evening_and_one_redirects(stack):
+    try:
+        _set_count(stack, "Younger child", "2026-10-21", 2)
+        status, body, entry = stack.decide(_request("192.0.2.40", _local(16, 0)))
+        assert status == 200
+        assert json.loads(body) == ALLOW
+        assert entry["client"] == "Younger child"
+
+        _set_count(stack, "Younger child", "2026-10-21", 1)
+        status, body, _entry = stack.decide(_request("192.0.2.40", _local(16, 0)))
+        assert status == 200
+        assert json.loads(body) == REDIRECT
+    finally:
+        _set_count(stack, "Younger child", "2026-10-21", 0)
 
 
 def test_an_unenrolled_ip_still_gets_a_decision(stack):

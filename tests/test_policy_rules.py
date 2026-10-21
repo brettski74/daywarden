@@ -1,4 +1,4 @@
-"""S001.3: ordered rules, time windows, and the task and quota test hooks."""
+"""S001.3: ordered rules and time windows. The task count is S001.4; quota is still a hook."""
 
 import re
 import sys
@@ -72,6 +72,7 @@ days = ["monday", "tuesday", "wednesday", "thursday"]
 
 [[groups.rules]]
 condition = "tasks_complete"
+required = 2
 when_true = { action = "continue" }
 when_false = { action = "redirect", location = "revision_task" }
 
@@ -243,19 +244,19 @@ def test_the_entertainment_schedule_on_wednesday(hour, minute, expected):
 
 
 def test_the_boundary_between_school_and_the_evening_belongs_to_the_later_window():
-    assert _schedule(at=_at(14, 59), tasks_complete=True, quota_remaining=True) == REDIRECT
-    assert _schedule(at=_at(15, 0), tasks_complete=True, quota_remaining=True) == ALLOW
-    assert _schedule(at=_at(19, 0), tasks_complete=True, quota_remaining=True) == CLOSED
+    assert _schedule(at=_at(14, 59), completed=2, quota_remaining=True) == REDIRECT
+    assert _schedule(at=_at(15, 0), completed=2, quota_remaining=True) == ALLOW
+    assert _schedule(at=_at(19, 0), completed=2, quota_remaining=True) == CLOSED
 
 
-def test_forcing_tasks_and_quota_true_at_1600_allows_the_request():
-    assert _schedule(at=_at(16, 0), tasks_complete=True, quota_remaining=True) == ALLOW
+def test_two_completions_at_1600_let_the_quota_rule_decide():
+    assert _schedule(at=_at(16, 0), completed=2, quota_remaining=True) == ALLOW
+    assert _schedule(at=_at(16, 0), completed=2, quota_remaining=False) == TIME_UP
 
 
-def test_the_hooks_do_not_skip_an_earlier_rule():
-    assert _schedule(at=_at(10, 0), tasks_complete=True, quota_remaining=True) == REDIRECT
-    assert _schedule(at=_at(16, 0), tasks_complete=True, quota_remaining=False) == TIME_UP
-    assert _schedule(at=_at(16, 0), tasks_complete=False, quota_remaining=False) == REDIRECT
+def test_completions_do_not_skip_an_earlier_rule():
+    assert _schedule(at=_at(10, 0), completed=2, quota_remaining=True) == REDIRECT
+    assert _schedule(at=_at(16, 0), completed=1, quota_remaining=False) == REDIRECT
 
 
 def test_a_missing_placeholder_fails_closed():
@@ -318,7 +319,14 @@ def test_a_version_2_database_is_upgraded_and_keeps_its_groups(tmp_path):
     with PolicyStore(database) as store:
         config.apply(config.parse(plain), store, warn=_quiet)
         store.connection.executescript(
-            "DROP TABLE rule_actions; DROP TABLE rule_windows; DROP TABLE rules; PRAGMA user_version = 2;"
+            """
+            DROP TABLE rule_weekday_counts;
+            DROP TABLE task_completions;
+            DROP TABLE rule_actions;
+            DROP TABLE rule_windows;
+            DROP TABLE rules;
+            PRAGMA user_version = 2;
+            """
         )
     with PolicyStore(database) as upgraded:
         (version,) = upgraded.connection.execute("PRAGMA user_version").fetchone()
@@ -349,6 +357,45 @@ def test_a_version_2_database_is_upgraded_and_keeps_its_groups(tmp_path):
             '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
             'when_true = { action = "continue" }\n',
             "when_true and when_false are both required",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
+            'when_true = { action = "continue" }\nwhen_false = { action = "continue" }\n',
+            "needs a required count",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
+            'required = -1\nwhen_true = { action = "continue" }\nwhen_false = { action = "continue" }\n',
+            "whole number, zero or more",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
+            'required = true\nwhen_true = { action = "continue" }\nwhen_false = { action = "continue" }\n',
+            "whole number, zero or more",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
+            'required = 2\nwhen_true = { action = "continue" }\nwhen_false = { action = "continue" }\n'
+            '[[groups.rules.weekdays]]\nday = "funday"\nrequired = 1\n',
+            "not a weekday",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "tasks_complete"\n'
+            'required = 2\nwhen_true = { action = "continue" }\nwhen_false = { action = "continue" }\n'
+            '[[groups.rules.weekdays]]\nday = "wednesday"\nrequired = 1\n'
+            '[[groups.rules.weekdays]]\nday = "Wednesday"\nrequired = 0\n',
+            "listed twice",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "always"\n'
+            'required = 1\nwhen_true = { action = "allow" }\nwhen_false = { action = "continue" }\n',
+            "does not take a required count",
+        ),
+        (
+            '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "time_window"\n'
+            'required = 1\nwhen_true = { action = "allow" }\nwhen_false = { action = "continue" }\n'
+            '[[groups.rules.windows]]\nstart = "10:00"\nend = "11:00"\n',
+            "does not take a required count",
         ),
         (
             '[[groups]]\nname = "A"\npriority = 1\n[[groups.rules]]\ncondition = "time_window"\n'
