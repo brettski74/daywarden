@@ -38,7 +38,9 @@ Rules are `[[groups.rules]]` tables written under a group, in the order they sho
 
 A `time_window` condition is true when the household-local clock is inside any of its windows. The start counts and the end does not, so `07:00–15:00` and `15:00–19:00` do not both match at 15:00. List `days` as weekday names, or leave `days` out to mean every day. A window may cross midnight: `22:00–07:00` on Saturday includes Saturday night and Sunday morning, and does not include Saturday morning.
 
-A `tasks_complete` condition carries `required`, a count of successful revision tasks. It is true when this client has at least that many stored for the household-local date. A `[[groups.rules.weekdays]]` table sets a different count for one named weekday; every other day keeps `required`. The count is a number in the policy database. Real completions are not recorded yet, so it stays zero unless a test or an administrator writes one. `quota_remaining` is still treated as true.
+A `tasks_complete` condition carries `required`, a count of successful revision tasks. It is true when this client has at least that many stored for the household-local date. A `[[groups.rules.weekdays]]` table sets a different count for one named weekday; every other day keeps `required`. The count is a number in the policy database. Real completions are not recorded yet, so it stays zero unless a test or an administrator writes one.
+
+A `quota_remaining` condition is true when today's ended usage for this client and this group is strictly under the group's `quota`. The quota is a duration such as `2h`, `120m`, or `7200s`. Those three are the same two-hour limit. A bare number is rejected, so the quota cannot be written as a count of buckets. Leave `quota` off a group and the condition stays true. Usage is measured in buckets (`household.bucket_length`, five minutes when it is left out). A bucket counts only after its end time has passed, and it contributes the length it had when it was opened. Changing the bucket length later does not change a stored quota, and it does not resize buckets that are already recorded. Real traffic is not written into the ledger yet, so the total stays zero unless a test or an administrator records a bucket.
 
 ```toml
 [[groups.rules]]
@@ -60,6 +62,12 @@ when_false = { action = "redirect", location = "revision_task" }
 [[groups.rules.weekdays]]
 day = "wednesday"
 required = 1
+
+# quota = "2h" belongs on the [[groups]] table, not on the rule.
+[[groups.rules]]
+condition = "quota_remaining"
+when_true = { action = "allow" }
+when_false = { action = "deny", message = "Time is up for today." }
 ```
 
 The three answers a rule can produce are:
@@ -74,7 +82,7 @@ The three answers a rule can produce are:
 
 Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the client name (or `null`), the household-local time, the site group (or `null`), and the decision returned.
 
-A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. The service in this repo only records the calls. The ledger that stores them comes later.
+A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. The service in this repo only records the calls. It does not yet write them into the usage ledger, so a quota stays unused until something else records a bucket.
 
 ## Certificate authority
 

@@ -13,7 +13,12 @@ inside any one of the windows.
 `tasks_complete` is true when this client's stored revision successes for the
 local date are at least the required count. A weekday can require a different
 count. The count is only a number; which tasks made it up is left to later
-stories. `quota_remaining` is still a boolean supplied by the caller.
+stories.
+
+`quota_remaining` is true when this client's ended usage for the group on
+that date is strictly below the group's quota. The quota is a duration in
+seconds. A group with no quota makes the condition true. Usage is the sum of
+the lengths of buckets that contained traffic and have already ended.
 """
 
 from __future__ import annotations
@@ -83,25 +88,30 @@ def evaluate(
     at: datetime,
     *,
     completed: int = 0,
-    quota_remaining: bool = True,
+    consumed: int = 0,
+    quota: int | None = None,
     revision_task: str | None = None,
 ) -> dict:
     """Return the decision for rules at household-local time at.
 
     completed is how many revision tasks this client has finished on the
     household-local date of at. It is compared with the required count for
-    that weekday. The default is none finished. quota_remaining is still the
-    stand-in for that condition, and it still defaults to remaining.
+    that weekday. The default is none finished.
+
+    consumed is how many seconds of ended buckets this client has already
+    used for the group on that date. quota is the group's limit in seconds,
+    or None when the group has no quota. The condition is true when quota is
+    absent or consumed is strictly below it.
     """
     for rule in rules:
-        action = rule.when_true if _holds(rule, at, completed, quota_remaining) else rule.when_false
+        action = rule.when_true if _holds(rule, at, completed, consumed, quota) else rule.when_false
         if action.kind == "continue":
             continue
         return _decision(action, revision_task)
     return {"action": "deny", "status": 403, "message": FALLTHROUGH_MESSAGE}
 
 
-def _holds(rule: Rule, at: datetime, completed: int, quota_remaining: bool) -> bool:
+def _holds(rule: Rule, at: datetime, completed: int, consumed: int, quota: int | None) -> bool:
     if rule.condition == "always":
         return True
     if rule.condition == "time_window":
@@ -110,7 +120,7 @@ def _holds(rule: Rule, at: datetime, completed: int, quota_remaining: bool) -> b
         requirement = rule.requirement
         return requirement is not None and completed >= requirement.for_weekday(at.weekday())
     if rule.condition == "quota_remaining":
-        return quota_remaining
+        return quota is None or consumed < quota
     raise ValueError(f"unknown condition {rule.condition!r}")
 
 

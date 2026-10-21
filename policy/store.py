@@ -1,10 +1,16 @@
-"""SQLite storage for the household policy."""
+"""SQLite storage for the household policy and the usage ledger.
+
+A usage bucket is one stretch of time, for one client and one site group,
+that contained traffic. It keeps the length configured when it was opened.
+S002.1 writes these rows from observations. Until then a test or an
+administrator can write them. quota_remaining reads the ones that have ended.
+"""
 
 from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from policy.clients import Client
@@ -86,8 +92,25 @@ _MIGRATIONS = (
         PRIMARY KEY (client_id, day)
     );
     """,
+    # quota_seconds is the group's daily duration, NULL when it has no quota.
+    # It is never a count of buckets. A usage bucket keeps the length it was
+    # opened with. A later observation in that same bucket adds bytes and
+    # does not insert another row. S002.1 is the writer; this story reads.
+    """
+    ALTER TABLE site_groups ADD COLUMN quota_seconds INTEGER;
+    CREATE TABLE usage_buckets (
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        group_id INTEGER NOT NULL REFERENCES site_groups(id) ON DELETE CASCADE,
+        day TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        length_seconds INTEGER NOT NULL,
+        byte_count INTEGER NOT NULL,
+        PRIMARY KEY (client_id, group_id, started_at)
+    );
+    """,
 )
 SCHEMA_VERSION = len(_MIGRATIONS)
+DEFAULT_BUCKET_SECONDS = 300
 
 
 class PolicyStore:
@@ -158,9 +181,10 @@ class PolicyStore:
                 tuple(patterns.get(group_id, ())),
                 bool(is_default),
                 tuple(rules.get(group_id, ())),
+                None if quota_seconds is None else int(quota_seconds),
             )
-            for group_id, name, priority, is_default in self.connection.execute(
-                "SELECT id, name, priority, is_default FROM site_groups ORDER BY id"
+            for group_id, name, priority, is_default, quota_seconds in self.connection.execute(
+                "SELECT id, name, priority, is_default, quota_seconds FROM site_groups ORDER BY id"
             )
         ]
 
@@ -232,25 +256,116 @@ class PolicyStore:
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f"client {client_id} is not in the household") from exc
 
+    def bucket_length(self) -> int:
+        """Return the length, in seconds, used when a new bucket is opened.
+
+        Five minutes is the length when the household has not set one.
+        """
+        row = self.connection.execute(
+            "SELECT value FROM settings WHERE key = 'bucket_length'"
+        ).fetchone()
+        if row is None or row[0] in (None, ""):
+            return DEFAULT_BUCKET_SECONDS
+        return int(row[0])
+
+    def mark_bucket(
+        self,
+        client_id: int,
+        group: str,
+        started_at: datetime,
+        *,
+        length_seconds: int | None = None,
+        byte_count: int = 0,
+    ) -> None:
+        """Record that this bucket contained traffic.
+
+        started_at is the household-local start. An aware value is already in
+        that zone; its offset is dropped, not converted. The length is the
+        one configured now when length_seconds is omitted. A bucket that is
+        already stored keeps its length. byte_count is added to the stored
+        total, and a second observation does not create a second row.
+        """
+        if length_seconds is None:
+            length_seconds = self.bucket_length()
+        length_seconds = _one_or_more(length_seconds, "a bucket length")
+        byte_count = _zero_or_more(byte_count, "a byte count")
+        start = _wall(started_at)
+        group_id = self._group_id(group)
+        with self.connection:
+            try:
+                self.connection.execute(
+                    "INSERT INTO usage_buckets ("
+                    "client_id, group_id, day, started_at, length_seconds, byte_count"
+                    ") VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (client_id, group_id, started_at) DO UPDATE SET "
+                    "byte_count = usage_buckets.byte_count + excluded.byte_count",
+                    (
+                        client_id,
+                        group_id,
+                        _day(start.date()),
+                        start.isoformat(timespec="seconds"),
+                        length_seconds,
+                        byte_count,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f"client {client_id} is not in the household") from exc
+
+    def consumed_seconds(self, client_id: int, group: str, at: datetime) -> int:
+        """Return today's ended usage, in seconds, for this client and group.
+
+        A bucket counts when at is at or after the bucket's end. at is
+        household-local. Buckets from another day, another client, or another
+        group are left out, and so is a bucket that is still open.
+        """
+        wall = _wall(at)
+        group_id = self._group_id(group)
+        total = 0
+        for started_at, length in self.connection.execute(
+            "SELECT started_at, length_seconds FROM usage_buckets "
+            "WHERE client_id = ? AND group_id = ? AND day = ?",
+            (client_id, group_id, _day(wall.date())),
+        ):
+            start = datetime.fromisoformat(started_at)
+            if start + timedelta(seconds=int(length)) <= wall:
+                total += int(length)
+        return total
+
+    def _group_id(self, name: str) -> int:
+        row = self.connection.execute(
+            "SELECT id FROM site_groups WHERE name = ?", (name,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"group {name!r} is not in the household")
+        return int(row[0])
+
     def save_household(
         self,
         timezone: str | None,
         clients: Sequence[tuple[str, str, Sequence[str]]],
         groups: Sequence[SiteGroup],
         revision_task: str | None = None,
+        bucket_length: int = DEFAULT_BUCKET_SECONDS,
     ) -> None:
         """Replace the timezone, the client list and the site groups in one transaction.
 
         clients holds (name, address, ips). A client or a group keeps its id
         while its name stays the same, so later records stay attached. Rules are
-        rewritten each load. A client's revision count is not in the file, so a
-        reload leaves it in place.
+        rewritten each load. A client's revision count is not in the file, and
+        neither are usage buckets, so a reload leaves both in place. The quota
+        and the bucket length do come from the file. Changing the bucket length
+        does not resize a quota or a bucket that is already stored.
         """
+        length = _one_or_more(bucket_length, "the bucket length")
         with self.connection:
             self.connection.executemany(
                 "INSERT INTO settings (key, value) VALUES (?, ?) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                (("timezone", timezone), ("revision_task", revision_task)),
+                (
+                    ("timezone", timezone),
+                    ("revision_task", revision_task),
+                    ("bucket_length", str(length)),
+                ),
             )
             self.connection.execute("DELETE FROM client_ips")
             keep = {name for name, _address, _ips in clients}
@@ -279,10 +394,12 @@ class PolicyStore:
                     self.connection.execute("DELETE FROM site_groups WHERE name = ?", (name,))
             for group in groups:
                 self.connection.execute(
-                    "INSERT INTO site_groups (name, priority, is_default) VALUES (?, ?, ?) "
+                    "INSERT INTO site_groups (name, priority, is_default, quota_seconds) "
+                    "VALUES (?, ?, ?, ?) "
                     "ON CONFLICT (name) DO UPDATE SET "
-                    "priority = excluded.priority, is_default = excluded.is_default",
-                    (group.name, group.priority, int(group.default)),
+                    "priority = excluded.priority, is_default = excluded.is_default, "
+                    "quota_seconds = excluded.quota_seconds",
+                    (group.name, group.priority, int(group.default), group.quota),
                 )
                 (group_id,) = self.connection.execute(
                     "SELECT id FROM site_groups WHERE name = ?", (group.name,)
@@ -344,3 +461,28 @@ def _day(day: date) -> str:
     if type(day) is not date:
         raise ValueError("day must be a date")
     return day.isoformat()
+
+
+def _wall(moment: datetime) -> datetime:
+    """Return household-local wall time to the second, without a timezone.
+
+    An aware value is already household-local. The offset is dropped, not
+    converted, so 00:30+11:00 stays 00:30 on that same local date.
+    """
+    if not isinstance(moment, datetime):
+        raise ValueError("time must be a datetime")
+    if moment.tzinfo is not None:
+        moment = moment.replace(tzinfo=None)
+    return moment.replace(microsecond=0)
+
+
+def _one_or_more(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} is a whole number of seconds, one or more")
+    return value
+
+
+def _zero_or_more(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} is a whole number, zero or more")
+    return value

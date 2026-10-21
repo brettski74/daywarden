@@ -3,10 +3,12 @@
 DNS names are resolved here, once per load, so a decision only does a
 dictionary lookup. A name that does not resolve keeps the addresses stored
 by the last load that did resolve it. Rules are stored with their group.
+A group's quota is stored as a duration in seconds, never as a bucket count.
 """
 
 from __future__ import annotations
 
+import re
 import socket
 import tomllib
 from collections.abc import Callable
@@ -18,7 +20,9 @@ from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
 from policy.groups import SiteGroup
 from policy.rules import REVISION_TASK, Action, Rule, TaskRequirement, TimeWindow, absolute_http_url
-from policy.store import PolicyStore
+from policy.store import DEFAULT_BUCKET_SECONDS, PolicyStore
+
+_UNIT_SECONDS = {"h": 3600, "m": 60, "s": 1}
 
 _CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "always"}
 _ACTIONS = {"continue", "deny", "redirect", "allow"}
@@ -49,6 +53,7 @@ class HouseholdConfig:
     clients: tuple[ClientConfig, ...]
     groups: tuple[SiteGroup, ...] = ()
     revision_task: str | None = None
+    bucket_length: int = DEFAULT_BUCKET_SECONDS
 
 
 def load(path: str | Path) -> HouseholdConfig:
@@ -65,7 +70,7 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
     household = document.get("household", {})
     if not isinstance(household, dict):
         raise ConfigError(f"{source}: household must be a table")
-    _only(household, {"timezone", "revision_task"}, f"{source}: [household]")
+    _only(household, {"timezone", "revision_task", "bucket_length"}, f"{source}: [household]")
     timezone = household.get("timezone")
     if timezone is not None:
         if not isinstance(timezone, str) or not timezone.strip():
@@ -76,6 +81,12 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         except ValueError as exc:
             raise ConfigError(f"{source}: household.timezone: {exc}") from exc
     revision_task = _revision_task(household.get("revision_task"), source)
+    if "bucket_length" in household:
+        bucket_length = _duration(household["bucket_length"], f"{source}: household.bucket_length")
+        if bucket_length < 1:
+            raise ConfigError(f"{source}: household.bucket_length must be at least one second")
+    else:
+        bucket_length = DEFAULT_BUCKET_SECONDS
 
     entries = document.get("clients", [])
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
@@ -94,7 +105,7 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         raise ConfigError(
             f"{source}: a rule redirects to revision_task, but household.revision_task is not set"
         )
-    return HouseholdConfig(timezone, tuple(clients), groups, revision_task)
+    return HouseholdConfig(timezone, tuple(clients), groups, revision_task, bucket_length)
 
 
 def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
@@ -104,7 +115,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
     groups: list[SiteGroup] = []
     for number, entry in enumerate(entries, start=1):
         where = f"{source}: group {number}"
-        _only(entry, {"name", "priority", "patterns", "default", "rules"}, where)
+        _only(entry, {"name", "priority", "patterns", "default", "rules", "quota"}, where)
         name = _text(entry, "name", where)
         priority = entry.get("priority")
         if not isinstance(priority, int) or isinstance(priority, bool):
@@ -126,6 +137,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
                 )
             if other.default and default:
                 raise ConfigError(f"{source}: groups {other.name!r} and {name!r} are both the default")
+        quota = _duration(entry["quota"], f"{where}: quota") if "quota" in entry else None
         groups.append(
             SiteGroup(
                 name,
@@ -133,6 +145,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
                 tuple(pattern.strip() for pattern in patterns),
                 default,
                 _rules(entry.get("rules", []), where),
+                quota,
             )
         )
     return tuple(groups)
@@ -221,6 +234,21 @@ def _count(value: object, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ConfigError(f"{where} must be a whole number, zero or more")
     return value
+
+
+def _duration(value: object, where: str) -> int:
+    """Return seconds for a duration such as 2h, 120m, or 7200s.
+
+    A bare number is rejected. It would be ambiguous with a count of buckets,
+    and the quota is a length of time, not a number of buckets.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    match = re.fullmatch(r"(\d+)([hms])", text, re.IGNORECASE)
+    if match is None:
+        raise ConfigError(
+            f"{where} must be a duration like 2h, 120m, or 7200s, not a number of buckets"
+        )
+    return int(match.group(1)) * _UNIT_SECONDS[match.group(2).lower()]
 
 
 def _window(entry: object, where: str) -> TimeWindow:
@@ -356,6 +384,7 @@ def apply(
         ],
         config.groups,
         config.revision_task,
+        config.bucket_length,
     )
 
 
