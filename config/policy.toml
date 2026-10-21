@@ -50,8 +50,11 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # the later of two windows that meet there. A window may name weekdays, or
 # apply every day when days is left out. A window may cross midnight.
 #
-# tasks_complete and quota_remaining are conditions too. Until those counts
-# exist, tasks_complete is false and quota_remaining is true.
+# tasks_complete carries a required count. It is true when this client has at
+# least that many revision successes stored for the household-local date. A
+# [[groups.rules.weekdays]] table can set a different count for one weekday.
+# Nothing records a real completion yet, so the count stays zero unless it is
+# written into the database. quota_remaining is still treated as true.
 #
 # [[groups]]
 # name = "School work"
@@ -77,6 +80,16 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # start = "00:00"
 # end = "07:00"
 # days = ["monday", "tuesday", "wednesday", "thursday"]
+#
+# [[groups.rules]]
+# condition = "tasks_complete"
+# required = 2
+# when_true = { action = "continue" }
+# when_false = { action = "redirect", location = "revision_task" }
+#
+# [[groups.rules.weekdays]]
+# day = "wednesday"
+# required = 1
 
 [[groups]]
 name = "Everything else"

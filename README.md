@@ -36,7 +36,9 @@ Rules are `[[groups.rules]]` tables written under a group, in the order they sho
 
 `household.revision_task` is the absolute URL substituted for that token. Real task selection replaces it later. A rule that uses the token will not load while the setting is missing.
 
-A `time_window` condition is true when the household-local clock is inside any of its windows. The start counts and the end does not, so `07:00–15:00` and `15:00–19:00` do not both match at 15:00. List `days` as weekday names, or leave `days` out to mean every day. A window may cross midnight: `22:00–07:00` on Saturday includes Saturday night and Sunday morning, and does not include Saturday morning. `tasks_complete` and `quota_remaining` are the other conditions. Until those counts are stored, no task is complete and the quota is still remaining.
+A `time_window` condition is true when the household-local clock is inside any of its windows. The start counts and the end does not, so `07:00–15:00` and `15:00–19:00` do not both match at 15:00. List `days` as weekday names, or leave `days` out to mean every day. A window may cross midnight: `22:00–07:00` on Saturday includes Saturday night and Sunday morning, and does not include Saturday morning.
+
+A `tasks_complete` condition carries `required`, a count of successful revision tasks. It is true when this client has at least that many stored for the household-local date. A `[[groups.rules.weekdays]]` table sets a different count for one named weekday; every other day keeps `required`. The count is a number in the policy database. Real completions are not recorded yet, so it stays zero unless a test or an administrator writes one. `quota_remaining` is still treated as true.
 
 ```toml
 [[groups.rules]]
@@ -48,6 +50,16 @@ when_false = { action = "continue" }
 start = "00:00"
 end = "07:00"
 days = ["monday", "tuesday", "wednesday", "thursday"]
+
+[[groups.rules]]
+condition = "tasks_complete"
+required = 2
+when_true = { action = "continue" }
+when_false = { action = "redirect", location = "revision_task" }
+
+[[groups.rules.weekdays]]
+day = "wednesday"
+required = 1
 ```
 
 The three answers a rule can produce are:

@@ -179,6 +179,8 @@ def test_a_version_1_database_is_upgraded_and_keeps_its_clients(tmp_path):
         config.apply(config.parse('[[clients]]\nname = "A"\naddress = "10.0.0.1"\n'), store, warn=_quiet)
         store.connection.executescript(
             """
+            DROP TABLE rule_weekday_counts;
+            DROP TABLE task_completions;
             DROP TABLE rule_actions;
             DROP TABLE rule_windows;
             DROP TABLE rules;

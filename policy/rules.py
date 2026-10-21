@@ -10,9 +10,10 @@ morning belongs to that same window on the following day. A window with no
 weekdays applies every day. A request is inside the condition when it is
 inside any one of the windows.
 
-`tasks_complete` and `quota_remaining` are booleans supplied by the caller.
-S001.4 and S001.5 replace those booleans with real counts. Until then a test,
-or the service, passes them in.
+`tasks_complete` is true when this client's stored revision successes for the
+local date are at least the required count. A weekday can require a different
+count. The count is only a number; which tasks made it up is left to later
+stories. `quota_remaining` is still a boolean supplied by the caller.
 """
 
 from __future__ import annotations
@@ -42,11 +43,31 @@ class TimeWindow:
 
 
 @dataclass(frozen=True)
+class TaskRequirement:
+    """How many successes today satisfy a tasks_complete rule.
+
+    required is the count on days without an override. overrides maps a
+    weekday number (Monday is 0, the same as datetime.weekday) to a different
+    count.
+    """
+
+    required: int
+    overrides: tuple[tuple[int, int], ...] = ()
+
+    def for_weekday(self, weekday: int) -> int:
+        for day, count in self.overrides:
+            if day == weekday:
+                return count
+        return self.required
+
+
+@dataclass(frozen=True)
 class Rule:
     condition: str
     when_true: Action
     when_false: Action
     windows: tuple[TimeWindow, ...] = ()
+    requirement: TaskRequirement | None = None
 
 
 def absolute_http_url(value: str) -> bool:
@@ -61,31 +82,33 @@ def evaluate(
     rules: Iterable[Rule],
     at: datetime,
     *,
-    tasks_complete: bool = False,
+    completed: int = 0,
     quota_remaining: bool = True,
     revision_task: str | None = None,
 ) -> dict:
     """Return the decision for rules at household-local time at.
 
-    tasks_complete and quota_remaining are the test hook for those two
-    conditions. The defaults are the ones the entertainment schedule is
-    specified with: no task is complete, and quota is still remaining.
+    completed is how many revision tasks this client has finished on the
+    household-local date of at. It is compared with the required count for
+    that weekday. The default is none finished. quota_remaining is still the
+    stand-in for that condition, and it still defaults to remaining.
     """
     for rule in rules:
-        action = rule.when_true if _holds(rule, at, tasks_complete, quota_remaining) else rule.when_false
+        action = rule.when_true if _holds(rule, at, completed, quota_remaining) else rule.when_false
         if action.kind == "continue":
             continue
         return _decision(action, revision_task)
     return {"action": "deny", "status": 403, "message": FALLTHROUGH_MESSAGE}
 
 
-def _holds(rule: Rule, at: datetime, tasks_complete: bool, quota_remaining: bool) -> bool:
+def _holds(rule: Rule, at: datetime, completed: int, quota_remaining: bool) -> bool:
     if rule.condition == "always":
         return True
     if rule.condition == "time_window":
         return any(_contains(window, at) for window in rule.windows)
     if rule.condition == "tasks_complete":
-        return tasks_complete
+        requirement = rule.requirement
+        return requirement is not None and completed >= requirement.for_weekday(at.weekday())
     if rule.condition == "quota_remaining":
         return quota_remaining
     raise ValueError(f"unknown condition {rule.condition!r}")

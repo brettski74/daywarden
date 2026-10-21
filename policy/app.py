@@ -2,6 +2,7 @@
 
 On start, POLICY_FILE (when present) is loaded into the SQLite database at
 POLICY_DB. Without the file, the service uses what the database already holds.
+Each decision reads that database for today's revision count.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
     DecisionLog,
     answer,
+    completed_today,
     context_for,
     log_entry,
     parse_request,
@@ -36,16 +38,16 @@ def create_app() -> FastAPI:
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
 
     database.parent.mkdir(parents=True, exist_ok=True)
-    with PolicyStore(database) as store:
-        if policy_file.is_file():
-            print(f"loading {policy_file}", flush=True)
-            config.apply(config.load(policy_file), store)
-        else:
-            print(f"{policy_file} not found; using the stored policy", flush=True)
-        timezone = store.timezone()
-        clients = store.clients()
-        groups = store.groups()
-        revision_task = store.revision_task()
+    store = PolicyStore(database)
+    if policy_file.is_file():
+        print(f"loading {policy_file}", flush=True)
+        config.apply(config.load(policy_file), store)
+    else:
+        print(f"{policy_file} not found; using the stored policy", flush=True)
+    timezone = store.timezone()
+    clients = store.clients()
+    groups = store.groups()
+    revision_task = store.revision_task()
 
     if timezone:
         zone = named_zone(timezone)
@@ -86,7 +88,13 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             decision_log.append(log_entry(document, None, None))
             return PlainTextResponse(str(exc), status_code=400)
-        decision = answer(context, decision_file, stub=decision_stub, revision_task=revision_task)
+        decision = answer(
+            context,
+            decision_file,
+            stub=decision_stub,
+            revision_task=revision_task,
+            completed=completed_today(store, context),
+        )
         decision_log.append(log_entry(document, context, decision))
         who = context.client.name if context.client else context.request.client_ip
         group = context.group.name if context.group else "no group"

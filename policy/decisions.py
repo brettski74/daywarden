@@ -1,9 +1,9 @@
 """POST /v1/decisions, without the HTTP framework.
 
 Every request is judged by the household rules, whether or not its source IP
-belongs to a client. The client only supplies a name now, and later the tasks
-and usage that belong to that computer. A URL that is in no site group is
-denied. A URL in a group is judged by that group's rules.
+belongs to a client. The client names the computer, which selects the revision
+count stored for that computer on the household-local date. A URL that is in
+no site group is denied. A URL in a group is judged by that group's rules.
 
 DECISION_STUB is the old single-file answer. The addon tests set it so they
 can still hand the proxy a decision, including one the rules would never
@@ -23,6 +23,7 @@ from policy.clients import Client, ClientDirectory, normalize_ip
 from policy.clock import HouseholdClock
 from policy.groups import SiteGroup, SiteGroups
 from policy.rules import evaluate
+from policy.store import PolicyStore
 
 UNGROUPED_MESSAGE = "This site is not in a configured group."
 
@@ -81,16 +82,27 @@ def context_for(
     )
 
 
+def completed_today(store: PolicyStore, context: DecisionContext) -> int:
+    """Return the stored revision successes for this client on this household date.
+
+    An IP that is not a client has none. A day with no row is zero.
+    """
+    if context.client is None:
+        return 0
+    return store.task_completions(context.client.id, context.local_time.date())
+
+
 def decide(
     context: DecisionContext,
     *,
     revision_task: str | None = None,
-    tasks_complete: bool = False,
+    completed: int = 0,
     quota_remaining: bool = True,
 ) -> bytes:
     """Judge the request by its site group's rules.
 
-    tasks_complete and quota_remaining are the stand-in for S001.4 and S001.5.
+    completed is today's stored revision count for the client. quota_remaining
+    is still the stand-in for S001.5.
     """
     if context.group is None:
         return _deny(UNGROUPED_MESSAGE)
@@ -98,7 +110,7 @@ def decide(
         evaluate(
             context.group.rules,
             context.local_time,
-            tasks_complete=tasks_complete,
+            completed=completed,
             quota_remaining=quota_remaining,
             revision_task=revision_task,
         )
@@ -111,7 +123,7 @@ def answer(
     *,
     stub: bool = False,
     revision_task: str | None = None,
-    tasks_complete: bool = False,
+    completed: int = 0,
     quota_remaining: bool = True,
 ) -> bytes | None:
     """Return the body to send. A grouped URL uses the decision file only when stub is set."""
@@ -122,7 +134,7 @@ def answer(
     return decide(
         context,
         revision_task=revision_task,
-        tasks_complete=tasks_complete,
+        completed=completed,
         quota_remaining=quota_remaining,
     )
 
