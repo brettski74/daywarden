@@ -364,6 +364,85 @@ def test_twenty_three_buckets_allow_wednesday_evening_and_twenty_four_deny(stack
         _set_count(stack, "Younger child", "2026-10-21", 0)
 
 
+OBSERVE = """
+import json, sys, urllib.error, urllib.request
+request = urllib.request.Request(
+    "http://127.0.0.1:8091/v1/observations",
+    data=sys.stdin.buffer.read(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(request, timeout=5) as response:
+        print(response.status)
+except urllib.error.HTTPError as error:
+    print(error.code)
+"""
+
+LEDGER = """
+import json
+from datetime import datetime
+from policy.store import PolicyStore
+store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+(client_id,) = store.connection.execute(
+    "SELECT id FROM clients WHERE name = 'Younger child'"
+).fetchone()
+rows = store.connection.execute(
+    "SELECT started_at, length_seconds, byte_count FROM usage_buckets ORDER BY started_at"
+).fetchall()
+print(json.dumps({
+    "rows": rows,
+    "while_open": store.consumed_seconds(client_id, "Entertainment", datetime(2026, 10, 21, 15, 4)),
+    "once_closed": store.consumed_seconds(client_id, "Entertainment", datetime(2026, 10, 21, 15, 5)),
+}))
+store.close()
+"""
+
+
+def _observe(stack: Stack, document: dict) -> int:
+    completed = stack.run(
+        ["exec", "-T", "observations", "python", "-c", OBSERVE],
+        stdin=json.dumps(document),
+        timeout=30,
+    )
+    return int(completed.stdout.strip())
+
+
+def test_an_observation_marks_a_bucket_the_quota_reads(stack):
+    stack.run(["up", "-d", "--wait", "--wait-timeout", "120", "observations"], timeout=300)
+    try:
+        moment = datetime(2026, 10, 21, 15, 0, 1, tzinfo=SYDNEY).isoformat()
+        assert _observe(stack, {
+            "client_ip": "192.0.2.40",
+            "url": "https://www.youtube.com/watch?v=abc",
+            "occurred_at": moment,
+            "bytes": 100,
+        }) == 204
+        assert _observe(stack, {
+            "client_ip": "192.0.2.40",
+            "url": "https://example.org/",
+            "occurred_at": moment,
+            "bytes": 50,
+        }) == 204
+        later = datetime(2026, 10, 21, 15, 1, tzinfo=SYDNEY).isoformat()
+        assert _observe(stack, {
+            "client_ip": "192.0.2.40",
+            "url": "https://www.youtube.com/watch?v=abc",
+            "occurred_at": later,
+            "bytes": 40,
+        }) == 204
+        completed = stack.run(
+            ["exec", "-T", "decisions", "python", "-c", LEDGER],
+            timeout=30,
+        )
+        report = json.loads(completed.stdout)
+        assert report["rows"] == [["2026-10-21T15:00:00", 300, 140]]
+        assert report["while_open"] == 0
+        assert report["once_closed"] == 300
+    finally:
+        _clear_buckets(stack)
+
+
 def test_an_unenrolled_ip_still_gets_a_decision(stack):
     status, body, entry = stack.decide(_request("192.0.2.99"))
     assert status == 200

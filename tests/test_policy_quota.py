@@ -137,8 +137,10 @@ def _quota(written: str) -> int | None:
     return config.parse(text).groups[0].quota
 
 
-def _apply(store: PolicyStore, text: str = HOUSEHOLD) -> dict[str, int]:
-    config.apply(config.parse(text), store, warn=_quiet)
+def _apply(
+    store: PolicyStore, text: str = HOUSEHOLD, loaded_at: datetime | None = None
+) -> dict[str, int]:
+    config.apply(config.parse(text), store, warn=_quiet, loaded_at=loaded_at)
     return {client.name: client.id for client in store.clients()}
 
 
@@ -230,7 +232,8 @@ def test_changing_the_bucket_length_does_not_change_the_quota():
         start = datetime(2026, 10, 21, 8, 0)
         _mark(store, younger, "Entertainment", start, 23)
         longer = HOUSEHOLD.replace('bucket_length = "5m"', 'bucket_length = "10m"')
-        _apply(store, longer)
+        # Noon is after those buckets have ended, so this load keeps each stored length.
+        _apply(store, longer, loaded_at=datetime(2026, 10, 21, 12, 0))
         assert store.bucket_length() == 10 * 60
         (quota,) = store.connection.execute(
             "SELECT quota_seconds FROM site_groups WHERE name = 'Entertainment'"

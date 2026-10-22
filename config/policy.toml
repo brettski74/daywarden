@@ -12,6 +12,8 @@
 revision_task = "http://192.168.1.10:8080/tasks/next"
 
 # How long a new usage bucket is. The default is five minutes. This is not a quota.
+# The length has to divide a 24-hour day (2m, 5m, and 10m do; 7m does not), so
+# the buckets meet midnight. A new length takes effect when this file is loaded.
 # bucket_length = "5m"
 
 # One [[clients]] table per computer. address is the computer's DHCP reservation,
@@ -63,10 +65,10 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # quota_remaining is true when today's ended usage for this client and this
 # group is strictly under the group's quota. quota is a duration such as 2h,
 # 120m, or 7200s. A bare number is rejected. Leave quota off and the condition
-# stays true. Buckets are household.bucket_length (five minutes by default).
-# A bucket counts only after it ends, at the length it was opened with.
-# Nothing records real traffic yet, so usage stays zero unless a bucket is
-# written into the database.
+# stays true. Buckets are household.bucket_length (five minutes by default),
+# aligned to local midnight. A bucket counts only after it ends, at the length
+# stored for that bucket. Forwarded traffic marks the bucket that contains the
+# report. A URL in no group is ignored.
 
 # School work is allowed at any time and has no quota. The patterns are a
 # starter for Google Classroom and the Google hosts a Classroom session

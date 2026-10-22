@@ -13,9 +13,10 @@ import socket
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time
 from pathlib import Path
 
+from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
 from policy.groups import SiteGroup
@@ -85,6 +86,11 @@ def parse(text: str, source: str = "policy file") -> HouseholdConfig:
         bucket_length = _duration(household["bucket_length"], f"{source}: household.bucket_length")
         if bucket_length < 1:
             raise ConfigError(f"{source}: household.bucket_length must be at least one second")
+        if not divides_day(bucket_length):
+            raise ConfigError(
+                f"{source}: household.bucket_length must divide a 24-hour day "
+                "with nothing left over, so the buckets meet midnight"
+            )
     else:
         bucket_length = DEFAULT_BUCKET_SECONDS
 
@@ -348,8 +354,14 @@ def apply(
     store: PolicyStore,
     lookup: Lookup = socket.getaddrinfo,
     warn: Callable[[str], None] = lambda message: print(message, flush=True),
+    loaded_at: datetime | None = None,
 ) -> None:
-    """Store the timezone, clients and site groups, resolving each client address to IPs."""
+    """Store the timezone, clients and site groups, resolving each client address to IPs.
+
+    loaded_at is the household-local time of this load. A change of bucket
+    length uses it to close buckets that are still open. The same length does
+    not. An aware value is already household-local; its offset is dropped.
+    """
     stored = {client.name: client for client in store.clients()}
     fresh: dict[str, tuple[str, ...]] = {}
     kept: dict[str, tuple[str, ...]] = {}
@@ -385,6 +397,7 @@ def apply(
         config.groups,
         config.revision_task,
         config.bucket_length,
+        loaded_at,
     )
 
 

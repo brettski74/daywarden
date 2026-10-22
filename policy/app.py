@@ -43,21 +43,17 @@ def create_app() -> FastAPI:
     store = PolicyStore(database)
     if policy_file.is_file():
         print(f"loading {policy_file}", flush=True)
-        config.apply(config.load(policy_file), store)
+        loaded = config.load(policy_file)
+        _zone, source = _household_zone(loaded.timezone, localtime)
+        clock = HouseholdClock(_zone)
+        config.apply(loaded, store, loaded_at=clock.local())
     else:
         print(f"{policy_file} not found; using the stored policy", flush=True)
-    timezone = store.timezone()
+        _zone, source = _household_zone(store.timezone(), localtime)
+        clock = HouseholdClock(_zone)
     clients = store.clients()
     groups = store.groups()
     revision_task = store.revision_task()
-
-    if timezone:
-        zone = named_zone(timezone)
-        source = f"timezone {timezone}"
-    else:
-        zone = machine_zone(localtime=localtime)
-        source = "timezone of this machine"
-    clock = HouseholdClock(zone)
     print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
     for client in clients:
         print(f"client {client.name}: {', '.join(client.ips) or 'no IP'}", flush=True)
@@ -113,6 +109,13 @@ def create_app() -> FastAPI:
         return Response(decision, media_type="application/json")
 
     return app
+
+
+def _household_zone(timezone: str | None, localtime: Path):
+    """Return the zone for timezone, or the machine zone, and a phrase for the log."""
+    if timezone:
+        return named_zone(timezone), f"timezone {timezone}"
+    return machine_zone(localtime=localtime), "timezone of this machine"
 
 
 def _span(seconds: int) -> str:
