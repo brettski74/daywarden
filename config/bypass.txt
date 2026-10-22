@@ -3,7 +3,30 @@
 # * matches any run of characters. ? matches one character.
 # Lines starting with # are comments.
 #
-# Put the task site and the Classroom hosts here so they keep working
-# when the decision service is down. The sample list arrives with S001.6.
-*github.com
+# Sample list for the household policy in policy.toml. These are the
+# School work hosts, plus the task-site host from household.revision_task.
+# Those pages keep working when the policy service is down. Edit this file
+# and policy.toml together. Nothing copies one into the other yet.
 
+# Task site. The host of household.revision_task.
+192.168.1.10
+
+# School work. The same host globs as that group.
+classroom.google.com
+docs.google.com
+*.docs.google.com
+drive.google.com
+*.drive.google.com
+sheets.google.com
+slides.google.com
+forms.google.com
+accounts.google.com
+apis.google.com
+classroom.googleapis.com
+www.googleapis.com
+oauth2.googleapis.com
+*.gstatic.com
+*.googleusercontent.com
+*.usercontent.google.com
+lh?.google.com
+clients?.google.com
