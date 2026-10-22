@@ -28,7 +28,9 @@ Each client is a display name and an `address`, which is the computer's DHCP res
 
 A pattern that contains `://` is matched against the whole URL, without its `#fragment`. Any other pattern is matched against the host only. Matching ignores case. `*` matches any run of characters, including `/`, and `?` matches one character. `*.youtube.com` matches `www.youtube.com` but not `youtube.com`, so list both if you need both.
 
-One group may set `default = true`. It takes every URL that no other group matches, whatever its priority number, and its patterns are ignored. If there is no default group, a URL outside every group is denied with "This site is not in a configured group." The sample file has a single default group, `Everything else`, and no rules yet, so every site is denied until rules are added.
+One group may set `default = true`. It takes every URL that no other group matches, whatever its priority number, and its patterns are ignored. If there is no default group, a URL outside every group is denied with "This site is not in a configured group."
+
+The sample file is the household's starting policy. School work is a starter list of Classroom hosts and the Google hosts a Classroom session loads, allowed at any time, with no quota. It is not every school site, and it is not all of Google. Entertainment is YouTube, on the Monday-to-Thursday schedule: bedtime denies, school hours redirect to revision, and the evening continues only when today's revision count has reached 2. A `2h` quota then allows the request or denies it. Friday, Saturday, and Sunday are in that file as a starting suggestion with a wider evening. Everything else is the default group. It uses those same hours and the same revision requirement, and it has no quota. The school-work hosts and the host of `household.revision_task` are listed again in `config/bypass.txt`. Edit the two files together.
 
 ## Rules
 
@@ -112,7 +114,7 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 | File | Meaning |
 | --- | --- |
 | `config/policy.toml` | Household timezone, the client computers, the site groups, and their rules |
-| `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down |
+| `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down. The sample lists the School work hosts and the task-site host |
 
 ## Tests
 

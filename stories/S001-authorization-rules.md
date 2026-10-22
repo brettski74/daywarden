@@ -1,8 +1,8 @@
 Ticket: S001
 Title: Authorization rules
-Status: Draft
+Status: Done
 Story Points: 21
-Last Updated: 2026-10-18 15:05:00
+Last Updated: 2026-10-21 19:52:05
 ---
 
 # User Voice
@@ -18,8 +18,8 @@ As a parent, I want each request classified into a site group and then judged by
 
 # Acceptance Criteria
 
-- [ ] S001.1 through S001.6 are done.
-- [ ] The worked entertainment example in S001.3 passes as an automated test against the sample policy from S001.6.
+- [x] S001.1 through S001.6 are done.
+- [x] The worked entertainment example in S001.3 passes as an automated test against the sample policy from S001.6.
 - [ ] No quiz pages are required for this epic. Task and quota conditions read counts that may still be zero.
 
 # Child stories
