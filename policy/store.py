@@ -1,18 +1,22 @@
 """SQLite storage for the household policy and the usage ledger.
 
 A usage bucket is one stretch of time, for one client and one site group,
-that contained traffic. It keeps the length configured when it was opened.
-S002.1 writes these rows from observations. Until then a test or an
-administrator can write them. quota_remaining reads the ones that have ended.
+that contained traffic. It keeps the length stored for that bucket. A load
+that changes the configured length shortens a bucket that is still open, and
+leaves a bucket that has already ended alone. Observations write these rows.
+A test or an administrator can write them too. quota_remaining reads the ones
+that have ended.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from policy.buckets import place, require_day_length
 from policy.clients import Client
 from policy.groups import SiteGroup
 from policy.rules import Action, Rule, TaskRequirement, TimeWindow
@@ -114,9 +118,12 @@ DEFAULT_BUCKET_SECONDS = 300
 
 
 class PolicyStore:
-    def __init__(self, path: str | Path) -> None:
-        self.connection = sqlite3.connect(path)
+    def __init__(self, path: str | Path, *, check_same_thread: bool = True) -> None:
+        self.connection = sqlite3.connect(path, check_same_thread=check_same_thread)
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA busy_timeout = 5000")
+        if str(path) != ":memory:":
+            self.connection.execute("PRAGMA journal_mode = WAL").fetchone()
         self._migrate()
 
     def __enter__(self) -> PolicyStore:
@@ -261,12 +268,33 @@ class PolicyStore:
 
         Five minutes is the length when the household has not set one.
         """
-        row = self.connection.execute(
-            "SELECT value FROM settings WHERE key = 'bucket_length'"
-        ).fetchone()
-        if row is None or row[0] in (None, ""):
+        stored = self._stored_bucket_length()
+        if stored is None:
             return DEFAULT_BUCKET_SECONDS
-        return int(row[0])
+        return stored
+
+    def bucket_for(self, moment: datetime) -> tuple[datetime, int]:
+        """Return the household-local start and length of the bucket containing moment.
+
+        The grid is the configured length counted from local midnight. After a
+        load that changed the length, the bucket containing the load starts at
+        the load and ends at the next midnight boundary. moment is
+        household-local; an aware value keeps its clock and drops the offset.
+        """
+        return place(moment, self.bucket_regimes())
+
+    def bucket_regimes(self) -> list[dict[str, object]]:
+        """Return the length history, oldest first.
+
+        The first entry has no start time. A later entry starts at the load
+        that stored that length. A database that has never recorded a change
+        is one entry, the length in force now.
+        """
+        existing = self._regimes_raw()
+        if existing:
+            return existing
+        stored = self._stored_bucket_length()
+        return [{"length": stored if stored is not None else DEFAULT_BUCKET_SECONDS}]
 
     def mark_bucket(
         self,
@@ -331,6 +359,70 @@ class PolicyStore:
                 total += int(length)
         return total
 
+    def _stored_bucket_length(self) -> int | None:
+        raw = self._setting("bucket_length")
+        if raw is None:
+            return None
+        return int(raw)
+
+    def _setting(self, key: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None or row[0] in (None, ""):
+            return None
+        return str(row[0])
+
+    def _regimes_raw(self) -> list[dict[str, object]] | None:
+        raw = self._setting("bucket_regimes")
+        if raw is None:
+            return None
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise ValueError("bucket regimes are a list")
+        return parsed
+
+    def _regimes_for_load(self, length: int, loaded_at: datetime | None) -> list[dict[str, object]]:
+        """Return the regime list to store, closing open buckets when the length changes."""
+        previous = self._stored_bucket_length()
+        existing = self._regimes_raw()
+        if previous is None:
+            return [{"length": length}]
+        if previous == length:
+            return existing if existing is not None else [{"length": length}]
+        if loaded_at is None:
+            raise ValueError(
+                "changing the bucket length needs the household-local time of the load"
+            )
+        wall = _wall(loaded_at)
+        self._end_open_buckets(wall)
+        base = existing if existing is not None else [{"length": previous}]
+        return [*base, {"at": wall.isoformat(timespec="seconds"), "length": length}]
+
+    def _end_open_buckets(self, loaded_at: datetime) -> None:
+        """Shorten every bucket that has started and has not yet ended.
+
+        The stored length becomes the seconds from the start to loaded_at.
+        A bucket that has already ended is left alone, and so is one that
+        starts at the load.
+        """
+        wall = _wall(loaded_at)
+        rows = self.connection.execute(
+            "SELECT client_id, group_id, started_at, length_seconds FROM usage_buckets"
+        ).fetchall()
+        for client_id, group_id, started_at, length in rows:
+            start = datetime.fromisoformat(started_at)
+            if start >= wall:
+                continue
+            remaining = int((wall - start).total_seconds())
+            if remaining < 1 or remaining >= int(length):
+                continue
+            self.connection.execute(
+                "UPDATE usage_buckets SET length_seconds = ? "
+                "WHERE client_id = ? AND group_id = ? AND started_at = ?",
+                (remaining, client_id, group_id, started_at),
+            )
+
     def _group_id(self, name: str) -> int:
         row = self.connection.execute(
             "SELECT id FROM site_groups WHERE name = ?", (name,)
@@ -346,6 +438,7 @@ class PolicyStore:
         groups: Sequence[SiteGroup],
         revision_task: str | None = None,
         bucket_length: int = DEFAULT_BUCKET_SECONDS,
+        loaded_at: datetime | None = None,
     ) -> None:
         """Replace the timezone, the client list and the site groups in one transaction.
 
@@ -354,10 +447,14 @@ class PolicyStore:
         rewritten each load. A client's revision count is not in the file, and
         neither are usage buckets, so a reload leaves both in place. The quota
         and the bucket length do come from the file. Changing the bucket length
-        does not resize a quota or a bucket that is already stored.
+        does not change a quota. A bucket that has already ended keeps its
+        length. A bucket that is still open is shortened to the load in
+        loaded_at, which is household-local. The same length does not close
+        anything. The first load only establishes the midnight grid.
         """
-        length = _one_or_more(bucket_length, "the bucket length")
+        length = require_day_length(bucket_length)
         with self.connection:
+            regimes = self._regimes_for_load(length, loaded_at)
             self.connection.executemany(
                 "INSERT INTO settings (key, value) VALUES (?, ?) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -365,6 +462,7 @@ class PolicyStore:
                     ("timezone", timezone),
                     ("revision_task", revision_task),
                     ("bucket_length", str(length)),
+                    ("bucket_regimes", json.dumps(regimes, separators=(",", ":"))),
                 ),
             )
             self.connection.execute("DELETE FROM client_ips")

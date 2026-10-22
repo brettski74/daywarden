@@ -5,8 +5,8 @@
 # timezone, site groups, and rules are in config/policy.toml and are kept in
 # the policy-data volume. A group with no rules denies the request.
 # DECISION_FILE is read only when DECISION_STUB=1, which the addon tests set.
-# The observations service records POST /v1/observations until the ledger exists.
-# The proxy still forwards if that service is down.
+# The observations service writes POST /v1/observations into the usage ledger
+# in the policy-data volume. The proxy still forwards if that service is down.
 
 name: smartproxy
 
@@ -38,15 +38,26 @@ services:
     restart: unless-stopped
 
   observations:
-    image: mitmproxy/mitmproxy:12.2.3
-    entrypoint:
-      - python3
-      - /opt/smartproxy/stub.py
+    build: ./policy
+    image: smartproxy-policy:local
+    pull_policy: build
+    command:
+      - python
+      - -m
+      - policy.observations
     environment:
+      POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       OBSERVATION_LOG: /tmp/observations.jsonl
-      STUB_PORT: "8091"
+      OBSERVATION_PORT: "8091"
+      MACHINE_LOCALTIME: /etc/host-localtime
     volumes:
-      - ./observations/stub.py:/opt/smartproxy/stub.py:ro
+      - policy-data:/var/lib/smartproxy
+      # Used when policy.toml does not set a timezone, so a report lands on
+      # the same local day the decisions service uses.
+      - /etc/localtime:/etc/host-localtime:ro
+    depends_on:
+      decisions:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -93,6 +104,8 @@ services:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
     depends_on:
       decisions:
+        condition: service_healthy
+      observations:
         condition: service_healthy
     healthcheck:
       test:
