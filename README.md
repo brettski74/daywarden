@@ -86,6 +86,14 @@ Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` conta
 
 A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. A report whose URL is in a site group marks that client's bucket for the group, including a group with no quota and the default group. A report that matches no group is answered successfully and ignored, and so is a client the household has not enrolled. The quota reads those buckets.
 
+## Usage report
+
+A parent opens `http://<this machine>:8090/usage` in a browser. The port is `REPORT_PORT` in `.env`.
+
+The page lists the last 14 household-local days for one client and one site group. Choose both. Each day shows the buckets that contained traffic: the clock times they covered, the time that bucket represents, and how many bytes it carried. A bucket that has not ended yet is listed and left out of the counted time. A day with no traffic says no usage. School work, and any other group with no quota, is listed the same way. The clock is the household timezone.
+
+Export `PARENT_PASSWORD` before `make up`. A later change needs `docker compose up -d decisions`, so the container is created again. The password is not written into `config/policy.toml` and it is not stored in the database. With no password, the page stays closed and shows no usage. This gate is temporary. Parent sign-in replaces it. Leave the password set while that port is reachable on the household network.
+
 ## Certificate authority
 
 The CA is created the first time the proxy starts and reused after that. The directory is `CA_VOLUME_PATH` in `.env` (default `data/ca`).
@@ -102,11 +110,12 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 ## Configuration
 
-`.env` is the only file to edit for the listen port and the CA directory:
+`.env` sets the listen port, the usage-report port, and the CA directory:
 
 | Variable | Meaning |
 | --- | --- |
 | `PROXY_PORT` | Port on this machine that clients use |
+| `REPORT_PORT` | Port on this machine for the usage report |
 | `CA_VOLUME_PATH` | Directory that holds the CA across container restarts |
 
 If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it before the first start, so the certificate is readable by you.

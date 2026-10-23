@@ -2,7 +2,7 @@ Ticket: S002
 Title: Usage accounting
 Status: Draft
 Story Points: 13
-Last Updated: 2026-10-18 18:40:00
+Last Updated: 2026-10-22 20:14:47
 ---
 
 # User Voice
@@ -20,7 +20,7 @@ As a parent, I want the house to count internet use in short buckets, so that a 
 
 - [ ] S002.1 and S002.2 are done before the quota is trusted with a real browser.
 - [ ] S002.3 is not required for that. It waits until real traffic has been looked at.
-- [ ] Classroom traffic is visible in the report even though that group has no quota.
+- [x] Classroom traffic is visible in the report even though that group has no quota.
 
 # Child stories
 
