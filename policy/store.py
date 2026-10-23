@@ -5,7 +5,7 @@ that contained traffic. It keeps the length stored for that bucket. A load
 that changes the configured length shortens a bucket that is still open, and
 leaves a bucket that has already ended alone. Observations write these rows.
 A test or an administrator can write them too. quota_remaining reads the ones
-that have ended.
+that have ended. The usage report reads every marked row in its window.
 """
 
 from __future__ import annotations
@@ -358,6 +358,34 @@ class PolicyStore:
             if start + timedelta(seconds=int(length)) <= wall:
                 total += int(length)
         return total
+
+    def buckets_between(
+        self, client_id: int, group: str, first: date, last: date
+    ) -> list[tuple[date, datetime, int, int]]:
+        """Return marked buckets from first through last, oldest start first.
+
+        Each item is the household-local day, the local start, the stored
+        length in seconds, and the byte count. A day with no traffic
+        contributes nothing.
+        """
+        if type(first) is not date or type(last) is not date:
+            raise ValueError("days must be dates")
+        group_id = self._group_id(group)
+        rows = self.connection.execute(
+            "SELECT day, started_at, length_seconds, byte_count FROM usage_buckets "
+            "WHERE client_id = ? AND group_id = ? AND day >= ? AND day <= ? "
+            "ORDER BY started_at",
+            (client_id, group_id, _day(first), _day(last)),
+        ).fetchall()
+        return [
+            (
+                date.fromisoformat(day),
+                datetime.fromisoformat(started_at),
+                int(length),
+                int(nbytes),
+            )
+            for day, started_at, length, nbytes in rows
+        ]
 
     def _stored_bucket_length(self) -> int | None:
         raw = self._setting("bucket_length")

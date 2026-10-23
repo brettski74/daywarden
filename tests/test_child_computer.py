@@ -49,6 +49,8 @@ class Stack:
         self.project = project
         self.env = os.environ.copy()
         self.env["PROXY_PORT"] = str(port)
+        self.env["REPORT_PORT"] = str(_free_port())
+        self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
         self.cmd = [

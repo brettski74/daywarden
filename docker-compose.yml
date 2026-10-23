@@ -7,6 +7,9 @@
 # DECISION_FILE is read only when DECISION_STUB=1, which the addon tests set.
 # The observations service writes POST /v1/observations into the usage ledger
 # in the policy-data volume. The proxy still forwards if that service is down.
+# REPORT_PORT publishes the decisions service so a parent can open /usage.
+# PARENT_PASSWORD keeps that page closed until it is set. The decision API on
+# the same port does not show the report and does not edit policy.
 
 name: smartproxy
 
@@ -20,6 +23,10 @@ services:
       POLICY_FILE: /etc/smartproxy/policy.toml
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime
+      PARENT_PASSWORD: ${PARENT_PASSWORD-}
+    ports:
+      # Parents open http://<this machine>:REPORT_PORT/usage
+      - "${REPORT_PORT:-8090}:8090"
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy

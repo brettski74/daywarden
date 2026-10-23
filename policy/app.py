@@ -3,7 +3,8 @@
 On start, POLICY_FILE (when present) is loaded into the SQLite database at
 POLICY_DB. Without the file, the service uses what the database already holds.
 Each decision reads that database for today's revision count and for the
-ended usage recorded against today's quota.
+ended usage recorded against today's quota. GET /usage is the parent report
+of that usage. It stays closed until PARENT_PASSWORD is set.
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ from policy.decisions import (
     log_entry,
     parse_request,
 )
+from policy.gate import COOKIE_NAME, ParentGate, cookie_value
 from policy.groups import SiteGroups
+from policy.report import parse_form, respond
 from policy.store import PolicyStore
 
 
@@ -60,6 +63,11 @@ def create_app() -> FastAPI:
     if revision_task:
         print(f"revision task placeholder {revision_task}", flush=True)
     print(f"usage buckets are {_span(store.bucket_length())}", flush=True)
+    gate = ParentGate(os.environ.get("PARENT_PASSWORD"))
+    if gate.configured:
+        print("usage report is /usage", flush=True)
+    else:
+        print("usage report is closed until PARENT_PASSWORD is set", flush=True)
     for group in sorted(groups, key=lambda group: (group.default, group.priority)):
         detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
         rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
@@ -107,6 +115,33 @@ def create_app() -> FastAPI:
         if decision is None:
             return PlainTextResponse("missing decision", status_code=500)
         return Response(decision, media_type="application/json")
+
+    @app.api_route("/usage", methods=["GET", "POST"])
+    async def usage(request: Request) -> Response:
+        # Stay on the event-loop thread. A sync endpoint would run in a
+        # threadpool, and this process's SQLite connection is not shared.
+        raw = await request.body() if request.method == "POST" else b""
+        query = {}
+        for key in ("client", "group"):
+            value = request.query_params.get(key)
+            if value is not None:
+                query[key] = value
+        page = respond(
+            store,
+            gate,
+            method=request.method,
+            query=query,
+            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+            form=parse_form(raw),
+            now=clock.local(),
+        )
+        response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
+        for name, value in page.headers:
+            if name == "set-cookie":
+                response.headers.append("set-cookie", value)
+            else:
+                response.headers[name] = value
+        return response
 
     return app
 
