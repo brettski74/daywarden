@@ -25,7 +25,15 @@ from policy.rules import REVISION_TASK, Action, Rule, TaskRequirement, TimeWindo
 from policy.store import DEFAULT_BUCKET_SECONDS, PolicyStore
 
 _UNIT_SECONDS = {"h": 3600, "m": 60, "s": 1}
-_BYTE_SCALE = {"gb": 1_000_000_000, "mb": 1_000_000, "kb": 1_000, "b": 1}
+# K, M, G and T are powers of two: 2^10, 2^20, 2^30 and 2^40 bytes.
+BYTE_UNITS = (
+    ("TB", 1024**4),
+    ("GB", 1024**3),
+    ("MB", 1024**2),
+    ("KB", 1024),
+)
+_BYTE_SCALE = {unit.lower(): size for unit, size in BYTE_UNITS}
+_BYTE_SCALE["b"] = 1
 
 _CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "volume_remaining", "always"}
 _ACTIONS = {"continue", "deny", "redirect", "allow"}
@@ -265,17 +273,17 @@ def _duration(value: object, where: str) -> int:
 
 
 def _byte_limit(value: object, where: str) -> int:
-    """Return bytes for a size such as 500MB, 1GB, or 1000KB.
+    """Return bytes for a size such as 500MB, 1GB, or 1TB.
 
-    1 KB is 1,000 bytes, 1 MB is 1,000,000, and 1 GB is 1,000,000,000.
+    1 KB is 1,024 bytes. 1 MB, 1 GB, and 1 TB are 1,024 of the unit below.
     A bare number is rejected, so 500 cannot be read as 500 bytes when
     500MB was meant.
     """
     text = value.strip() if isinstance(value, str) else ""
-    match = re.fullmatch(r"(\d+)(gb|mb|kb|b)", text, re.IGNORECASE)
+    match = re.fullmatch(r"(\d+)(tb|gb|mb|kb|b)", text, re.IGNORECASE)
     if match is None:
         raise ConfigError(
-            f"{where} must be a size like 500MB, 1GB, or 1000KB, not a bare number"
+            f"{where} must be a size like 500MB, 1GB, or 1TB, not a bare number"
         )
     return int(match.group(1)) * _BYTE_SCALE[match.group(2).lower()]
 

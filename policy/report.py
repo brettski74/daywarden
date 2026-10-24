@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlencode
 
 from policy.clients import Client
+from policy.config import BYTE_UNITS
 from policy.gate import ParentGate
 from policy.groups import SiteGroup
 from policy.store import PolicyStore
@@ -193,14 +194,14 @@ def format_bytes(count: int) -> str:
 
 
 def format_byte_limit(count: int) -> str:
-    """Return a size such as 500 MB, 1,500 KB, or 140 bytes.
+    """Return a size such as 500 MB, 2 KB, or 1,500 bytes.
 
-    KB, MB, and GB are powers of 1,000, the same sizes the policy file accepts.
+    KB, MB, GB, and TB are the powers of 1,024 the policy file accepts.
     A count that is not a whole number of those units is left in bytes.
     """
     if count < 0:
         raise ValueError("a byte limit is zero or more")
-    for unit, size in (("GB", 1_000_000_000), ("MB", 1_000_000), ("KB", 1_000)):
+    for unit, size in BYTE_UNITS:
         if count >= size and count % size == 0:
             return f"{count // size:,} {unit}"
     return format_bytes(count)

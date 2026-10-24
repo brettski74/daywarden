@@ -27,8 +27,8 @@ WEDNESDAY = datetime(2026, 10, 21, 16, tzinfo=SYDNEY)
 YOUTUBE = "https://www.youtube.com/watch?v=abc"
 CLASSROOM = "https://classroom.google.com/u/0/h"
 PASSWORD = "secret"
-ONE_KILOBYTE = 1000
-TWO_MEGABYTES = 2_000_000
+ONE_KILOBYTE = 1024
+TWO_MEGABYTES = 2 * 1024 * 1024
 
 HOUSEHOLD = """
 [household]
@@ -128,22 +128,29 @@ def _mark(store: PolicyStore, client_id: int, group: str, start: datetime, count
         store.mark_bucket(client_id, group, start + index * step)
 
 
-@pytest.mark.parametrize("written", ["1KB", "1kb", "1000B", "1000b"])
-def test_one_kilobyte_is_one_thousand_bytes(written):
+@pytest.mark.parametrize("written", ["1KB", "1kb", "1024B", "1024b"])
+def test_one_kilobyte_is_1024_bytes(written):
     assert _limit(written) == ONE_KILOBYTE
+
+
+def test_a_thousand_bytes_is_not_a_kilobyte():
+    assert _limit("1000B") == 1000
+    assert _limit("1KB") == 1024
 
 
 @pytest.mark.parametrize(
     ("written", "expected", "shown"),
     [
-        ("2KB", 2_000, "2 KB"),
-        ("1MB", 1_000_000, "1 MB"),
-        ("500MB", 500_000_000, "500 MB"),
-        ("500mb", 500_000_000, "500 MB"),
-        ("1GB", 1_000_000_000, "1 GB"),
+        ("2KB", 2 * 1024, "2 KB"),
+        ("1MB", 1024**2, "1 MB"),
+        ("500MB", 500 * 1024**2, "500 MB"),
+        ("500mb", 500 * 1024**2, "500 MB"),
+        ("1GB", 1024**3, "1 GB"),
+        ("1TB", 1024**4, "1 TB"),
+        ("2tb", 2 * 1024**4, "2 TB"),
     ],
 )
-def test_byte_limits_are_decimal_and_round_trip(written, expected, shown):
+def test_byte_limits_are_powers_of_two_and_round_trip(written, expected, shown):
     assert _limit(written) == expected
     assert format_byte_limit(expected) == shown
     text = f'[[groups]]\nname = "Entertainment"\npriority = 30\nquota = "2h"\nbyte_limit = "{written}"\n'
@@ -197,8 +204,8 @@ def test_bytes_under_the_limit_allow_and_reaching_it_denies():
         clients = _apply(store)
         younger = clients["Younger child"]
         start = datetime(2026, 10, 21, 15, 0, tzinfo=SYDNEY)
-        store.mark_bucket(younger, "Entertainment", start, byte_count=999)
-        assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == 999
+        store.mark_bucket(younger, "Entertainment", start, byte_count=ONE_KILOBYTE - 1)
+        assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == ONE_KILOBYTE - 1
         assert _decision(store, WEDNESDAY) == ALLOW
         store.mark_bucket(younger, "Entertainment", start, byte_count=1)
         assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == ONE_KILOBYTE
@@ -277,15 +284,15 @@ def test_the_condition_reads_the_bytes_observations_store():
         younger = clients["Younger child"]
         moment = datetime(2026, 10, 21, 15, 0, 1, tzinfo=SYDNEY)
         assert _observe(store, moment, 400)
-        assert _observe(store, moment + timedelta(seconds=30), 599)
+        assert _observe(store, moment + timedelta(seconds=30), 623)
         (rows, total) = store.connection.execute(
             "SELECT count(*), byte_count FROM usage_buckets"
         ).fetchone()
-        assert (rows, total) == (1, 999)
-        assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == 999
+        assert (rows, total) == (1, ONE_KILOBYTE - 1)
+        assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == ONE_KILOBYTE - 1
         assert _decision(store, WEDNESDAY) == ALLOW
         with store.connection:
-            store.connection.execute("UPDATE usage_buckets SET byte_count = 1000")
+            store.connection.execute("UPDATE usage_buckets SET byte_count = ?", (ONE_KILOBYTE,))
         assert store.observed_bytes(younger, "Entertainment", WEDNESDAY) == ONE_KILOBYTE
         assert _decision(store, WEDNESDAY) == TOO_MUCH
         names = [
@@ -304,7 +311,7 @@ def test_reloading_changes_the_limit_and_keeps_the_stored_bytes():
         store.mark_bucket(younger, "Entertainment", start, byte_count=100)
         larger = HOUSEHOLD.replace('byte_limit = "1KB"', 'byte_limit = "2KB"')
         _apply(store, larger)
-        assert _group(store, "Entertainment").byte_limit == 2_000
+        assert _group(store, "Entertainment").byte_limit == 2 * 1024
         assert _group(store, "Entertainment").quota == 2 * 60 * 60
         (byte_count,) = store.connection.execute("SELECT byte_count FROM usage_buckets").fetchone()
         assert byte_count == 100
