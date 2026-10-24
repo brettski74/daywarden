@@ -24,6 +24,7 @@ class SiteGroup:
     default: bool = False
     rules: tuple[Rule, ...] = ()
     quota: int | None = None
+    byte_limit: int | None = None
 
 
 def matches(pattern: str, url: str) -> bool:

@@ -322,6 +322,7 @@ def test_a_version_2_database_is_upgraded_and_keeps_its_groups(tmp_path):
         store.connection.executescript(
             """
             DROP TABLE usage_buckets;
+            ALTER TABLE site_groups DROP COLUMN byte_limit;
             ALTER TABLE site_groups DROP COLUMN quota_seconds;
             DROP TABLE rule_weekday_counts;
             DROP TABLE task_completions;

@@ -2,9 +2,10 @@
 
 On start, POLICY_FILE (when present) is loaded into the SQLite database at
 POLICY_DB. Without the file, the service uses what the database already holds.
-Each decision reads that database for today's revision count and for the
-ended usage recorded against today's quota. GET /usage is the parent report
-of that usage. It stays closed until PARENT_PASSWORD is set.
+Each decision reads that database for today's revision count, for the
+ended usage recorded against today's quota, and for the bytes already stored
+against a byte limit. GET /usage is the parent report of that usage. It stays
+closed until PARENT_PASSWORD is set.
 """
 
 from __future__ import annotations
@@ -21,16 +22,14 @@ from policy.clients import ClientDirectory
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
     DecisionLog,
-    answer,
-    completed_today,
-    consumed_today,
+    answer_from_store,
     context_for,
     log_entry,
     parse_request,
 )
 from policy.gate import COOKIE_NAME, ParentGate, cookie_value
 from policy.groups import SiteGroups
-from policy.report import parse_form, respond
+from policy.report import format_byte_limit, parse_form, respond
 from policy.store import PolicyStore
 
 
@@ -72,7 +71,12 @@ def create_app() -> FastAPI:
         detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
         rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
         quota = "no quota" if group.quota is None else f"quota {_span(group.quota)}"
-        print(f"group {group.name}: {detail}, {rules}, {quota}", flush=True)
+        volume = (
+            "no byte limit"
+            if group.byte_limit is None
+            else f"byte limit {format_byte_limit(group.byte_limit)}"
+        )
+        print(f"group {group.name}: {detail}, {rules}, {quota}, {volume}", flush=True)
     if not any(group.default for group in groups):
         print("no default group; sites outside every group are denied", flush=True)
 
@@ -96,13 +100,11 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             decision_log.append(log_entry(document, None, None))
             return PlainTextResponse(str(exc), status_code=400)
-        decision = answer(
+        decision = answer_from_store(
+            store,
             context,
             decision_file,
             stub=decision_stub,
-            revision_task=revision_task,
-            completed=completed_today(store, context),
-            consumed=consumed_today(store, context),
         )
         decision_log.append(log_entry(document, context, decision))
         who = context.client.name if context.client else context.request.client_ip

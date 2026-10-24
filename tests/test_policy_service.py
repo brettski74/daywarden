@@ -281,7 +281,7 @@ def test_urls_are_put_in_site_groups_and_rules_decide(stack):
     logs = stack.logs()
     assert "no default group" in logs
     assert "revision task placeholder http://tasks.example/next" in logs
-    assert "group Entertainment: priority 30, 2 patterns, 5 rules, quota 2h" in logs
+    assert "group Entertainment: priority 30, 2 patterns, 5 rules, quota 2h, no byte limit" in logs
     assert "usage buckets are 5m" in logs
 
 

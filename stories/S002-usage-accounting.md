@@ -2,7 +2,7 @@ Ticket: S002
 Title: Usage accounting
 Status: Draft
 Story Points: 13
-Last Updated: 2026-10-22 20:14:47
+Last Updated: 2026-10-22 20:40:36
 ---
 
 # User Voice
@@ -14,7 +14,7 @@ As a parent, I want the house to count internet use in short buckets, so that a 
 - Observations from the proxy mark a bucket for a client and a site group.
 - A bucket counts toward the consumed time only after it has ended, and it contributes the length it was opened with. The quota itself stays a configured duration.
 - A parent can read, for a client and a group, which buckets were active and on which days.
-- Later, a volume cap can sit on the same stored byte counts.
+- A volume cap can sit on the same stored byte counts. The sample does not turn it on until real totals justify a number.
 
 # Acceptance Criteria
 
@@ -33,3 +33,5 @@ As a parent, I want the house to count internet use in short buckets, so that a 
 # Notes
 
 Depends on S000.3 for observations and on S001.2 for groups. S001.5 reads the same ledger.
+
+S002.3's condition is implemented. The sample policy does not turn it on. On 2026-10-22 the running household database was still schema 2 and had no usage buckets, so no starting byte limit was chosen.

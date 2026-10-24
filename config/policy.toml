@@ -69,6 +69,16 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 # aligned to local midnight. A bucket counts only after it ends, at the length
 # stored for that bucket. Forwarded traffic marks the bucket that contains the
 # report. A URL in no group is ignored.
+#
+# volume_remaining is true while today's stored bytes for this client and this
+# group are strictly under the group's byte_limit. byte_limit is a size such
+# as 500MB, 1GB, or 1000KB. 1 KB is 1,000 bytes. A bare number is rejected.
+# Leave byte_limit off and the condition stays true. The bytes are the ones
+# already stored on today's buckets, including a bucket that has not ended.
+# This file does not set a limit and does not use the condition. The quota
+# rule below allows the request when time remains, so a volume rule written
+# after that allow would never run. To turn a cap on, make quota_remaining
+# continue when it is true, and let volume_remaining allow or deny.
 
 # School work is allowed at any time and has no quota. The patterns are a
 # starter for Google Classroom and the Google hosts a Classroom session
@@ -123,6 +133,8 @@ when_false = { action = "continue" }
 name = "Entertainment"
 priority = 30
 quota = "2h"
+# No byte_limit, and no volume_remaining rule. The household ledger has no
+# YouTube byte totals to size a cap from, so this group stays on the time quota.
 patterns = [
     "*.youtube.com",
     "youtube.com",
