@@ -72,7 +72,8 @@ address = "192.168.1.40"  # PLACEHOLDER: replace with this computer's reserved I
 #
 # volume_remaining is true while today's stored bytes for this client and this
 # group are strictly under the group's byte_limit. byte_limit is a size such
-# as 500MB, 1GB, or 1000KB. 1 KB is 1,000 bytes. A bare number is rejected.
+# as 500MB, 1GB, or 1TB. 1 KB is 1,024 bytes. 1 MB is 1,024 KB, 1 GB is
+# 1,024 MB, and 1 TB is 1,024 GB. A bare number is rejected.
 # Leave byte_limit off and the condition stays true. The bytes are the ones
 # already stored on today's buckets, including a bucket that has not ended.
 # This file does not set a limit and does not use the condition. The quota

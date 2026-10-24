@@ -169,7 +169,7 @@ The first action other than `continue` wins. If the list runs out, the request i
 | `time_window` | Local time falls inside the window. Windows may name weekdays, and a window may cross midnight. |
 | `tasks_complete` | Successful revisions completed today by this client is at least N. N may differ by weekday, with a default. |
 | `quota_remaining` | Today's consumed time for this client and this group is still under the group's configured duration. The duration is a length of time, such as `2h`. Buckets are how that time is measured, not how it is configured. |
-| `volume_remaining` | Today's stored bytes for this client and this group are still under the group's byte limit. The bytes are the ones already on today's buckets, including a bucket that has not ended. A group with no byte limit makes the condition true. The sample policy does not turn this on. |
+| `volume_remaining` | Today's stored bytes for this client and this group are still under the group's byte limit. KB, MB, GB, and TB are powers of 1,024. The bytes are the ones already on today's buckets, including a bucket that has not ended. A group with no byte limit makes the condition true. The sample policy does not turn this on. |
 | `always` | Always true. Used to allow or deny unconditionally. |
 
 `revision_task` is resolved by the policy service before the answer is returned. The addon only ever sees an absolute URL. The chosen task comes from the tasks assigned to that source IP.
