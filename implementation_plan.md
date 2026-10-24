@@ -169,6 +169,7 @@ The first action other than `continue` wins. If the list runs out, the request i
 | `time_window` | Local time falls inside the window. Windows may name weekdays, and a window may cross midnight. |
 | `tasks_complete` | Successful revisions completed today by this client is at least N. N may differ by weekday, with a default. |
 | `quota_remaining` | Today's consumed time for this client and this group is still under the group's configured duration. The duration is a length of time, such as `2h`. Buckets are how that time is measured, not how it is configured. |
+| `volume_remaining` | Today's stored bytes for this client and this group are still under the group's byte limit. The bytes are the ones already on today's buckets, including a bucket that has not ended. A group with no byte limit makes the condition true. The sample policy does not turn this on. |
 | `always` | Always true. Used to allow or deny unconditionally. |
 
 `revision_task` is resolved by the policy service before the answer is returned. The addon only ever sees an absolute URL. The chosen task comes from the tasks assigned to that source IP.
@@ -191,7 +192,7 @@ A group's time quota is configured as a duration in ordinary units: seconds, min
 
 Any observation in a bucket marks it. A marked bucket adds its own length to the consumed time only after its end time has passed, so a request in the first seconds of a bucket does not consume that time until the bucket closes. The open bucket is not part of the total yet. `quota_remaining` is true while consumed time is strictly below the configured duration. With a `2h` quota and five-minute buckets, 23 ended buckets are 115 minutes and the quota remains. 24 ended buckets are 120 minutes and the quota is exhausted. If the bucket length is later set to ten minutes, the quota is still `2h`. New buckets are ten minutes each. The 23 buckets already counted still contribute five minutes each.
 
-There is no banking across days. The ledger and the revision count both reset at local midnight. Minutes left unused today are gone tomorrow. Revision tasks completed yesterday do not count today, even if he never used the internet after finishing them. A requirement of two tasks means two successes on that local date before the entertainment rules will allow the quota to be used. Bytes are stored on each observation so a later story can add a volume condition without a new metering path.
+There is no banking across days. The ledger and the revision count both reset at local midnight. Minutes left unused today are gone tomorrow. Revision tasks completed yesterday do not count today, even if he never used the internet after finishing them. A requirement of two tasks means two successes on that local date before the entertainment rules will allow the quota to be used. Bytes are stored on each observation. `volume_remaining` reads that same `byte_count`. The sample policy leaves the condition off until a parent sets a limit from real totals.
 
 An already-open transfer is not cut the moment the quota flips. The next request is denied. YouTube's segment and heartbeat requests make that enough for ordinary playback. Killing a live stream is a possible later story, not part of the first ledger.
 
@@ -223,7 +224,7 @@ Each story is implementable on its own once the stories it depends on are done. 
 | 6 | S004.1 through S004.5 | Arithmetic earns a real completion. |
 | 7 | S005.1, S005.2, S005.3 | Spelling earns a completion, using recordings the parent supplies. Practice mode is in this slice. |
 | 8 | S006.1, S006.2 | Parts of speech, including a real failure. |
-| Later | S005.4, S007.2, S007.3, S002.3 | Generated spelling audio, browser editors for rules and quizzes, and a volume cap. None of these are required to run the house. |
+| Later | S005.4, S007.2, S007.3 | Generated spelling audio and browser editors for rules and quizzes. None of these are required to run the house. S002.3's volume condition is in; the sample policy does not turn it on. |
 
 S004, S005, and S006 depend on S003 and not on each other. They can be built in any order. Arithmetic is first because it has no audio assets and no drag-and-drop.
 
@@ -250,7 +251,7 @@ Stories marked Later are kept so the work is not forgotten. They are not part of
 | [S002](stories/S002-usage-accounting.md) | Usage accounting | 13 | Initial, except S002.3 |
 | [S002.1](stories/S002.1-bucket-ledger.md) | Bucket ledger | 5 | Initial |
 | [S002.2](stories/S002.2-usage-report.md) | Usage report | 3 | Initial |
-| [S002.3](stories/S002.3-volume-limit.md) | Volume limit | 5 | Later |
+| [S002.3](stories/S002.3-volume-limit.md) | Volume limit | 5 | Done; sample stays off |
 | [S003](stories/S003-revision-tasks.md) | Revision task platform | 13 | Initial |
 | [S003.1](stories/S003.1-task-catalogue.md) | Task catalogue, cooldown, and attempts | 5 | Initial |
 | [S003.2](stories/S003.2-task-selection.md) | Task selection and give-up | 5 | Initial |

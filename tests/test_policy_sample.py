@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from policy import config
 from policy.clients import ClientDirectory
 from policy.clock import HouseholdClock
-from policy.decisions import DecisionRequest, completed_today, consumed_today, context_for, decide
+from policy.decisions import DecisionRequest, answer_from_store, context_for
 from policy.groups import SiteGroups
 from policy.store import PolicyStore
 from proxy import bypass
@@ -68,14 +68,7 @@ def _decide(store: PolicyStore, moment: datetime, url: str, ip: str | None = Non
         ClientDirectory(store.clients()),
         SiteGroups(store.groups()),
     )
-    decision = json.loads(
-        decide(
-            context,
-            revision_task=store.revision_task(),
-            completed=completed_today(store, context),
-            consumed=consumed_today(store, context),
-        )
-    )
+    decision = json.loads(answer_from_store(store, context, SAMPLE))
     return context, decision
 
 
@@ -95,6 +88,12 @@ def test_the_sample_stores_one_client_three_groups_and_a_two_hour_quota():
         assert groups["School work"].quota is None
         assert groups["Everything else"].quota is None
         assert groups["Entertainment"].quota == 2 * 60 * 60
+        assert groups["Entertainment"].byte_limit is None
+        assert groups["School work"].byte_limit is None
+        assert groups["Everything else"].byte_limit is None
+        assert not any(
+            rule.condition == "volume_remaining" for group in groups.values() for rule in group.rules
+        )
         assert ENTERTAINMENT_PATTERNS <= set(groups["Entertainment"].patterns)
         assert groups["Entertainment"].rules[3].requirement.required == 2
         assert groups["Everything else"].rules[3].requirement.required == 2

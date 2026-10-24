@@ -44,6 +44,8 @@ A `tasks_complete` condition carries `required`, a count of successful revision 
 
 A `quota_remaining` condition is true when today's ended usage for this client and this group is strictly under the group's `quota`. The quota is a duration such as `2h`, `120m`, or `7200s`. Those three are the same two-hour limit. A bare number is rejected, so the quota cannot be written as a count of buckets. Leave `quota` off a group and the condition stays true. Usage is measured in buckets (`household.bucket_length`, five minutes when it is left out). The length has to divide a 24-hour day, so two, five, and ten minutes are accepted and seven minutes is rejected. Buckets are aligned to household-local midnight. A bucket counts only after its end time has passed, and it contributes the length stored on that bucket. Changing the bucket length does not change a stored quota, and a bucket that has already ended keeps its length. The new length takes effect when the decisions service loads the file. That load closes a bucket that is still open: its length becomes the seconds from its start to the load. The next bucket starts at the load and ends at the next midnight boundary of the new length, so it can be shorter. Every bucket after that boundary is the full new length. A load that leaves the length unchanged does not close anything. Forwarded traffic writes these buckets.
 
+A `volume_remaining` condition is true while today's stored bytes for this client and this group are strictly under the group's `byte_limit`. The limit is a size such as `500MB`, `1GB`, or `1000KB`. `1KB` and `1000B` are the same thousand bytes, and `1MB` is 1,000,000 bytes. A bare number is rejected. Leave `byte_limit` off and the condition stays true. The bytes are the `byte_count` already stored on today's buckets, including a bucket that has not ended. There is no second meter. The sample policy does not set a limit and does not use the condition: the household ledger had no YouTube totals to size one from. A size in the volume example further down is the spelling, not a cap chosen for this house. The Entertainment quota rule allows the request when time remains, which stops the list, so a volume rule written after that allow never runs. To turn the cap on, make `quota_remaining` continue when it is true, and let `volume_remaining` allow or deny.
+
 ```toml
 [[groups.rules]]
 condition = "time_window"
@@ -72,6 +74,21 @@ when_true = { action = "allow" }
 when_false = { action = "deny", message = "Time is up for today." }
 ```
 
+That last rule allows the request, so it is the time-only shape the sample uses. A byte cap has to be a rule that is actually reached:
+
+```toml
+# byte_limit = "500MB" belongs on the [[groups]] table, not on the rule.
+[[groups.rules]]
+condition = "quota_remaining"
+when_true = { action = "continue" }
+when_false = { action = "deny", message = "Time is up for today." }
+
+[[groups.rules]]
+condition = "volume_remaining"
+when_true = { action = "allow" }
+when_false = { action = "deny", message = "That's enough video for today." }
+```
+
 The three answers a rule can produce are:
 
 ```json
@@ -90,7 +107,7 @@ A forwarded response is also reported to `POST /v1/observations`. Each report ha
 
 A parent opens `http://<this machine>:8090/usage` in a browser. The port is `REPORT_PORT` in `.env`.
 
-The page lists the last 14 household-local days for one client and one site group. Choose both. Each day shows the buckets that contained traffic: the clock times they covered, the time that bucket represents, and how many bytes it carried. A bucket that has not ended yet is listed and left out of the counted time. A day with no traffic says no usage. School work, and any other group with no quota, is listed the same way. The clock is the household timezone.
+The page lists the last 14 household-local days for one client and one site group. Choose both. Each day shows the buckets that contained traffic: the clock times they covered, the time that bucket represents, and how many bytes it carried. A bucket that has not ended yet is listed and left out of the counted time. A day with no traffic says no usage. School work, and any other group with no quota, is listed the same way. When the group has a byte limit, the page names that limit and each day shows that day's stored bytes beside it, including bytes in a bucket that has not ended. A quiet day still says no usage, and shows zero bytes of the limit. The clock is the household timezone.
 
 Export `PARENT_PASSWORD` before `make up`. A later change needs `docker compose up -d decisions`, so the container is created again. The password is not written into `config/policy.toml` and it is not stored in the database. With no password, the page stays closed and shows no usage. This gate is temporary. Parent sign-in replaces it. Leave the password set while that port is reachable on the household network.
 

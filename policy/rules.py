@@ -19,6 +19,11 @@ stories.
 that date is strictly below the group's quota. The quota is a duration in
 seconds. A group with no quota makes the condition true. Usage is the sum of
 the lengths of buckets that contained traffic and have already ended.
+
+`volume_remaining` is true while today's stored bytes for this client and
+group are strictly under the group's byte limit. A group with no byte limit
+makes the condition true. The bytes are the ones already stored on today's
+buckets, including a bucket that has not ended.
 """
 
 from __future__ import annotations
@@ -90,6 +95,8 @@ def evaluate(
     completed: int = 0,
     consumed: int = 0,
     quota: int | None = None,
+    observed: int = 0,
+    byte_limit: int | None = None,
     revision_task: str | None = None,
 ) -> dict:
     """Return the decision for rules at household-local time at.
@@ -102,16 +109,30 @@ def evaluate(
     used for the group on that date. quota is the group's limit in seconds,
     or None when the group has no quota. The condition is true when quota is
     absent or consumed is strictly below it.
+
+    observed is how many bytes are already stored for this client and group
+    on that date, including a bucket that has not ended. byte_limit is the
+    group's daily cap in bytes, or None when the group has none. The
+    condition is true when the cap is absent or observed is strictly below it.
     """
     for rule in rules:
-        action = rule.when_true if _holds(rule, at, completed, consumed, quota) else rule.when_false
+        holds = _holds(rule, at, completed, consumed, quota, observed, byte_limit)
+        action = rule.when_true if holds else rule.when_false
         if action.kind == "continue":
             continue
         return _decision(action, revision_task)
     return {"action": "deny", "status": 403, "message": FALLTHROUGH_MESSAGE}
 
 
-def _holds(rule: Rule, at: datetime, completed: int, consumed: int, quota: int | None) -> bool:
+def _holds(
+    rule: Rule,
+    at: datetime,
+    completed: int,
+    consumed: int,
+    quota: int | None,
+    observed: int,
+    byte_limit: int | None,
+) -> bool:
     if rule.condition == "always":
         return True
     if rule.condition == "time_window":
@@ -121,6 +142,8 @@ def _holds(rule: Rule, at: datetime, completed: int, consumed: int, quota: int |
         return requirement is not None and completed >= requirement.for_weekday(at.weekday())
     if rule.condition == "quota_remaining":
         return quota is None or consumed < quota
+    if rule.condition == "volume_remaining":
+        return byte_limit is None or observed < byte_limit
     raise ValueError(f"unknown condition {rule.condition!r}")
 
 

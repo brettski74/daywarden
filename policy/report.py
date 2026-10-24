@@ -5,6 +5,8 @@ household-local days. Each day lists the buckets that contained traffic: the
 clock times they covered, the length stored for that bucket, and the bytes
 it carried. A bucket counts toward the day's time once its end has passed.
 A day with no rows says no usage. A group with no quota is shown the same way.
+When the group has a byte limit, each day shows that day's stored bytes
+beside the limit, including bytes in a bucket that has not ended.
 
 The page is closed unless the temporary parent gate has a password. S007.1
 replaces that gate.
@@ -65,12 +67,17 @@ class DayLine:
     def counted_seconds(self) -> int:
         return sum(bucket.length_seconds for bucket in self.buckets if bucket.counted)
 
+    @property
+    def byte_count(self) -> int:
+        return sum(bucket.byte_count for bucket in self.buckets)
+
 
 @dataclass(frozen=True)
 class UsageReport:
     client: str
     group: str
     quota: int | None
+    byte_limit: int | None
     timezone: str | None
     days: tuple[DayLine, ...]
 
@@ -108,7 +115,7 @@ def load_report(store: PolicyStore, client_name: str, group_name: str, now: date
         end = start + timedelta(seconds=length)
         grouped.setdefault(day, []).append(BucketLine(start, length, nbytes, end <= wall))
     days = tuple(DayLine(day, tuple(grouped.get(day, ()))) for day in dates)
-    return UsageReport(client.name, group.name, group.quota, store.timezone(), days)
+    return UsageReport(client.name, group.name, group.quota, group.byte_limit, store.timezone(), days)
 
 
 def parse_form(body: bytes) -> dict[str, str]:
@@ -185,6 +192,20 @@ def format_bytes(count: int) -> str:
     return f"{count:,} bytes"
 
 
+def format_byte_limit(count: int) -> str:
+    """Return a size such as 500 MB, 1,500 KB, or 140 bytes.
+
+    KB, MB, and GB are powers of 1,000, the same sizes the policy file accepts.
+    A count that is not a whole number of those units is left in bytes.
+    """
+    if count < 0:
+        raise ValueError("a byte limit is zero or more")
+    for unit, size in (("GB", 1_000_000_000), ("MB", 1_000_000), ("KB", 1_000)):
+        if count >= size and count % size == 0:
+            return f"{count // size:,} {unit}"
+    return format_bytes(count)
+
+
 def format_day(day: date) -> str:
     """Return a household-local date such as Wednesday 21 October 2026."""
     return f"{_WEEKDAYS[day.weekday()]} {day.day} {_MONTHS[day.month - 1]} {day.year}"
@@ -222,14 +243,18 @@ def _report_block(report: UsageReport) -> str:
         if report.quota is None
         else f"Quota: {format_duration(report.quota)}."
     )
-    days = "\n".join(_day_section(day) for day in report.days)
-    return f"<h2>{_e(report.client)}, {_e(report.group)}</h2>\n<p>{quota}</p>\n{days}"
+    limit = ""
+    if report.byte_limit is not None:
+        limit = f"\n<p>Byte limit: {_e(format_byte_limit(report.byte_limit))}.</p>"
+    days = "\n".join(_day_section(day, report.byte_limit) for day in report.days)
+    return f"<h2>{_e(report.client)}, {_e(report.group)}</h2>\n<p>{quota}</p>{limit}\n{days}"
 
 
-def _day_section(day: DayLine) -> str:
+def _day_section(day: DayLine, byte_limit: int | None) -> str:
     heading = format_day(day.day)
+    volume = _volume_line(day, byte_limit)
     if not day.buckets:
-        return f"<section><h3>{heading}</h3><p>no usage</p></section>"
+        return f"<section><h3>{heading}</h3><p>no usage</p>{volume}</section>"
     if day.counted_seconds == 0:
         summary = "Counted time: none yet."
     else:
@@ -238,7 +263,7 @@ def _day_section(day: DayLine) -> str:
     return (
         "<section>\n"
         f"<h3>{heading}</h3>\n"
-        f"<p>{summary}</p>\n"
+        f"<p>{summary}</p>{volume}\n"
         "<table>\n"
         "<thead><tr><th>When</th><th>Time</th><th>Bytes</th></tr></thead>\n"
         "<tbody>\n"
@@ -247,6 +272,13 @@ def _day_section(day: DayLine) -> str:
         "</table>\n"
         "</section>"
     )
+
+
+def _volume_line(day: DayLine, byte_limit: int | None) -> str:
+    if byte_limit is None:
+        return ""
+    text = f"Bytes: {format_bytes(day.byte_count)} of {format_byte_limit(byte_limit)}."
+    return f"\n<p>{_e(text)}</p>"
 
 
 def _bucket_row(bucket: BucketLine) -> str:

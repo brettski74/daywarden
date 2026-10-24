@@ -104,18 +104,31 @@ def consumed_today(store: PolicyStore, context: DecisionContext) -> int:
     return store.consumed_seconds(context.client.id, context.group.name, context.local_time)
 
 
+def observed_today(store: PolicyStore, context: DecisionContext) -> int:
+    """Return today's stored bytes for this client and site group.
+
+    An IP that is not a client has moved none. A bucket that has not ended
+    is included. The total is the sum of byte_count on today's rows.
+    """
+    if context.client is None or context.group is None:
+        return 0
+    return store.observed_bytes(context.client.id, context.group.name, context.local_time)
+
+
 def decide(
     context: DecisionContext,
     *,
     revision_task: str | None = None,
     completed: int = 0,
     consumed: int = 0,
+    observed: int = 0,
 ) -> bytes:
     """Judge the request by its site group's rules.
 
     completed is today's stored revision count for the client. consumed is
     today's ended usage, in seconds, for the client and the group. A group
-    with no quota still passes quota_remaining.
+    with no quota still passes quota_remaining. observed is today's stored
+    bytes. A group with no byte limit still passes volume_remaining.
     """
     if context.group is None:
         return _deny(UNGROUPED_MESSAGE)
@@ -126,6 +139,8 @@ def decide(
             completed=completed,
             consumed=consumed,
             quota=context.group.quota,
+            observed=observed,
+            byte_limit=context.group.byte_limit,
             revision_task=revision_task,
         )
     )
@@ -139,6 +154,7 @@ def answer(
     revision_task: str | None = None,
     completed: int = 0,
     consumed: int = 0,
+    observed: int = 0,
 ) -> bytes | None:
     """Return the body to send. A grouped URL uses the decision file only when stub is set."""
     if context.group is None:
@@ -150,6 +166,30 @@ def answer(
         revision_task=revision_task,
         completed=completed,
         consumed=consumed,
+        observed=observed,
+    )
+
+
+def answer_from_store(
+    store: PolicyStore,
+    context: DecisionContext,
+    decision_file: Path,
+    *,
+    stub: bool = False,
+) -> bytes | None:
+    """Judge the request from the revision count and the usage ledger.
+
+    The byte total is the one observations already store. This is the path
+    the decisions service uses.
+    """
+    return answer(
+        context,
+        decision_file,
+        stub=stub,
+        revision_task=store.revision_task(),
+        completed=completed_today(store, context),
+        consumed=consumed_today(store, context),
+        observed=observed_today(store, context),
     )
 
 

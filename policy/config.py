@@ -4,6 +4,7 @@ DNS names are resolved here, once per load, so a decision only does a
 dictionary lookup. A name that does not resolve keeps the addresses stored
 by the last load that did resolve it. Rules are stored with their group.
 A group's quota is stored as a duration in seconds, never as a bucket count.
+A group's byte limit is stored as a number of bytes, or left unset.
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ from policy.rules import REVISION_TASK, Action, Rule, TaskRequirement, TimeWindo
 from policy.store import DEFAULT_BUCKET_SECONDS, PolicyStore
 
 _UNIT_SECONDS = {"h": 3600, "m": 60, "s": 1}
+_BYTE_SCALE = {"gb": 1_000_000_000, "mb": 1_000_000, "kb": 1_000, "b": 1}
 
-_CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "always"}
+_CONDITIONS = {"time_window", "tasks_complete", "quota_remaining", "volume_remaining", "always"}
 _ACTIONS = {"continue", "deny", "redirect", "allow"}
 _WEEKDAYS = {
     "monday": 0,
@@ -121,7 +123,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
     groups: list[SiteGroup] = []
     for number, entry in enumerate(entries, start=1):
         where = f"{source}: group {number}"
-        _only(entry, {"name", "priority", "patterns", "default", "rules", "quota"}, where)
+        _only(entry, {"name", "priority", "patterns", "default", "rules", "quota", "byte_limit"}, where)
         name = _text(entry, "name", where)
         priority = entry.get("priority")
         if not isinstance(priority, int) or isinstance(priority, bool):
@@ -144,6 +146,9 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
             if other.default and default:
                 raise ConfigError(f"{source}: groups {other.name!r} and {name!r} are both the default")
         quota = _duration(entry["quota"], f"{where}: quota") if "quota" in entry else None
+        byte_limit = (
+            _byte_limit(entry["byte_limit"], f"{where}: byte_limit") if "byte_limit" in entry else None
+        )
         groups.append(
             SiteGroup(
                 name,
@@ -152,6 +157,7 @@ def _groups(document: dict, source: str) -> tuple[SiteGroup, ...]:
                 default,
                 _rules(entry.get("rules", []), where),
                 quota,
+                byte_limit,
             )
         )
     return tuple(groups)
@@ -170,7 +176,8 @@ def _rule(entry: dict, where: str) -> Rule:
     condition = entry.get("condition")
     if condition not in _CONDITIONS:
         raise ConfigError(
-            f"{where}: condition must be time_window, tasks_complete, quota_remaining, or always"
+            f"{where}: condition must be time_window, tasks_complete, "
+            "quota_remaining, volume_remaining, or always"
         )
     if "when_true" not in entry or "when_false" not in entry:
         raise ConfigError(f"{where}: when_true and when_false are both required")
@@ -255,6 +262,22 @@ def _duration(value: object, where: str) -> int:
             f"{where} must be a duration like 2h, 120m, or 7200s, not a number of buckets"
         )
     return int(match.group(1)) * _UNIT_SECONDS[match.group(2).lower()]
+
+
+def _byte_limit(value: object, where: str) -> int:
+    """Return bytes for a size such as 500MB, 1GB, or 1000KB.
+
+    1 KB is 1,000 bytes, 1 MB is 1,000,000, and 1 GB is 1,000,000,000.
+    A bare number is rejected, so 500 cannot be read as 500 bytes when
+    500MB was meant.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    match = re.fullmatch(r"(\d+)(gb|mb|kb|b)", text, re.IGNORECASE)
+    if match is None:
+        raise ConfigError(
+            f"{where} must be a size like 500MB, 1GB, or 1000KB, not a bare number"
+        )
+    return int(match.group(1)) * _BYTE_SCALE[match.group(2).lower()]
 
 
 def _window(entry: object, where: str) -> TimeWindow:

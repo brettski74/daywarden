@@ -5,7 +5,8 @@ that contained traffic. It keeps the length stored for that bucket. A load
 that changes the configured length shortens a bucket that is still open, and
 leaves a bucket that has already ended alone. Observations write these rows.
 A test or an administrator can write them too. quota_remaining reads the ones
-that have ended. The usage report reads every marked row in its window.
+that have ended. volume_remaining sums byte_count on today's rows, including
+a bucket that has not ended. The usage report reads every marked row in its window.
 """
 
 from __future__ import annotations
@@ -112,6 +113,11 @@ _MIGRATIONS = (
         PRIMARY KEY (client_id, group_id, started_at)
     );
     """,
+    # byte_limit is the group's daily volume cap in bytes, NULL when it has
+    # none. volume_remaining sums usage_buckets.byte_count. There is no second meter.
+    """
+    ALTER TABLE site_groups ADD COLUMN byte_limit INTEGER;
+    """,
 )
 SCHEMA_VERSION = len(_MIGRATIONS)
 DEFAULT_BUCKET_SECONDS = 300
@@ -189,9 +195,11 @@ class PolicyStore:
                 bool(is_default),
                 tuple(rules.get(group_id, ())),
                 None if quota_seconds is None else int(quota_seconds),
+                None if byte_limit is None else int(byte_limit),
             )
-            for group_id, name, priority, is_default, quota_seconds in self.connection.execute(
-                "SELECT id, name, priority, is_default, quota_seconds FROM site_groups ORDER BY id"
+            for group_id, name, priority, is_default, quota_seconds, byte_limit in self.connection.execute(
+                "SELECT id, name, priority, is_default, quota_seconds, byte_limit "
+                "FROM site_groups ORDER BY id"
             )
         ]
 
@@ -359,6 +367,23 @@ class PolicyStore:
                 total += int(length)
         return total
 
+    def observed_bytes(self, client_id: int, group: str, at: datetime) -> int:
+        """Return today's stored bytes for this client and group.
+
+        Every bucket marked on the local date of at counts, including one
+        that has not ended. at is household-local. Buckets from another day,
+        another client, or another group are left out. The total is the sum
+        of byte_count on those rows.
+        """
+        wall = _wall(at)
+        group_id = self._group_id(group)
+        (total,) = self.connection.execute(
+            "SELECT COALESCE(SUM(byte_count), 0) FROM usage_buckets "
+            "WHERE client_id = ? AND group_id = ? AND day = ?",
+            (client_id, group_id, _day(wall.date())),
+        ).fetchone()
+        return int(total)
+
     def buckets_between(
         self, client_id: int, group: str, first: date, last: date
     ) -> list[tuple[date, datetime, int, int]]:
@@ -473,10 +498,11 @@ class PolicyStore:
         clients holds (name, address, ips). A client or a group keeps its id
         while its name stays the same, so later records stay attached. Rules are
         rewritten each load. A client's revision count is not in the file, and
-        neither are usage buckets, so a reload leaves both in place. The quota
-        and the bucket length do come from the file. Changing the bucket length
-        does not change a quota. A bucket that has already ended keeps its
-        length. A bucket that is still open is shortened to the load in
+        neither are usage buckets, so a reload leaves both in place. The quota,
+        the byte limit, and the bucket length do come from the file. Changing
+        the bucket length does not change a quota or a byte limit, and changing
+        either limit does not rewrite a bucket's stored bytes. A bucket that has
+        already ended keeps its length. A bucket that is still open is shortened to the load in
         loaded_at, which is household-local. The same length does not close
         anything. The first load only establishes the midnight grid.
         """
@@ -520,12 +546,12 @@ class PolicyStore:
                     self.connection.execute("DELETE FROM site_groups WHERE name = ?", (name,))
             for group in groups:
                 self.connection.execute(
-                    "INSERT INTO site_groups (name, priority, is_default, quota_seconds) "
-                    "VALUES (?, ?, ?, ?) "
+                    "INSERT INTO site_groups (name, priority, is_default, quota_seconds, byte_limit) "
+                    "VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT (name) DO UPDATE SET "
                     "priority = excluded.priority, is_default = excluded.is_default, "
-                    "quota_seconds = excluded.quota_seconds",
-                    (group.name, group.priority, int(group.default), group.quota),
+                    "quota_seconds = excluded.quota_seconds, byte_limit = excluded.byte_limit",
+                    (group.name, group.priority, int(group.default), group.quota, group.byte_limit),
                 )
                 (group_id,) = self.connection.execute(
                     "SELECT id FROM site_groups WHERE name = ?", (group.name,)
