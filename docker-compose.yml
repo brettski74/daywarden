@@ -6,7 +6,9 @@
 # the policy-data volume. A group with no rules denies the request.
 # DECISION_FILE is read only when DECISION_STUB=1, which the addon tests set.
 # The observations service writes POST /v1/observations into the usage ledger
-# in the policy-data volume. The proxy still forwards if that service is down.
+# in the policy-data volume. A YAML policy files each report under the
+# classified client group and site group, and under each quota that accepts
+# it. The proxy still forwards if that service is down.
 # REPORT_PORT publishes the decisions service so a parent can open /usage.
 # PARENT_PASSWORD keeps that page closed until it is set. The decision API on
 # the same port does not show the report and does not edit policy.
@@ -53,11 +55,13 @@ services:
       - -m
       - policy.observations
     environment:
+      POLICY_FILE: /etc/smartproxy/policy.toml
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       OBSERVATION_LOG: /tmp/observations.jsonl
       OBSERVATION_PORT: "8091"
       MACHINE_LOCALTIME: /etc/host-localtime
     volumes:
+      - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy
       # Used when policy.toml does not set a timezone, so a report lands on
       # the same local day the decisions service uses.

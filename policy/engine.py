@@ -50,18 +50,21 @@ class Trace:
 class Ledger:
     """The counts an access rule reads.
 
-    Every count is zero until something stores one. S003 will store successes.
-    S008.3 will store the quota balances. A missing row and an empty ledger
-    answer the same way.
+    Successes stay zero until S003 stores them. Ended seconds and stored bytes
+    are one client group's balance on a named quota. ``policy.usage.UsageStore``
+    records those. A missing row and an empty ledger answer the same way.
+
+    ``when`` is a household-local time, or a date. A time is what decides
+    whether a bucket has ended. A date means the whole of that local day.
     """
 
     def successes(self, client_group: str, day: date) -> int:
         return 0
 
-    def ended_seconds(self, client_group: str, quota: str, day: date) -> int:
+    def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
         return 0
 
-    def stored_bytes(self, client_group: str, quota: str, day: date) -> int:
+    def stored_bytes(self, client_group: str, quota: str, when: date | datetime) -> int:
         return 0
 
 
@@ -85,11 +88,11 @@ class MemoryLedger(Ledger):
     def successes(self, client_group: str, day: date) -> int:
         return self._successes.get((client_group, day), 0)
 
-    def ended_seconds(self, client_group: str, quota: str, day: date) -> int:
-        return self._seconds.get((client_group, quota, day), 0)
+    def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
+        return self._seconds.get((client_group, quota, _day(when)), 0)
 
-    def stored_bytes(self, client_group: str, quota: str, day: date) -> int:
-        return self._bytes.get((client_group, quota, day), 0)
+    def stored_bytes(self, client_group: str, quota: str, when: date | datetime) -> int:
+        return self._bytes.get((client_group, quota, _day(when)), 0)
 
 
 @dataclass(frozen=True)
@@ -207,6 +210,20 @@ def evaluate(
     )
 
 
+def _day(when: date | datetime) -> date:
+    """Return the local date of a ledger lookup.
+
+    A datetime is already household-local. Its date is taken as it stands,
+    not shifted into another zone. ``datetime`` is a ``date``, so the time
+    check has to come first.
+    """
+    if isinstance(when, datetime):
+        return when.date()
+    if type(when) is date:
+        return when
+    raise ValueError("usage is read at a date or a time")
+
+
 def _fallthrough(client_group: str, site_group: str) -> Trace:
     return Trace(
         client_group,
@@ -271,13 +288,13 @@ def _holds(rule: Rule, facts: _Facts) -> bool:
         quota = facts.policy.quota(rule.quota or "")
         if quota is None:
             return False
-        used = facts.ledger.ended_seconds(facts.client_group, quota.name, facts.at.date())
+        used = facts.ledger.ended_seconds(facts.client_group, quota.name, facts.at)
         return used < quota.time_limit
     if rule.condition == "volume_remaining":
         quota = facts.policy.quota(rule.quota or "")
         if quota is None:
             return False
-        used = facts.ledger.stored_bytes(facts.client_group, quota.name, facts.at.date())
+        used = facts.ledger.stored_bytes(facts.client_group, quota.name, facts.at)
         return used < quota.byte_limit
     return False
 
