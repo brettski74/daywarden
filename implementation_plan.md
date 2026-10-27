@@ -3,8 +3,10 @@
 Ticket: PLAN
 Title: Household proxy, authorization, and revision tasks
 Status: Refined
-Last Updated: 2026-10-18 18:48:00
+Last Updated: 2026-10-26 00:49:00
 ---
+
+The policy model agreed on 2026-10-26 is [docs/hierarchical-policy.md](docs/hierarchical-policy.md). [S008](stories/S008-hierarchical-policy.md) replaces the policy model described later in this file. S003 and S007 follow that design. The sections below stay as the record of the plan that S000 through S002 implemented.
 
 This plan turns `ProblemStatement.md` into software we can build in slices. Firewall configuration is out of scope. The younger child's computer is already forced through an explicit forward proxy. The older child's computer is not, until we choose to enrol them.
 
