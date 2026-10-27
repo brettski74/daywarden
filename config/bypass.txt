@@ -3,10 +3,10 @@
 # * matches any run of characters. ? matches one character.
 # Lines starting with # are comments.
 #
-# Sample list for the household policy in policy.toml. These are the
-# School work hosts, plus the task-site host from household.revision_task.
+# Sample list for the household policy in policy.yaml. These are the
+# school hosts, plus the task-site host from revision_task.
 # Those pages keep working when the policy service is down. Edit this file
-# and policy.toml together. Nothing copies one into the other yet.
+# and policy.yaml together. Nothing copies one into the other.
 
 # Task site. The host of household.revision_task.
 192.168.1.10

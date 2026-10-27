@@ -1,0 +1,182 @@
+# Household policy. The decisions service loads this file each time it starts.
+# Restart it after an edit: docker compose restart decisions
+# The observations service reads the same file. Restart that too when the
+# edit changes what is counted: docker compose restart observations
+#
+# An address in no client group is the implicit group "default". A URL that
+# matches no site group is the implicit site group "default". Neither group
+# is written in this file. This file does not grant access to the default
+# client group, so an unknown computer is denied.
+
+entry: household
+timezone: America/Toronto
+revision_task: "http://192.168.1.10:8080/tasks/next"
+
+# How long a new usage bucket is. The default is five minutes. This is not a quota.
+# The length has to divide a 24-hour day (2m, 5m, and 10m do; 7m does not).
+# bucket_length: 5m
+
+# One client group per child. addresses are that computer's DHCP reservation,
+# an IP or a DNS name. DNS names are looked up when the service starts, not
+# on every request, so restart the decisions service if a reservation changes.
+client_groups:
+  younger:
+    # PLACEHOLDER: replace with this computer's reserved IP or DNS name.
+    addresses: ["192.168.1.40"]
+
+# The older child is not enrolled. To enrol them, add a client group, set
+# their reserved address, and add their computer to the proxy alias on the
+# firewall.
+# older:
+#   addresses: ["older-child.lan"]
+
+# Site groups are tried lowest priority number first. The first matching
+# pattern wins. A pattern containing "://" is matched against the whole URL,
+# without its #fragment. Any other pattern is matched against the host only.
+# Matching ignores case. "*" matches anything, including "/". "?" matches
+# one character. "*.youtube.com" matches www.youtube.com but not youtube.com.
+site_groups:
+  # School work is allowed at any time and has no quota. The patterns are a
+  # starter for Google Classroom and the Google hosts a Classroom session
+  # actually loads. This is not every school site, and it is not all of
+  # Google. A YouTube video embedded in a Classroom page stays in
+  # entertainment. When you add a host here, add the same glob to
+  # config/bypass.txt. Nothing copies one file into the other.
+  school:
+    priority: 10
+    patterns:
+      - classroom.google.com
+      - docs.google.com
+      - "*.docs.google.com"
+      - drive.google.com
+      - "*.drive.google.com"
+      - sheets.google.com
+      - slides.google.com
+      - forms.google.com
+      - accounts.google.com
+      - apis.google.com
+      - classroom.googleapis.com
+      - www.googleapis.com
+      - oauth2.googleapis.com
+      - "*.gstatic.com"
+      - "*.googleusercontent.com"
+      - "*.usercontent.google.com"
+      - lh?.google.com
+      - clients?.google.com
+  entertainment:
+    priority: 30
+    patterns:
+      - "*.youtube.com"
+      - youtube.com
+      - youtu.be
+      - "*.youtube-nocookie.com"
+      - "*.googlevideo.com"
+      - "*.ytimg.com"
+      - youtubei.googleapis.com
+
+# Entertainment and the implicit default site group share these windows.
+# The start is included and the end is excluded.
+time_windows:
+  bedtime:
+    periods:
+      - start: "00:00"
+        end: "07:00"
+        days: monday-thursday
+      # Starting suggestion: weekend bedtime runs an hour later.
+      - start: "00:00"
+        end: "08:00"
+        days: friday-sunday
+  school_hours:
+    periods:
+      - start: "07:00"
+        end: "15:00"
+        days: monday-thursday
+      # Starting suggestion: a short weekend revision block, then the evening opens.
+      - start: "08:00"
+        end: "12:00"
+        days: friday-sunday
+  evening:
+    periods:
+      - start: "15:00"
+        end: "19:00"
+        days: monday-thursday
+      # Starting suggestion: wider evening, noon until 21:00.
+      - start: "12:00"
+        end: "21:00"
+        days: friday-sunday
+
+quotas:
+  entertainment:
+    time: 2h
+    ruleset: entertainment_meter
+
+rule_sets:
+  # Counts forwarded entertainment traffic and nothing else. The deny message
+  # is not shown to a browser. An access decision uses time_remaining instead.
+  entertainment_meter:
+    - condition: site_group
+      group: entertainment
+      when_true: { action: continue }
+      when_false: { action: deny, message: "Not entertainment." }
+
+  household:
+    - condition: client_group
+      group: younger
+      when_true: { action: evaluate, ruleset: younger }
+
+  younger:
+    - condition: site_group
+      group: school
+      when_true: { action: allow }
+    - condition: site_group
+      group: entertainment
+      when_true: { action: evaluate, ruleset: entertainment_hours }
+    - condition: site_group
+      group: default
+      when_true: { action: evaluate, ruleset: default_hours }
+
+  # Monday to Thursday: bedtime denies, school hours redirect to revision,
+  # and the evening continues only after today's revision count reaches 2.
+  # The quota then allows the request or denies it. Friday, Saturday, and
+  # Sunday are the extra periods on the same windows, marked above.
+  entertainment_hours:
+    - condition: time_window
+      window: bedtime
+      when_true: { action: deny, message: "It's bedtime." }
+    - condition: time_window
+      window: school_hours
+      when_true: { action: redirect, location: revision_task }
+    - condition: time_window
+      window: evening
+      when_true: { action: evaluate, ruleset: entertainment_evening }
+      when_false: { action: deny, message: "YouTube is closed for today." }
+
+  entertainment_evening:
+    - condition: tasks_required
+      required: 2
+      when_false: { action: redirect, location: revision_task }
+    - condition: time_remaining
+      quota: entertainment
+      when_true: { action: allow }
+      when_false: { action: deny, message: "Time is up for today." }
+
+  # The rest of the internet. Same hours and the same revision count of 2.
+  # No time quota: once revision is done inside the open window, allow.
+  default_hours:
+    - condition: time_window
+      window: bedtime
+      when_true: { action: deny, message: "It's bedtime." }
+    - condition: time_window
+      window: school_hours
+      when_true: { action: redirect, location: revision_task }
+    - condition: time_window
+      window: evening
+      when_true: { action: evaluate, ruleset: default_evening }
+      when_false: { action: deny, message: "The internet is closed for today." }
+
+  default_evening:
+    - condition: tasks_required
+      required: 2
+      when_false: { action: redirect, location: revision_task }
+    - condition: always
+      when_true: { action: allow }

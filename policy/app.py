@@ -1,12 +1,11 @@
 """The policy service. Run with: uvicorn --factory policy.app:create_app
 
-On start, POLICY_FILE (when present) is loaded into the SQLite database at
-POLICY_DB. Without the file, the service uses what the database already holds.
-Each decision reads that database for today's revision count, for the
-ended usage recorded against today's quota, and for the bytes already stored
-against a byte limit. GET /usage is the parent report of that usage. A YAML
-policy slices it by site group, client group, or quota. It stays closed
-until PARENT_PASSWORD is set.
+On start, POLICY_FILE is loaded. The household file is YAML
+(/etc/smartproxy/policy.yaml). A YAML policy is decided by nested rule sets,
+and GET /usage slices today's usage by site group, client group, or quota.
+A path ending in .toml is still the previous engine, so older tests can
+point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
+not that path. The report stays closed until PARENT_PASSWORD is set.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ from policy.usage import UsageStore
 
 
 def create_app() -> FastAPI:
-    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/smartproxy/policy.toml"))
+    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/smartproxy/policy.yaml"))
     database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
     decision_file = Path(os.environ.get("DECISION_FILE", "/etc/smartproxy/decision.json"))
     decision_stub = os.environ.get("DECISION_STUB") == "1"
@@ -47,8 +46,7 @@ def create_app() -> FastAPI:
 
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database)
-    # YAML is the hierarchical policy and is decided by nested rule sets.
-    # A TOML file stays on the previous engine until S008.5 stops loading it.
+    # YAML is the household policy. A .toml path is the previous engine.
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
     ledger: Ledger = Ledger()

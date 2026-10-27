@@ -64,6 +64,7 @@ class Stack:
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.toml"
         self.env["OBSERVATION_INTERVAL"] = "1"
         self.cmd = [
             "docker",

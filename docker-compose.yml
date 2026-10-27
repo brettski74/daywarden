@@ -1,10 +1,12 @@
 # Start with: make up
 # The listen port and the CA directory are set in .env.
 # Hosts that skip authorization are listed in config/bypass.txt.
-# The decisions service is the policy service. Clients, the household
-# timezone, site groups, and rules are in config/policy.toml and are kept in
-# the policy-data volume. A group with no rules denies the request.
-# DECISION_FILE is read only when DECISION_STUB=1, which the addon tests set.
+# The decisions service is the policy service. The household policy is
+# config/policy.yaml. Client groups, site groups, and rule sets are loaded
+# from that file each time the service starts. An address or a URL in no
+# configured group is the implicit group default.
+# DECISION_FILE is read only when DECISION_STUB=1 and POLICY_FILE is a TOML
+# file, which the addon tests set. The household YAML policy does not read it.
 # The observations service writes POST /v1/observations into the usage ledger
 # in the policy-data volume. A YAML policy files each report under the
 # classified client group and site group, and under each quota that accepts
@@ -22,7 +24,7 @@ services:
     pull_policy: build
     environment:
       DECISION_FILE: /etc/smartproxy/decision.json
-      POLICY_FILE: /etc/smartproxy/policy.toml
+      POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime
       PARENT_PASSWORD: ${PARENT_PASSWORD-}
@@ -32,7 +34,7 @@ services:
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy
-      # Used for the household timezone when policy.toml does not set one.
+      # Used for the household timezone when policy.yaml does not set one.
       - /etc/localtime:/etc/host-localtime:ro
     healthcheck:
       test:
@@ -55,7 +57,7 @@ services:
       - -m
       - policy.observations
     environment:
-      POLICY_FILE: /etc/smartproxy/policy.toml
+      POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       OBSERVATION_LOG: /tmp/observations.jsonl
       OBSERVATION_PORT: "8091"
@@ -63,7 +65,7 @@ services:
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy
-      # Used when policy.toml does not set a timezone, so a report lands on
+      # Used when policy.yaml does not set a timezone, so a report lands on
       # the same local day the decisions service uses.
       - /etc/localtime:/etc/host-localtime:ro
     depends_on:

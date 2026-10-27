@@ -2,7 +2,7 @@ Ticket: S008
 Title: Hierarchical policy
 Status: Refined
 Story Points: 37
-Last Updated: 2026-10-26 00:49:00
+Last Updated: 2026-10-27 03:15:12
 ---
 
 # User Voice
@@ -18,7 +18,7 @@ As a parent, I want the household rules written as nested checks on clients, tim
 
 # Acceptance Criteria
 
-- [ ] S008.1 through S008.5 are done.
+- [x] S008.1 through S008.5 are done.
 - [ ] S008.6 is not required for this epic to be done. It is the later cut of a live transfer.
 - [ ] The decision API still returns only allow, deny, or redirect. The addon does not learn about rule sets.
 - [ ] No TOML policy loader, no rule list owned by a site group, and no compatibility layer for the old rule rows remain once S008.5 is done.
