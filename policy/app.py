@@ -33,6 +33,7 @@ from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond
 from policy.store import PolicyStore
+from policy.usage import UsageStore
 
 
 def create_app() -> FastAPI:
@@ -49,9 +50,13 @@ def create_app() -> FastAPI:
     # A TOML file stays on the previous engine until S008.5 stops loading it.
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
-    ledger = Ledger()
+    ledger: Ledger = Ledger()
     if yaml_mode:
         hierarchy_policy, clock, source = _start_hierarchy(policy_file, localtime)
+        usage = UsageStore(connection=store.connection)
+        if hierarchy_policy is not None:
+            usage.install_length(hierarchy_policy.bucket_length, clock.local())
+        ledger = usage
         _announce_hierarchy(hierarchy_policy, clock, source)
         gate = ParentGate(os.environ.get("PARENT_PASSWORD"))
         if gate.configured:

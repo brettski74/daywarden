@@ -1,12 +1,17 @@
 """POST /v1/observations writes the usage ledger.
 
-The proxy reports body bytes here after it has forwarded a request. The URL
-is matched to a site group the same way a decision is. A match marks the
-bucket that contains the report's time, for that client, and adds the bytes.
-A URL in no group, and no default group, is accepted and ignored. So is a
-client the household has not enrolled, and a report with no new bytes. None
-of those are errors: the proxy has already allowed the response, and a
-failure of this call must not turn it into a 403 or a 302.
+The proxy reports body bytes here after it has forwarded a request. A TOML
+policy matches the URL to a site group the same way a decision does. A match
+marks the bucket that contains the report's time, for that client, and adds
+the bytes. A URL in no group, and no default group, is accepted and ignored.
+So is a client the household has not enrolled, and a report with no new bytes.
+
+A YAML policy files the report once under the classified client group and
+site group, including ``default``, and again under each quota whose rule set
+accepts it. That path is ``policy.usage``.
+
+None of these are turned into a refusal. The proxy has already forwarded the
+response, and a failure of this call must not become a 403, a 302, or a cut.
 
 Run with: python -m policy.observations
 """
@@ -23,7 +28,9 @@ from pathlib import Path
 from policy.clients import ClientDirectory, normalize_ip
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.groups import SiteGroups
+from policy.hierarchy import Policy, load as load_hierarchy
 from policy.store import PolicyStore
+from policy.usage import UsageStore, observe
 
 LOG_PATH = Path(os.environ.get("OBSERVATION_LOG", "/tmp/observations.jsonl"))
 PORT = int(os.environ.get("OBSERVATION_PORT", "8091"))
@@ -74,12 +81,29 @@ def record(store: PolicyStore, clock: HouseholdClock, document: object) -> bool:
     return True
 
 
-def status_for(store: PolicyStore, body: bytes) -> int:
-    """Return 204 after recording the body, or ignoring a report that matches nothing."""
+def status_for(
+    store: PolicyStore,
+    body: bytes,
+    *,
+    policy: Policy | None = None,
+    usage: UsageStore | None = None,
+) -> int:
+    """Return 204 after recording the body, or ignoring a report that matches nothing.
+
+    ``usage`` selects the hierarchical ledger. With a policy, the report is
+    filed by ``observe``. With a ledger and no policy, nothing is filed and
+    the answer is still success. The TOML ledger is used when ``usage`` is
+    omitted. The body of the answer is empty. It is not an instruction to
+    cut the transfer.
+    """
     try:
         document = json.loads(body)
     except json.JSONDecodeError as exc:
         raise ValueError("an observation is a JSON object") from exc
+    if usage is not None:
+        if policy is not None:
+            observe(policy, usage, _clock_for(policy), document)
+        return 204
     record(store, _clock(store), document)
     return 204
 
@@ -89,6 +113,9 @@ def listen(
     host: str = "0.0.0.0",
     port: int = PORT,
     log_path: Path | None = None,
+    *,
+    policy: Policy | None = None,
+    usage: UsageStore | None = None,
 ) -> ThreadingHTTPServer:
     """Serve /health and /v1/observations. The returned server is not started."""
     destination = log_path if log_path is not None else LOG_PATH
@@ -117,7 +144,7 @@ def listen(
                     code = 404
                 else:
                     try:
-                        code = status_for(store, raw)
+                        code = status_for(store, raw, policy=policy, usage=usage)
                     except ValueError as exc:
                         print(f"observation rejected: {exc}", flush=True)
                         code = 400
@@ -143,9 +170,38 @@ def main() -> None:
     database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database, check_same_thread=False)
-    server = listen(store)
+    policy, usage = _hierarchical(store)
+    server = listen(store, policy=policy, usage=usage)
     print(f"observation ledger listening on {PORT}", flush=True)
     server.serve_forever()
+
+
+def _hierarchical(store: PolicyStore) -> tuple[Policy | None, UsageStore | None]:
+    """Return the YAML policy and its ledger, or nothing when the file is TOML.
+
+    A missing YAML file still selects the hierarchical ledger so a report is
+    accepted and not written into the old client-and-site-group rows. The
+    decisions service is what installs a new bucket length.
+    """
+    raw = os.environ.get("POLICY_FILE", "")
+    if not raw:
+        return None, None
+    path = Path(raw)
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        return None, None
+    usage = UsageStore(connection=store.connection)
+    if not path.is_file():
+        print(f"{path} not found; observations are not recorded", flush=True)
+        return None, usage
+    print(f"loading {path}", flush=True)
+    return load_hierarchy(path), usage
+
+
+def _clock_for(policy: Policy) -> HouseholdClock:
+    if policy.timezone:
+        return HouseholdClock(named_zone(policy.timezone))
+    localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
+    return HouseholdClock(machine_zone(localtime=localtime))
 
 
 def _clock(store: PolicyStore) -> HouseholdClock:
