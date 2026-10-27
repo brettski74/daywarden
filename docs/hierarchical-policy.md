@@ -1,6 +1,6 @@
 # Hierarchical policy
 
-Status: design for review. Nothing here is implemented. Stories and epics are not edited until this shape is agreed. Nothing in this design is constrained by an existing deployment. The first household to run it is this one, and the examples in this workspace can be rewritten when the work is done. A translator from the current TOML file is not a deliverable.
+Status: agreed on 2026-10-26. Nothing here is implemented yet. [S008](../stories/S008-hierarchical-policy.md) is the work that brings the running policy service up to this design. Nothing in this design is constrained by an existing deployment. The first household to run it is this one, and the examples in this workspace are rewritten as part of S008. A translator from the current TOML file is not a deliverable.
 
 This note answers why `config/policy.toml` uses `[[groups.rules.windows]]` and `[[groups.rules.weekdays]]`, then describes the replacement.
 
@@ -449,8 +449,10 @@ The current report is one client and one site group. This view is wider. The rep
 - **Any scoring other than one point per completed task.**
 - **A proxy bypass list** so some hosts still work when the policy service is down. That list would live on the proxy, not in this policy. It is useful, and it is not part of this design. Sending every request to the policy service is acceptable.
 
-# After this is agreed
+# Where the work lives
 
-Unstarted stories and epics, in particular the revision-task work and the parent editor, get edited to this model before they are implemented. Task assignment follows the classified client group. The editor edits these entities and rule sets, not a rule list owned by a site group.
+[S008](../stories/S008-hierarchical-policy.md) replaces the policy loader, the rule engine, the usage ledger, the usage report, and the household sample. [S008.6](../stories/S008.6-cut-transfer.md) is the live-transfer cut. It is not required for the rule engine.
 
-The sample policy in the workspace is rewritten as part of that implementation. No compatibility layer is required for the current TOML shape, the current database rows, or the current report. The implementation plan can say how the service starts from an empty policy store.
+[S003](../stories/S003-revision-tasks.md) assigns tasks to a client group and feeds `tasks_required`. [S007.2](../stories/S007.2-edit-policy.md) edits these entities and rule sets. [S007.3](../stories/S007.3-edit-tasks.md) assigns tasks to a client group.
+
+No compatibility layer is required for the current TOML shape, the current rule rows, or the current report. S001 and S002 stay the record of what was built. They are not the model to extend.

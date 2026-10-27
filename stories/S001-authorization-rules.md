@@ -2,7 +2,7 @@ Ticket: S001
 Title: Authorization rules
 Status: Done
 Story Points: 21
-Last Updated: 2026-10-21 19:52:05
+Last Updated: 2026-10-26 00:49:00
 ---
 
 # User Voice
@@ -36,3 +36,5 @@ As a parent, I want each request classified into a site group and then judged by
 # Notes
 
 Depends on the decision API shape in S000.2. The service implemented here replaces the test double. The addon does not change.
+
+The hierarchical policy in `docs/hierarchical-policy.md` replaces this model. S008 does that work. This epic stays the record of what was built.

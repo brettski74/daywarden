@@ -2,7 +2,7 @@ Ticket: S002
 Title: Usage accounting
 Status: Draft
 Story Points: 13
-Last Updated: 2026-10-22 20:40:36
+Last Updated: 2026-10-26 00:49:00
 ---
 
 # User Voice
@@ -33,5 +33,7 @@ As a parent, I want the house to count internet use in short buckets, so that a 
 # Notes
 
 Depends on S000.3 for observations and on S001.2 for groups. S001.5 reads the same ledger.
+
+Quotas, client groups, and the wider report are specified in `docs/hierarchical-policy.md`. S008.3 and S008.4 replace the ledger key and the report shape. This epic stays the record of the buckets that were built.
 
 S002.3's condition is implemented. The sample policy does not turn it on. On 2026-10-22 the running household database was still schema 2 and had no usage buckets, so no starting byte limit was chosen.
