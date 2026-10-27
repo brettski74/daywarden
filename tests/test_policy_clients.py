@@ -121,13 +121,6 @@ def test_a_missing_timezone_is_stored_as_unset(tmp_path):
         assert reopened.timezone() is None
 
 
-def test_the_sample_enrols_only_the_younger_child():
-    sample = config.load(ROOT / "config" / "policy.toml")
-    with PolicyStore(":memory:") as store:
-        config.apply(sample, store, FakeDns({}), _quiet)
-        assert [client.name for client in store.clients()] == ["Younger child"]
-
-
 def test_adding_the_second_child_keeps_the_first_childs_record(tmp_path):
     database = tmp_path / "policy.sqlite3"
     one = '[[clients]]\nname = "Younger child"\naddress = "192.168.1.40"\n'

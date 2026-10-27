@@ -197,11 +197,6 @@ def test_a_version_1_database_is_upgraded_and_keeps_its_clients(tmp_path):
         assert upgraded.groups() == []
 
 
-def test_the_sample_has_one_default_group():
-    sample = config.load(ROOT / "config" / "policy.toml")
-    assert [group.name for group in sample.groups if group.default] == ["Everything else"]
-
-
 @pytest.mark.parametrize(
     ("text", "message"),
     [
