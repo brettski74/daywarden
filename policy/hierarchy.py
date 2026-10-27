@@ -8,8 +8,8 @@ spelling may be used in two namespaces.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
-raises ``ConfigError`` and leaves that previous policy untouched. The decision
-path still answers from the TOML engine until S008.2; this module is the loader.
+raises ``ConfigError`` and leaves that previous policy untouched. Decisions
+from the loaded policy are made in ``policy.engine``. This module is the loader.
 
 The byte limit is written ``bytes``. The design names that limit in prose and
 shows ``time`` for the other one. Grace is ``time_grace`` and ``volume_grace``.
@@ -114,7 +114,8 @@ class Period:
     ``weekdays`` is None when the period may start on any day. Monday is 0,
     the same numbering as ``datetime.weekday``. ``extra_days`` is the ``+n``
     suffix, and 0 when the suffix was left off. The start clock is included
-    and the end clock is excluded; interpreting that is S008.2's job.
+    and the end clock is excluded. ``policy.engine`` decides whether a
+    household-local time falls inside.
     """
 
     start: time
