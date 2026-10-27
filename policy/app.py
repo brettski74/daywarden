@@ -4,8 +4,9 @@ On start, POLICY_FILE (when present) is loaded into the SQLite database at
 POLICY_DB. Without the file, the service uses what the database already holds.
 Each decision reads that database for today's revision count, for the
 ended usage recorded against today's quota, and for the bytes already stored
-against a byte limit. GET /usage is the parent report of that usage. It stays
-closed until PARENT_PASSWORD is set.
+against a byte limit. GET /usage is the parent report of that usage. A YAML
+policy slices it by site group, client group, or quota. It stays closed
+until PARENT_PASSWORD is set.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from policy.engine import NO_RULE_MESSAGE, Ledger, Trace, decide as decide_hiera
 from policy.gate import COOKIE_NAME, ParentGate, cookie_value
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
-from policy.report import format_byte_limit, parse_form, respond
+from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
 from policy.store import PolicyStore
 from policy.usage import UsageStore
 
@@ -51,12 +52,13 @@ def create_app() -> FastAPI:
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
     ledger: Ledger = Ledger()
+    usage_store: UsageStore | None = None
     if yaml_mode:
         hierarchy_policy, clock, source = _start_hierarchy(policy_file, localtime)
-        usage = UsageStore(connection=store.connection)
+        usage_store = UsageStore(connection=store.connection)
         if hierarchy_policy is not None:
-            usage.install_length(hierarchy_policy.bucket_length, clock.local())
-        ledger = usage
+            usage_store.install_length(hierarchy_policy.bucket_length, clock.local())
+        ledger = usage_store
         _announce_hierarchy(hierarchy_policy, clock, source)
         gate = ParentGate(os.environ.get("PARENT_PASSWORD"))
         if gate.configured:
@@ -131,24 +133,33 @@ def create_app() -> FastAPI:
         return Response(decision, media_type="application/json")
 
     @app.api_route("/usage", methods=["GET", "POST"])
-    async def usage(request: Request) -> Response:
+    async def usage_page(request: Request) -> Response:
         # Stay on the event-loop thread. A sync endpoint would run in a
         # threadpool, and this process's SQLite connection is not shared.
         raw = await request.body() if request.method == "POST" else b""
-        query = {}
-        for key in ("client", "group"):
-            value = request.query_params.get(key)
-            if value is not None:
-                query[key] = value
-        page = respond(
-            store,
-            gate,
-            method=request.method,
-            query=query,
-            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-            form=parse_form(raw),
-            now=clock.local(),
-        )
+        if yaml_mode:
+            assert usage_store is not None
+            query = _query(request, ("view", "client", "site", "quota"))
+            page = respond_hierarchy(
+                hierarchy_policy,
+                usage_store,
+                gate,
+                method=request.method,
+                query=query,
+                cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+                form=parse_form(raw),
+                now=clock.local(),
+            )
+        else:
+            page = respond(
+                store,
+                gate,
+                method=request.method,
+                query=_query(request, ("client", "group")),
+                cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+                form=parse_form(raw),
+                now=clock.local(),
+            )
         response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
         for name, value in page.headers:
             if name == "set-cookie":
@@ -158,6 +169,15 @@ def create_app() -> FastAPI:
         return response
 
     return app
+
+
+def _query(request: Request, keys: tuple[str, ...]) -> dict[str, str]:
+    found = {}
+    for key in keys:
+        value = request.query_params.get(key)
+        if value is not None:
+            found[key] = value
+    return found
 
 
 def _announce_stored(store: PolicyStore, clock: HouseholdClock, source: str):
