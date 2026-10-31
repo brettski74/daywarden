@@ -123,7 +123,7 @@ completion.
 6. If they get the spelling wrong:
     - For words in this week's pool, if they have fewer than n correct words from this week's pool, add the word to the end of the list to be asked again.
     - For words in the revision pool, add another randomly selected word from the revision pool to the end of the list. This may be any wordfrom the revision pool that the child has not already spelled correctly during this test and is not in the list of upcoming words yet to be asked
-7. The task is complete once the child has achieved the required number of successful words from both this week's pool and the revision pool.
+7. The task is complete once the child has achieved the required number of correctly spelled words from both this week's pool and the revision pool.
 
 There is no failure condition other than the child giving up on the task.
 
@@ -133,7 +133,7 @@ The screen will have a large input box in the centre of the screen and a timer b
 
 The input box needs to use a large font, but also needs to be large enough to accommodate words up to 16 characters long. Use the word "extemporaneously" as a model for length when sizing the input box.
 
-When the child hits enter, they submit the spelling they have entered in the input box. If they are correct, they earn a point towards completion of the task and they hear a sound that indicates "correctness" - an upbeat sound effect of some kind, not just the word "correct". If they are incorrect, they get a "wrong" sound - again, a sound effect of some kind that indicates a wrong answer. The task continues until either the child gives up or they successfully complete the task. Completion occurs when all of the following conditions are met:
+When the child hits enter, they submit the spelling they have entered in the input box. If they are correct, they earn a point towards completion of the task and they hear a sound that indicates "correctness" - an upbeat sound effect of some kind, not just the word "correct". If they are incorrect, they get a "wrong" sound - again, a sound effect of some kind that indicates a wrong answer. The task continues until either the child gives up or they pass the task. Completion occurs when all of the following conditions are met:
 
 1. They have been asked to spell all of the words from this week's pool.
 2. They have correctly spelled the required number of words from this week's pool.
@@ -161,8 +161,8 @@ Configurable elements for the spelling test:
 
 - The contents of the two word pools. They should be arbitrary length. In practice, the revision pool will likely be larger than this week's pool, but there should be no expectations on the size of the two pools in the code.
 - The spelling timeout in milliseconds.
-- The number of correct revision words required for success.
-- The number of correct words from this week's pool required for success. This should be able to be configured as multiple values:
+- The number of correct revision words required to pass.
+- The number of correct words from this week's pool required to pass. This should be able to be configured as multiple values:
   - an optional value for any day of the week (eg. Monday 5, Tuesday 7, Wednesday 8)
   - a default value that applies on any day that doesn't have a different value specified (eg. default 9)
 
@@ -192,7 +192,7 @@ The quiz will present the sentences in a random order:
   - All words in the correct part of speech as specified in the quiz configuration = 1 point.
   - At least one correct word in each row and no incorrect words in any row = 0.5 points.
 
-The quiz is complete once all questions have been answered. Success requires getting a minimum number of points, configured as part of the quiz configuration. Completion of the quiz with a lower score than required constitutes a failed task. These quizzes will specify a minimum period between retries in days. This may be specified as a default retry period (n days) and an optional retry period for failed attempts. So we could those retry period that allows the child to try the quiz once per day until they are successful, then they cannot retry for at least 21 days, so they're not just redoing the same task they they already know every day, but it does come up periodically for revision to help ensure they're not forgetting things they previously learned.
+The quiz is complete once all questions have been answered. A pass requires getting a minimum number of points, configured as part of the quiz configuration. Completion of the quiz with a lower score than required constitutes a failed task. These quizzes will specify a minimum period between retries in days. This may be specified as a default retry period (n days) and an optional retry period for failed attempts. So we could those retry period that allows the child to try the quiz once per day until they pass, then they cannot retry for at least 21 days, so they're not just redoing the same task they they already know every day, but it does come up periodically for revision to help ensure they're not forgetting things they previously learned.
 
 # Internet Use Accounting
 

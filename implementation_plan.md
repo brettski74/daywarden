@@ -194,19 +194,19 @@ A group's time quota is configured as a duration in ordinary units: seconds, min
 
 Any observation in a bucket marks it. A marked bucket adds its own length to the consumed time only after its end time has passed, so a request in the first seconds of a bucket does not consume that time until the bucket closes. The open bucket is not part of the total yet. `quota_remaining` is true while consumed time is strictly below the configured duration. With a `2h` quota and five-minute buckets, 23 ended buckets are 115 minutes and the quota remains. 24 ended buckets are 120 minutes and the quota is exhausted. If the bucket length is later set to ten minutes, the quota is still `2h`. New buckets are ten minutes each. The 23 buckets already counted still contribute five minutes each.
 
-There is no banking across days. The ledger and the revision count both reset at local midnight. Minutes left unused today are gone tomorrow. Revision tasks completed yesterday do not count today, even if he never used the internet after finishing them. A requirement of two tasks means two successes on that local date before the entertainment rules will allow the quota to be used. Bytes are stored on each observation. `volume_remaining` reads that same `byte_count`. The sample policy leaves the condition off until a parent sets a limit from real totals.
+There is no banking across days. The ledger and the revision count both reset at local midnight. Minutes left unused today are gone tomorrow. Revision tasks completed yesterday do not count today, even if he never used the internet after finishing them. A requirement of two tasks means two passes on that local date before the entertainment rules will allow the quota to be used. Bytes are stored on each observation. `volume_remaining` reads that same `byte_count`. The sample policy leaves the condition off until a parent sets a limit from real totals.
 
 An already-open transfer is not cut the moment the quota flips. The next request is denied. YouTube's segment and heartbeat requests make that enough for ordinary playback. Killing a live stream is a possible later story, not part of the first ledger.
 
 ## Revision tasks
 
-Tasks are assigned to a source IP. A redirect asks for the next eligible task: assigned to that IP, and not still inside its cooldown. Ties go to the task that was successfully finished least recently. A task never completed comes first.
+Tasks are assigned to a source IP. A redirect asks for the next eligible task: assigned to that IP, and not still inside its cooldown. Ties go to the task that was passed least recently. A task never passed comes first.
 
 Cooldown is measured in local midnights. A task completed today with a one-day cooldown is available again tomorrow, not 24 hours after the click. A parts-of-speech quiz can set a shorter cooldown after a failed attempt than after a pass, so a failed quiz can return the next day while a passed one stays away for several weeks.
 
-Giving up records an abandoned attempt. It does not count as success or failure, and it does not satisfy the daily revision count. Only a successful completion increments today's count. Completing a task at 00:10 counts toward the new day.
+Giving up records an abandoned attempt. It does not count as a pass or a failure, and it does not satisfy the daily revision count. Only a pass increments today's count. Completing a task at 00:10 counts toward the new day.
 
-The child cannot mark a task complete by hitting a URL. The server marks success when the quiz's own completion rule is met, based on the child submitting correct answers. The temporary `parent_check` task is the exception: a parent records that success, and the child still has no request that can do it.
+The child cannot mark a task passed by hitting a URL. The server records a pass when the quiz's own completion rule is met, based on the child submitting correct answers. The temporary `parent_check` task is the exception: a parent records that pass, and the child still has no request that can do it.
 
 Arithmetic, spelling, and parts of speech are three task types on that shared runtime. Their behaviour is specified in the stories. Spelling is complete only when all three of these are true: every word from this week's pool has been asked at least once, the required number from this week's pool are correct, and the required number from the revision pool are correct. A pass mark of 7 out of 10 does not skip the last three words. Until all three are met, the quiz keeps asking. Wrong this-week words are asked again only while that pool's correct count is still short of the pass mark.
 
@@ -297,7 +297,7 @@ Recorded from the parent on 2026-10-18.
 1. The younger child's browser will trust the proxy's certificate authority. TLS interception stays in the design.
 2. Spelling does not finish early. He is asked every word from this week's pool at least once, and he must also reach both correct-counts. A pass mark below the size of the pool does not skip the remaining words.
 3. Identity is the DHCP reservation. Both children have stable addresses. The schema holds more than one client. The first setup enrols the younger child only. The older child can be added later without a migration.
-4. Nothing carries over midnight. Unused entertainment minutes expire. Yesterday's revision tasks do not satisfy today's requirement. The entertainment quota is usable only after today's required successes.
+4. Nothing carries over midnight. Unused entertainment minutes expire. Yesterday's revision tasks do not satisfy today's requirement. The entertainment quota is usable only after today's required passes.
 5. Config files are the setup path. A quiz builder and a policy editor in the browser are nice to have and are not part of the initial build. Usage reports and attempt review stay, behind a password, because those are records rather than authoring tools. Spelling words and sentences are recorded by the parent. Generated speech is later work.
 6. Both children's computers run Arch Linux. Client setup is written for Arch. The proxy is still a Docker Compose service, and the machine that runs it is not assumed to be one of those computers.
 
@@ -309,16 +309,16 @@ These were not in the questions above. They stand until a story changes them.
 - The household timezone is configurable. The default is the timezone of the machine running the service.
 - There is no weekly cap in the first version.
 - A time quota is stored as a duration in seconds, minutes, or hours. The bucket length is a separate setting. Changing the bucket length does not resize a quota and does not change the length already recorded on a counted bucket.
-- Only a successful task completion counts toward the daily revision number. A failed parts-of-speech quiz does not. Giving up does not.
+- Only a pass counts toward the daily revision number. A failed parts-of-speech quiz does not. Giving up does not.
 - Cooldown is a whole number of local days. Zero means the task may be used again immediately.
-- A completion is attributed to the local day on which the server marks it successful.
+- A pass is attributed to the local day on which the server records it.
 - Parts-of-speech points are per sentence, and the sentence scores 1, 0.5, or 0. See S006.1. Words are tracked by their position in the sentence, so a repeated word can be placed twice.
 - When an arithmetic task requires only one correct answer, the timeout is the configured maximum.
 - Arithmetic timeouts shrink geometrically. After `k` correct answers, with `N` required and `N > 1`, the timeout is `Tmax * (Tmin / Tmax) ^ (k / (N - 1))`. It is `Tmax` before the first correct answer and `Tmin` when one more correct answer finishes the task.
 - Subtraction and division draw weighted `m` and `n` the same way as addition and multiplication, then display `x − m` or `x ÷ m` where `x` is the sum or product.
 - The multiplication sign on screen is `×` and the division sign is `÷`.
 - The proxy does not tear down a transfer that is already in progress when the quota is reached.
-- Parent pages require a password stored in configuration. Quiz pages do not. The child must not be able to open the parent pages.
+- Parent pages require a signed-in parent from S007.1, and they are served over HTTPS. The certificate comes from the household CA, lasts 30 days, and is replaced when it will expire within 3 days or no longer covers the configured names. The session cookie is `Secure`. Accounts are a local username and an Argon2id password hash. A session lasts at most 15 minutes idle and 180 minutes from sign-in, unless the service sets other positive limits. Quiz pages do not use that session. The child must not be able to open the parent pages.
 - Sound effects are short audio we generate or that we have the right to ship. They are not recordings of the words "correct" or "wrong".
 - Volume limits and killing a live stream are later stories.
 
