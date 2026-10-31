@@ -15,11 +15,13 @@ this call, which has no parent, becomes a deny: "No rule granted access."
 ``evaluate`` is the same walk for a caller that wants the raw decision.
 A quota uses it, and a continue there stays a continue. ``revision_task``
 is replaced with the household URL before either answer is returned.
+When an attempt store is passed, that URL is the chosen task on the task
+site, or the household URL itself when nothing is eligible.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 
 from policy.buckets import place
@@ -27,7 +29,8 @@ from policy.clients import normalize_ip
 from policy.groups import matches
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.rules import REVISION_TASK, UNCONFIGURED_TASK_MESSAGE, absolute_http_url
-from policy.tasks import household_day
+from policy.selection import apply_task_selection
+from policy.tasks import AttemptStore, household_day
 
 NO_RULE_MESSAGE = "No rule granted access."
 
@@ -191,14 +194,23 @@ def decide(
     url: str,
     at: datetime,
     ledger: Ledger | None = None,
+    attempts: AttemptStore | None = None,
 ) -> Trace:
     """Judge one request on the access path.
 
     ``at`` is already household-local. The client group and the site group are
     classified once, then ``entry`` is evaluated with no parent. A continue
-    from that evaluation is a deny.
+    from that evaluation is a deny. ``attempts`` is what turns ``revision_task``
+    into one task's URL. Without it, the household URL is used as stored.
     """
-    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)[0]
+    return judge(
+        policy,
+        client_ip=client_ip,
+        url=url,
+        at=at,
+        ledger=ledger,
+        attempts=attempts,
+    )[0]
 
 
 def judge(
@@ -208,19 +220,37 @@ def judge(
     url: str,
     at: datetime,
     ledger: Ledger | None = None,
+    attempts: AttemptStore | None = None,
 ) -> tuple[Trace, Assumption]:
     """Judge one request, and note when that allow would need another look.
 
     Classification happens once. The assumption is empty unless the access
-    path allows. A deny or a redirect has no transfer to watch.
+    path allows. A deny or a redirect has no transfer to watch. With
+    ``attempts``, a revision redirect names the chosen task, and a task URL
+    he is not allowed to open is sent to one he is.
     """
-    return judge_frozen(
+    trace, assumption = judge_frozen(
         policy,
         client_group=classify_client(policy, client_ip),
         site_group=classify_site(policy, url),
         at=at,
         ledger=ledger,
     )
+    if attempts is None:
+        return trace, assumption
+    revised = apply_task_selection(
+        trace.decision,
+        policy,
+        url,
+        trace.client_group,
+        at,
+        attempts,
+    )
+    if revised == trace.decision:
+        return trace, assumption
+    if revised.get("action") != "allow":
+        assumption = Assumption()
+    return replace(trace, decision=revised), assumption
 
 
 def judge_frozen(

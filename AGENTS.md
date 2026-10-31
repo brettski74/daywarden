@@ -37,4 +37,9 @@ functional code and verifying that the code behaves the way it should, not a dup
 
 # Implementation Summary
 
-After implementing a story, append an Implementation section (L1 heading) to the end of the ticket's markdown document with level 2 headings for Files Added/Changed/Removed, Change Summary and Suggested Acceptance Testing. That last section is most important as it should provided a bullet-point list of items that a human reviewer should consider performing on the delivered work.
+After implementing a story, append an Implementation section (L1 heading) to the end of the ticket's markdown document with level 2 headings for Files Added/Changed/Removed, Change Summary and Suggested Acceptance Testing. The suggested acceptance test must:
+
+1. Have a clear heading identifying it as the list of acceptance test cases for the completed work.
+2. Consist of a numbered list of acceptance test cases that the human reviewer should perform on the delivered work.
+3. Sort the acceptance test cases with the most important or impactful test cases listed first.
+4. Cover all all exposed areas with functionality exposed via configuration files or UI.

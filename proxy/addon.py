@@ -121,6 +121,12 @@ class DecisionEnforcer:
         action = outcome["action"]
         if action == "allow":
             ctx.log.info(f"allow {flow.request.method} {host}")
+            peer = flow.client_conn.peername
+            if peer and peer[0]:
+                # The task site is fetched by the proxy, so the origin would
+                # otherwise see the proxy's address. The child IP is the one
+                # the decision was made for.
+                flow.request.headers["X-Smartproxy-Client"] = peer[0]
             self._arm(flow)
             return
         if action == "deny":

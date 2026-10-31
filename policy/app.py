@@ -14,13 +14,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from policy import config
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
-from policy.clients import ClientDirectory
+from policy.clients import ClientDirectory, normalize_ip
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
     DecisionLog,
@@ -29,12 +30,15 @@ from policy.decisions import (
     log_entry,
     parse_request,
 )
-from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, judge, log_fields
+from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempts, respond_parent_check
+from policy.selection import entry_path
 from policy.store import PolicyStore
+from policy.task_page import respond_task
+from policy.tasks import AttemptStore
 from policy.usage import UsageStore
 
 
@@ -50,6 +54,7 @@ def create_app() -> FastAPI:
     idle, lifetime = session_limits(os.environ)
     store = PolicyStore(database)
     accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
+    attempts = AttemptStore(connection=store.connection)
     # YAML is the household policy. A .toml path is the previous engine.
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
@@ -100,7 +105,12 @@ def create_app() -> FastAPI:
                 return PlainTextResponse(str(exc), status_code=400)
             at = clock.local(parsed.occurred_at)
             trace, assumption = _judge_for(
-                hierarchy_policy, ledger, parsed.client_ip, parsed.url, at
+                hierarchy_policy,
+                ledger,
+                parsed.client_ip,
+                parsed.url,
+                at,
+                attempts,
             )
             if (
                 usage_store is not None
@@ -150,6 +160,47 @@ def create_app() -> FastAPI:
     def quiz_page() -> Response:
         # The revision page does not use the parent session.
         return Response(QUIZ_PAGE, media_type="text/html; charset=utf-8")
+
+    @app.api_route("/tasks/work/{task_name}", methods=["GET", "POST"])
+    async def task_work_page(request: Request, task_name: str) -> Response:
+        return await _task_page(request, "/tasks/work/" + quote(task_name, safe=""))
+
+    @app.api_route("/tasks/{task_name}", methods=["GET", "POST"])
+    async def task_page(request: Request, task_name: str) -> Response:
+        return await _task_page(request, "/tasks/" + quote(task_name, safe=""))
+
+    async def _task_page(request: Request, path: str) -> Response:
+        if request.method == "POST":
+            await request.body()
+        policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
+        page = respond_task(
+            policy,
+            attempts,
+            method=request.method,
+            path=path,
+            client_ip=_client_address(request, hierarchy_policy),
+            cookie=request.headers.get("cookie"),
+            now=clock.local(),
+        )
+        response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
+        for name, value in page.headers:
+            if name == "set-cookie":
+                response.headers.append("set-cookie", value)
+            else:
+                response.headers[name] = value
+        return response
+
+    def _entry_page(path: str):
+        async def endpoint(request: Request) -> Response:
+            return await _task_page(request, path)
+
+        return endpoint
+
+    entry = None
+    if hierarchy_policy is not None and hierarchy_policy.revision_task:
+        entry = entry_path(hierarchy_policy.revision_task)
+    if entry and entry not in _TASK_PATHS and not entry.startswith("/tasks/") and "{" not in entry:
+        app.add_api_route(entry, _entry_page(entry), methods=["GET", "POST"])
 
     @app.api_route("/usage", methods=["GET", "POST"])
     async def usage_page(request: Request) -> Response:
@@ -226,6 +277,7 @@ def create_app() -> FastAPI:
             cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
             form=parse_form(raw),
             now=clock.local(),
+            tasks=() if hierarchy_policy is None else hierarchy_policy.tasks,
         )
 
     return app
@@ -306,7 +358,30 @@ def _announce_hierarchy(policy: Policy | None, clock: HouseholdClock, source: st
     print("site group default: urls that match no configured group", flush=True)
 
 
-def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at):
+_TASK_PATHS = {"/health", "/usage", "/quiz", "/attempts", "/attempts/parent-check", "/v1/decisions"}
+
+
+def _empty_policy() -> Policy:
+    return Policy(entry="", rule_sets=())
+
+
+def _client_address(request: Request, policy: Policy | None) -> str:
+    """Return the child address the task page should trust.
+
+    A browser that reaches this service directly is classified from the
+    connection. A request the proxy forwarded carries the child address in
+    ``X-Smartproxy-Client``, because the connection itself is the proxy.
+    """
+    peer = request.client.host if request.client is not None else ""
+    header = request.headers.get("x-smartproxy-client", "")
+    if policy is not None and peer and classify_client(policy, peer) != "default":
+        return peer
+    if normalize_ip(header) is not None:
+        return header.strip()
+    return peer
+
+
+def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at, attempts: AttemptStore):
     if policy is None:
         trace = Trace(
             "default",
@@ -317,7 +392,7 @@ def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, 
             {"action": "deny", "status": 403, "message": NO_RULE_MESSAGE},
         )
         return trace, Assumption()
-    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)
+    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger, attempts=attempts)
 
 
 def _household_zone(timezone: str | None, localtime: Path):

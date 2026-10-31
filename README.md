@@ -67,6 +67,8 @@ The three answers the proxy sees are:
 { "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
 ```
 
+When the household has an eligible revision task, that location is the page for the chosen task on the same site. The sample has no tasks yet, so the location stays the `revision_task` URL. A rule that allows the task host is what lets the page load after the redirect. The host does not have to be on the proxy bypass list.
+
 ## Decision and observation logs
 
 Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
