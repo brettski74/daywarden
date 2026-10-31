@@ -33,7 +33,8 @@ services:
       MACHINE_LOCALTIME: /etc/host-localtime
       PARENT_PASSWORD: ${PARENT_PASSWORD-}
     ports:
-      # Parents open http://<this machine>:REPORT_PORT/usage
+      # Parents open the usage report on this port. It is plain HTTP until
+      # S007.1, which serves parent pages over HTTPS.
       - "${REPORT_PORT:-8090}:8090"
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro

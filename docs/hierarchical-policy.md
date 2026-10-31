@@ -236,14 +236,14 @@ An inline list has no name of its own. Logs identify it by the path of the rule 
 | `time_window` | `windows`: one or more time-window names | The request time falls inside any named window. |
 | `site_group` | `groups`: one or more site-group names | The request's site group is one of those names. |
 | `client_group` | `groups`: one or more client-group names | The request's client group is one of those names. |
-| `tasks_required` | `required`: a whole number, zero or more | The classified client group's successful revisions for the local date are at least `required`. The `default` client group has its own count. |
+| `tasks_required` | `required`: a whole number, zero or more | The classified client group's passes for the local date are at least `required`. The `default` client group has its own count. |
 | `time_remaining` | `quota`: a quota name | That client group's ended time on the quota is strictly under the quota's time limit. A limit of zero is never under. |
 | `volume_remaining` | `quota`: a quota name | That client group's stored bytes on the quota are strictly under the quota's byte limit. A limit of zero is never under. |
 | `always` | none | Always. |
 
 `group` is accepted where `groups` is stored, and `window` where `windows` is stored. Each is the convenience for a single name. The model stores a list. Specifying both the singular and the plural is a load error. An empty list is a load error.
 
-`tasks_required` is a count of successful completions. One completion scores one point. A different scoring system is out of scope. The count resets at local midnight. Another client group's completions do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
+`tasks_required` is a count of passes. One pass scores one point. A different scoring system is out of scope. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
 
 Weekday overrides on the old `tasks_complete` condition are not part of this model. A different count on a different day is a different rule under a different window. Per-weekday targets inside a spelling task stay on that task.
 
