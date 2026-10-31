@@ -27,6 +27,7 @@ from policy.clients import normalize_ip
 from policy.groups import matches
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.rules import REVISION_TASK, UNCONFIGURED_TASK_MESSAGE, absolute_http_url
+from policy.tasks import household_day
 
 NO_RULE_MESSAGE = "No rule granted access."
 
@@ -51,9 +52,10 @@ class Trace:
 class Ledger:
     """The counts an access rule reads.
 
-    Successes stay zero until S003 stores them. Ended seconds and stored bytes
-    are one client group's balance on a named quota. ``policy.usage.UsageStore``
-    records those. A missing row and an empty ledger answer the same way.
+    Successes are the client group's pass attempts for that household day.
+    ``policy.usage.UsageStore`` counts the rows S003.1 stores. Ended seconds
+    and stored bytes are one client group's balance on a named quota. A missing
+    row and an empty ledger answer the same way.
 
     ``when`` is a household-local time, or a date. A time is what decides
     whether a bucket has ended. A date means the whole of that local day.
@@ -368,7 +370,7 @@ def _holds(rule: Rule, facts: _Facts) -> bool:
         return facts.client_group in rule.groups
     if rule.condition == "tasks_required":
         required = 0 if rule.required is None else rule.required
-        return facts.ledger.successes(facts.client_group, facts.at.date()) >= required
+        return facts.ledger.successes(facts.client_group, household_day(facts.at)) >= required
     if rule.condition == "time_remaining":
         quota = facts.policy.quota(rule.quota or "")
         if quota is None:

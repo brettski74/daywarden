@@ -42,7 +42,7 @@ Usage is recorded against that same pair. A site does not match one group in the
 
 ## Namespaces
 
-Site groups, client groups, time windows, quotas, and rule sets are five namespaces. A name is unique inside its own namespace. The same spelling may be used in two namespaces. A field that expects a site group accepts only a site group. The same rule applies to client groups, time windows, quotas, and rule sets.
+Site groups, client groups, time windows, quotas, rule sets, and tasks are six namespaces. A name is unique inside its own namespace. The same spelling may be used in two namespaces. A field that expects a site group accepts only a site group. The same rule applies to client groups, time windows, quotas, rule sets, and tasks.
 
 References are resolved after every included file has been read. A name that resolves to nothing is a load error. A second definition of the same name in the same namespace is a load error. A later file does not extend or replace an earlier definition.
 
@@ -181,6 +181,16 @@ The addon posts observations while bytes move, about once a minute and again whe
 
 A policy edit does not disturb a transfer until that stored time or a volume ceiling is reached. A change to who is in a client group, or which hosts are in a site group, is not applied to the transfer even then. Forcing every live transfer to classify and walk again on its next observation is left for later. A new request is still refused at the limit, without waiting for the grace, when a rule checks that side. During the grace, a new request already follows the flipped rule.
 
+## Tasks
+
+A task has a name, unique in the task namespace, a `type`, a `pass_cooldown` in whole household days, and one or more client groups. `group` names one. `groups` names several. The name `default` is allowed here and means the implicit client group. An unknown client group is a load error.
+
+`failure_cooldown`, `available_from`, `due_date`, `max_skips`, and `max_passes` are optional. Leaving one out leaves that rule off. An omitted failure cooldown does not make a failure wait. Dates are household dates written `2026-10-31`. Cooldowns, skip limits, and pass caps are whole numbers, zero or more. `body` is a mapping of whatever the quiz type needs. This layer stores it and does not interpret it.
+
+The same type may appear on more than one task. `parts-of-speech-1` and `parts-of-speech-2` keep separate sentences, dates, and attempt history. Attempts are rows, not part of this file. Editing a task does not delete them. S003.1 is the catalogue. S009 moves the household day off local midnight. Until then the day starts at midnight.
+
+`available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`.
+
 ## Rule sets
 
 A rule set has a name, unique in the rule-set namespace, and an ordered list of rules. `entry` names the rule set where access decisions start. The name is required. If it is missing, or it does not name a rule set, the load fails.
@@ -243,7 +253,7 @@ An inline list has no name of its own. Logs identify it by the path of the rule 
 
 `group` is accepted where `groups` is stored, and `window` where `windows` is stored. Each is the convenience for a single name. The model stores a list. Specifying both the singular and the plural is a load error. An empty list is a load error.
 
-`tasks_required` is a count of passes. One pass scores one point. A different scoring system is out of scope. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
+`tasks_required` is a count of passes. One stored pass scores one point. The count is the attempt rows for this client group whose outcome is `pass` and whose finish falls on the household day. A different scoring system is out of scope. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
 
 Weekday overrides on the old `tasks_complete` condition are not part of this model. A different count on a different day is a different rule under a different window. Per-weekday targets inside a spelling task stay on that task.
 
