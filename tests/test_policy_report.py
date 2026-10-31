@@ -1,4 +1,4 @@
-"""S002.2: the usage report shows household-local buckets, and stays closed without a password."""
+"""S002.2: the usage report shows household-local buckets, and stays closed without a parent account."""
 
 import sys
 from datetime import datetime, timedelta, timezone
@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy import config
 from policy.clock import HouseholdClock
-from policy.gate import ParentGate, cookie_value
+from policy.accounts import Accounts, cookie_value
 from policy.groups import SiteGroup
 from policy.observations import record
 from policy.report import parse_form, respond
@@ -86,32 +86,39 @@ def _observe(
     )
 
 
+def _accounts(store: PolicyStore) -> Accounts:
+    accounts = Accounts(store.connection)
+    accounts.set_password("parent", PASSWORD)
+    return accounts
+
+
 def _token(page) -> str:
     header = dict(page.headers)["set-cookie"]
     value = header.split(";", 1)[0]
     name, token = value.split("=", 1)
     assert name == "parent_session"
     assert "HttpOnly" in header
+    assert "Secure" in header
     assert "SameSite=Lax" in header
-    assert "Path=/usage" in header
+    assert "Path=/" in header
     return token
 
 
 def _signed(store: PolicyStore, now: datetime, client: str, group: str) -> str:
-    gate = ParentGate(PASSWORD)
+    accounts = _accounts(store)
     opened = respond(
         store,
-        gate,
+        accounts,
         method="POST",
         query={"client": client, "group": group},
         cookie=None,
-        form={"password": PASSWORD},
+        form={"username": "parent", "password": PASSWORD},
         now=now,
     )
     assert opened.status == 303
     page = respond(
         store,
-        gate,
+        accounts,
         method="GET",
         query={"client": client, "group": group},
         cookie=_token(opened),
@@ -119,7 +126,7 @@ def _signed(store: PolicyStore, now: datetime, client: str, group: str) -> str:
         now=now,
     )
     assert page.status == 200
-    assert "Enter the parent password." not in page.body
+    assert "Enter your username and password." not in page.body
     assert dict(page.headers)["cache-control"] == "no-store"
     return page.body
 
@@ -159,13 +166,19 @@ def test_a_day_with_no_traffic_says_no_usage():
     with PolicyStore(":memory:") as store:
         _apply(store)
         now = datetime(2026, 10, 22, 12, tzinfo=SYDNEY)
-        gate = ParentGate(PASSWORD)
+        accounts = _accounts(store)
         opened = respond(
-            store, gate, method="POST", query={}, cookie=None, form={"password": PASSWORD}, now=now
+            store,
+            accounts,
+            method="POST",
+            query={},
+            cookie=None,
+            form={"username": "parent", "password": PASSWORD},
+            now=now,
         )
         page = respond(
             store,
-            gate,
+            accounts,
             method="GET",
             query={"client": "Younger child", "group": "Entertainment"},
             cookie=_token(opened),
@@ -317,12 +330,18 @@ def test_the_page_asks_for_a_client_and_a_group():
     with PolicyStore(":memory:") as store:
         _apply(store)
         now = datetime(2026, 10, 22, 12, tzinfo=SYDNEY)
-        gate = ParentGate(PASSWORD)
+        accounts = _accounts(store)
         opened = respond(
-            store, gate, method="POST", query={}, cookie=None, form={"password": PASSWORD}, now=now
+            store,
+            accounts,
+            method="POST",
+            query={},
+            cookie=None,
+            form={"username": "parent", "password": PASSWORD},
+            now=now,
         )
         page = respond(
-            store, gate, method="GET", query={}, cookie=_token(opened), form={}, now=now
+            store, accounts, method="GET", query={}, cookie=_token(opened), form={}, now=now
         )
         assert "Choose a client and a site group." in page.body
         assert "The last 14 days." in page.body
@@ -368,27 +387,33 @@ def test_an_unset_timezone_is_named_as_the_machines():
         assert "Australia/Sydney" not in body
 
 
-def test_without_a_password_the_page_is_closed():
+def test_without_an_account_the_page_is_closed():
     with PolicyStore(":memory:") as store:
         _apply(store)
         assert _observe(store, datetime(2026, 10, 22, 0, 32, tzinfo=SYDNEY), nbytes=140)
         now = datetime(2026, 10, 22, 12, tzinfo=SYDNEY)
         query = {"client": "Younger child", "group": "Entertainment"}
-        for gate in (ParentGate(None), ParentGate("")):
-            page = respond(store, gate, method="GET", query=query, cookie=None, form={}, now=now)
-            assert page.status == 403
-            assert "This page is closed until a parent password is set." in page.body
-            assert "Younger child" not in page.body
-            assert "00:30" not in page.body
-            assert "140" not in page.body
-            assert "<option" not in page.body
-            assert dict(page.headers)["cache-control"] == "no-store"
-            posted = respond(
-                store, gate, method="POST", query=query, cookie=None, form={"password": PASSWORD}, now=now
-            )
-            assert posted.status == 403
-            assert "set-cookie" not in dict(posted.headers)
-            assert "140" not in posted.body
+        accounts = Accounts(store.connection)
+        page = respond(store, accounts, method="GET", query=query, cookie=None, form={}, now=now)
+        assert page.status == 403
+        assert "This page is closed until a parent account is added." in page.body
+        assert "Younger child" not in page.body
+        assert "00:30" not in page.body
+        assert "140" not in page.body
+        assert "<option" not in page.body
+        assert dict(page.headers)["cache-control"] == "no-store"
+        posted = respond(
+            store,
+            accounts,
+            method="POST",
+            query=query,
+            cookie=None,
+            form={"username": "parent", "password": PASSWORD},
+            now=now,
+        )
+        assert posted.status == 403
+        assert "set-cookie" not in dict(posted.headers)
+        assert "140" not in posted.body
 
 
 def test_a_wrong_password_shows_no_usage():
@@ -396,21 +421,27 @@ def test_a_wrong_password_shows_no_usage():
         _apply(store)
         assert _observe(store, datetime(2026, 10, 22, 0, 32, tzinfo=SYDNEY), nbytes=140)
         now = datetime(2026, 10, 22, 12, tzinfo=SYDNEY)
-        gate = ParentGate(PASSWORD)
+        accounts = _accounts(store)
         query = {"client": "Younger child", "group": "Entertainment"}
-        page = respond(store, gate, method="GET", query=query, cookie=None, form={}, now=now)
+        page = respond(store, accounts, method="GET", query=query, cookie=None, form={}, now=now)
         assert page.status == 200
-        assert "Enter the parent password." in page.body
+        assert "Enter your username and password." in page.body
         assert "<option" not in page.body
         assert "Younger child" not in page.body
         assert "00:30" not in page.body
         assert "no usage" not in page.body
 
         posted = respond(
-            store, gate, method="POST", query=query, cookie=None, form={"password": "nope-secret"}, now=now
+            store,
+            accounts,
+            method="POST",
+            query=query,
+            cookie=None,
+            form={"username": "parent", "password": "nope-secret"},
+            now=now,
         )
         assert posted.status == 401
-        assert "That password is not right." in posted.body
+        assert "That username or password is not right." in posted.body
         assert "nope-secret" not in posted.body
         assert "set-cookie" not in dict(posted.headers)
         assert "00:30" not in posted.body
@@ -422,14 +453,14 @@ def test_the_right_password_opens_the_report_and_a_forged_cookie_does_not():
         _apply(store)
         assert _observe(store, datetime(2026, 10, 22, 0, 32, tzinfo=SYDNEY), nbytes=140)
         now = datetime(2026, 10, 22, 12, tzinfo=SYDNEY)
-        gate = ParentGate(PASSWORD)
+        accounts = _accounts(store)
         posted = respond(
             store,
-            gate,
+            accounts,
             method="POST",
             query={"client": "Younger child", "group": "Entertainment", "password": PASSWORD},
             cookie=None,
-            form={"password": PASSWORD},
+            form={"username": "parent", "password": PASSWORD},
             now=now,
         )
         assert posted.status == 303
@@ -441,7 +472,7 @@ def test_the_right_password_opens_the_report_and_a_forged_cookie_does_not():
         token = _token(posted)
         page = respond(
             store,
-            gate,
+            accounts,
             method="GET",
             query={"client": "Younger child", "group": "Entertainment"},
             cookie=token,
@@ -454,27 +485,27 @@ def test_the_right_password_opens_the_report_and_a_forged_cookie_does_not():
         forged = token[:-1] + ("0" if token[-1] != "0" else "1")
         rejected = respond(
             store,
-            gate,
+            accounts,
             method="GET",
             query={"client": "Younger child", "group": "Entertainment"},
             cookie=forged,
             form={},
             now=now,
         )
-        assert "Enter the parent password." in rejected.body
+        assert "Enter your username and password." in rejected.body
         assert "00:30" not in rejected.body
         assert "140" not in rejected.body
 
         from_query = respond(
             store,
-            gate,
+            accounts,
             method="GET",
             query={"password": PASSWORD, "client": "Younger child", "group": "Entertainment"},
             cookie=None,
             form={},
             now=now,
         )
-        assert "Enter the parent password." in from_query.body
+        assert "Enter your username and password." in from_query.body
         assert "00:30" not in from_query.body
 
 

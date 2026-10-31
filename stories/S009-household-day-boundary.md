@@ -2,7 +2,7 @@ Ticket: S009
 Title: Configurable household day boundary
 Status: Draft
 Story Points: 5
-Last Updated: 2026-10-28 23:29:00
+Last Updated: 2026-10-31 11:58:38
 ---
 
 # User Voice
@@ -13,15 +13,16 @@ As a parent, I want the household day to roll over at a time I choose, so that q
 
 - The household sets one local clock, such as `05:00`. The day runs from that time, inclusive, until the same time the next day, exclusive.
 - Omitted, the boundary stays local midnight, which is the behaviour the policy has now.
-- Quota balances, the revision count behind `tasks_required`, and the alignment of usage buckets all use that boundary. A request at 02:00 belongs to the household day that started the previous morning when the boundary is 05:00.
+- Quota balances, the revision count behind `tasks_required`, cooldown dates, `available_from`, `due_date`, the household day a skip is dated on, and the alignment of usage buckets all use that boundary. A request at 02:00 belongs to the household day that started the previous morning when the boundary is 05:00. A due date of that calendar date starts at the boundary, so with the boundary at 05:00 it is not yet due at 04:59.
 - Time windows stay wall-clock periods. Bedtime at `00:00` is still midnight. This setting does not move a window. It moves the moment usage and task counts start a new day.
 - Changing the boundary does not have to affect a transfer that is already running. That is the same choice as any other policy edit during a transfer.
 
 # Acceptance Criteria
 
-- [ ] With no boundary configured, balances, task counts, and buckets still reset and align at local midnight.
+- [ ] With no boundary configured, balances, task counts, buckets, cooldowns, `available_from`, `due_date`, and skips still use local midnight.
 - [ ] A configured clock is household-local. A moment before that clock counts toward the previous household day. A moment at that clock counts toward the new day.
-- [ ] Quota time, quota bytes, and `tasks_required` all agree on which household day a moment belongs to.
+- [ ] Quota time, quota bytes, `tasks_required`, cooldown eligibility, `available_from`, `due_date`, and skips all agree on which household day a moment belongs to.
+- [ ] With the boundary at 05:00, a `due_date` of the calendar date is not in force at 04:59 local time and is in force at 05:00. An abandon at 04:30, or a failure at 04:30, counts as a skip on the previous household day.
 - [ ] Buckets still divide 24 hours, and they align to the configured boundary rather than to midnight.
 - [ ] A clock the loader cannot read, or a boundary that does not divide the day the way buckets require, is a load error. The previous policy stays in force.
 

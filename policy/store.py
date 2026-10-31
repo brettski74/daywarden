@@ -118,6 +118,29 @@ _MIGRATIONS = (
     """
     ALTER TABLE site_groups ADD COLUMN byte_limit INTEGER;
     """,
+    # Parent accounts and sessions. The password column is an Argon2id hash.
+    # A session row stores the SHA-256 of the key, never the key itself.
+    # policy.accounts creates the same tables on a connection that is not
+    # migrated through here, such as a usage ledger opened on its own.
+    """
+    CREATE TABLE parent_accounts (
+        id INTEGER PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+    );
+    CREATE TABLE parent_sessions (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES parent_accounts(id) ON DELETE CASCADE,
+        key_hash TEXT NOT NULL UNIQUE,
+        signed_in_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+    );
+    CREATE TABLE parent_checks (
+        id INTEGER PRIMARY KEY,
+        client_group TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+    );
+    """,
 )
 SCHEMA_VERSION = len(_MIGRATIONS)
 DEFAULT_BUCKET_SECONDS = 300

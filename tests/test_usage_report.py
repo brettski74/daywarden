@@ -1,6 +1,7 @@
 """S008.4: the usage report slices by site group, client group, or quota."""
 
 import asyncio
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from policy.clock import HouseholdClock  # noqa: E402
-from policy.gate import ParentGate  # noqa: E402
+from policy.accounts import Accounts  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
 from policy.report import respond_hierarchy  # noqa: E402
 from policy.usage import UsageStore, observe  # noqa: E402
@@ -92,34 +93,41 @@ def _observe(policy, usage: UsageStore, moment: datetime, **kwargs) -> None:
     assert observe(policy, usage, _clock(), _report(moment, **kwargs))
 
 
+def _accounts(usage: UsageStore) -> Accounts:
+    accounts = Accounts(usage.connection)
+    accounts.set_password("parent", PASSWORD)
+    return accounts
+
+
 def _token(page) -> str:
     header = dict(page.headers)["set-cookie"]
     value = header.split(";", 1)[0]
     name, token = value.split("=", 1)
     assert name == "parent_session"
     assert "HttpOnly" in header
+    assert "Secure" in header
     assert "SameSite=Lax" in header
-    assert "Path=/usage" in header
+    assert "Path=/" in header
     return token
 
 
 def _signed(policy, usage: UsageStore, now: datetime, query: dict) -> str:
-    gate = ParentGate(PASSWORD)
+    accounts = _accounts(usage)
     opened = respond_hierarchy(
         policy,
         usage,
-        gate,
+        accounts,
         method="POST",
         query=query,
         cookie=None,
-        form={"password": PASSWORD},
+        form={"username": "parent", "password": PASSWORD},
         now=now,
     )
     assert opened.status == 303
     page = respond_hierarchy(
         policy,
         usage,
-        gate,
+        accounts,
         method="GET",
         query=query,
         cookie=_token(opened),
@@ -127,7 +135,7 @@ def _signed(policy, usage: UsageStore, now: datetime, query: dict) -> str:
         now=now,
     )
     assert page.status == 200
-    assert "Enter the parent password." not in page.body
+    assert "Enter your username and password." not in page.body
     assert dict(page.headers)["cache-control"] == "no-store"
     return page.body
 
@@ -543,38 +551,38 @@ def test_a_missing_policy_still_offers_default():
         assert "no usage" not in missing
 
 
-def test_without_a_password_the_page_is_closed(tmp_path):
+def test_without_an_account_the_page_is_closed(tmp_path):
     policy = _load(tmp_path)
     with UsageStore(":memory:") as usage:
         _observe(policy, usage, _at(0, 32, day=22), nbytes=140)
         now = _at(12, day=22)
         query = {"view": "site", "client": "younger", "site": "entertainment"}
-        for gate in (ParentGate(None), ParentGate("")):
-            page = respond_hierarchy(
-                policy, usage, gate, method="GET", query=query, cookie=None, form={}, now=now
-            )
-            assert page.status == 403
-            assert "This page is closed until a parent password is set." in page.body
-            assert "younger" not in page.body
-            assert "school" not in page.body
-            assert "entertainment" not in page.body
-            assert "00:30" not in page.body
-            assert "140" not in page.body
-            assert "<option" not in page.body
-            assert dict(page.headers)["cache-control"] == "no-store"
-            posted = respond_hierarchy(
-                policy,
-                usage,
-                gate,
-                method="POST",
-                query=query,
-                cookie=None,
-                form={"password": PASSWORD},
-                now=now,
-            )
-            assert posted.status == 403
-            assert "set-cookie" not in dict(posted.headers)
-            assert "140" not in posted.body
+        accounts = Accounts(usage.connection)
+        page = respond_hierarchy(
+            policy, usage, accounts, method="GET", query=query, cookie=None, form={}, now=now
+        )
+        assert page.status == 403
+        assert "This page is closed until a parent account is added." in page.body
+        assert "younger" not in page.body
+        assert "school" not in page.body
+        assert "entertainment" not in page.body
+        assert "00:30" not in page.body
+        assert "140" not in page.body
+        assert "<option" not in page.body
+        assert dict(page.headers)["cache-control"] == "no-store"
+        posted = respond_hierarchy(
+            policy,
+            usage,
+            accounts,
+            method="POST",
+            query=query,
+            cookie=None,
+            form={"username": "parent", "password": PASSWORD},
+            now=now,
+        )
+        assert posted.status == 403
+        assert "set-cookie" not in dict(posted.headers)
+        assert "140" not in posted.body
 
 
 def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
@@ -582,13 +590,13 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
     with UsageStore(":memory:") as usage:
         _observe(policy, usage, _at(0, 32, day=22), nbytes=140)
         now = _at(12, day=22)
-        gate = ParentGate(PASSWORD)
+        accounts = _accounts(usage)
         query = {"view": "site", "client": "younger", "site": "entertainment", "quota": "notes"}
         page = respond_hierarchy(
-            policy, usage, gate, method="GET", query=query, cookie=None, form={}, now=now
+            policy, usage, accounts, method="GET", query=query, cookie=None, form={}, now=now
         )
         assert page.status == 200
-        assert "Enter the parent password." in page.body
+        assert "Enter your username and password." in page.body
         assert "<option" not in page.body
         assert "00:30" not in page.body
         assert "140" not in page.body
@@ -597,15 +605,15 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         posted = respond_hierarchy(
             policy,
             usage,
-            gate,
+            accounts,
             method="POST",
             query={**query, "password": PASSWORD},
             cookie=None,
-            form={"password": "nope-secret"},
+            form={"username": "parent", "password": "nope-secret"},
             now=now,
         )
         assert posted.status == 401
-        assert "That password is not right." in posted.body
+        assert "That username or password is not right." in posted.body
         assert "nope-secret" not in posted.body
         assert "set-cookie" not in dict(posted.headers)
         assert "00:30" not in posted.body
@@ -614,11 +622,11 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         opened = respond_hierarchy(
             policy,
             usage,
-            gate,
+            accounts,
             method="POST",
             query=query,
             cookie=None,
-            form={"password": PASSWORD},
+            form={"username": "parent", "password": PASSWORD},
             now=now,
         )
         assert opened.status == 303
@@ -631,30 +639,30 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         assert parsed["quota"] == ["notes"]
         token = _token(opened)
         shown = respond_hierarchy(
-            policy, usage, gate, method="GET", query=query, cookie=token, form={}, now=now
+            policy, usage, accounts, method="GET", query=query, cookie=token, form={}, now=now
         )
         assert "00:30 to 00:35" in shown.body
         assert "140 bytes" in shown.body
 
         forged = token[:-1] + ("0" if token[-1] != "0" else "1")
         rejected = respond_hierarchy(
-            policy, usage, gate, method="GET", query=query, cookie=forged, form={}, now=now
+            policy, usage, accounts, method="GET", query=query, cookie=forged, form={}, now=now
         )
-        assert "Enter the parent password." in rejected.body
+        assert "Enter your username and password." in rejected.body
         assert "00:30" not in rejected.body
         assert "140" not in rejected.body
 
         from_query = respond_hierarchy(
             policy,
             usage,
-            gate,
+            accounts,
             method="GET",
             query={**query, "password": PASSWORD},
             cookie=None,
             form={},
             now=now,
         )
-        assert "Enter the parent password." in from_query.body
+        assert "Enter your username and password." in from_query.body
         assert "00:30" not in from_query.body
 
 
@@ -671,23 +679,25 @@ def test_the_service_serves_the_report_behind_the_same_barrier(tmp_path, monkeyp
     monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
     monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_PASSWORD", raising=False)
+    monkeypatch.delenv("PARENT_IDLE", raising=False)
+    monkeypatch.delenv("PARENT_LIFETIME", raising=False)
     closed = create_app()
-    status, body, _headers = _call(closed, "GET", "/usage")
+    status, body, _headers = _call(closed, "GET", "/usage", scheme="https")
     assert status == 403
-    assert "This page is closed until a parent password is set." in body
+    assert "This page is closed until a parent account is added." in body
     assert "younger" not in body
     assert "00:30" not in body
 
-    monkeypatch.setenv("PARENT_PASSWORD", PASSWORD)
+    Accounts(sqlite3.connect(database)).set_password("parent", PASSWORD)
     app = create_app()
     policy = load(policy_path)
     assert policy is not None
     with UsageStore(database) as usage:
         observe(policy, usage, _clock(), _report(datetime.now(SYDNEY), nbytes=140))
     query = "view=site&client=younger&site=entertainment"
-    status, body, _headers = _call(app, "GET", "/usage", query=query)
+    status, body, _headers = _call(app, "GET", "/usage", query=query, scheme="https")
     assert status == 200
-    assert "Enter the parent password." in body
+    assert "Enter your username and password." in body
     assert "<option" not in body
     assert "140" not in body
     assert "00:30" not in body
@@ -697,25 +707,28 @@ def test_the_service_serves_the_report_behind_the_same_barrier(tmp_path, monkeyp
         "POST",
         "/usage",
         query=query + "&password=secret",
-        body=b"password=secret",
+        body=b"username=parent&password=secret",
         content_type="application/x-www-form-urlencoded",
+        scheme="https",
     )
     assert status == 303
     location = headers["location"][0]
     assert "password" not in location
     assert "client=younger" in location
     token = headers["set-cookie"][0].split(";", 1)[0].split("=", 1)[1]
+    assert "Secure" in headers["set-cookie"][0]
+    assert "HttpOnly" in headers["set-cookie"][0]
     status, body, headers = _call(
-        app, "GET", "/usage", query=query, cookie=f"parent_session={token}"
+        app, "GET", "/usage", query=query, cookie=f"parent_session={token}", scheme="https"
     )
     assert status == 200
     assert "younger, entertainment" in body
     assert "140 bytes" in body
-    assert "Enter the parent password." not in body
+    assert "Enter your username and password." not in body
     assert headers["cache-control"] == ["no-store"]
 
 
-def _call(app, method, path, *, query="", body=b"", cookie=None, content_type=None):
+def _call(app, method, path, *, query="", body=b"", cookie=None, content_type=None, scheme="http"):
     messages = []
     sent = False
 
@@ -739,7 +752,7 @@ def _call(app, method, path, *, query="", body=b"", cookie=None, content_type=No
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
         "method": method,
-        "scheme": "http",
+        "scheme": scheme,
         "path": path,
         "raw_path": path.encode(),
         "query_string": query.encode(),

@@ -15,9 +15,10 @@
 # ceiling, and the access rules no longer allow it, the service answers
 # with a cut and the proxy stops that transfer. Any other answer leaves it
 # running.
-# REPORT_PORT publishes the decisions service so a parent can open /usage.
-# PARENT_PASSWORD keeps that page closed until it is set. The decision API on
-# the same port does not show the report and does not edit policy.
+# REPORT_PORT publishes the parent pages over HTTPS. Accounts are added with
+# `python -m policy.accounts` inside the decisions container. The decision
+# API stays on plain HTTP inside the compose network. It does not show the
+# report and does not edit policy.
 
 name: smartproxy
 
@@ -31,14 +32,19 @@ services:
       POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime
-      PARENT_PASSWORD: ${PARENT_PASSWORD-}
+      CA_DIR: /var/lib/smartproxy/ca
+      PARENT_NAMES: ${PARENT_NAMES}
+      PARENT_IDLE: ${PARENT_IDLE:-15m}
+      PARENT_LIFETIME: ${PARENT_LIFETIME:-180m}
+      PARENT_HTTPS_PORT: "8443"
     ports:
-      # Parents open the usage report on this port. It is plain HTTP until
-      # S007.1, which serves parent pages over HTTPS.
-      - "${REPORT_PORT:-8090}:8090"
+      # Parents open https://<this machine>:REPORT_PORT/usage. 8090 inside
+      # the container stays plain HTTP for the proxy and the health check.
+      - "${REPORT_PORT:-8090}:8443"
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy
+      - ${CA_VOLUME_PATH}:/var/lib/smartproxy/ca
       # Used for the household timezone when policy.yaml does not set one.
       - /etc/localtime:/etc/host-localtime:ro
     healthcheck:

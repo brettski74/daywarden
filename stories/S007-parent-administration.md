@@ -2,7 +2,7 @@ Ticket: S007
 Title: Parent administration
 Status: Draft
 Story Points: 21
-Last Updated: 2026-10-26 00:49:00
+Last Updated: 2026-10-31 12:56:02
 ---
 
 # User Voice
@@ -11,9 +11,9 @@ As a parent, I want to change the rules, the word lists, and which client group 
 
 # Use Cases
 
-- A parent signs in. The child does not know the password, and the quiz pages do not ask for it.
+- A parent signs in with a username and password from the local account table in S007.1. The child does not know the password, and the quiz pages do not ask for it.
 - The parent edits client groups, site groups, time windows, quotas, rule sets, and the household settings those rules use.
-- The parent edits arithmetic weights, spelling pools, and parts-of-speech sentences, and assigns tasks to a client group.
+- The parent edits arithmetic weights, spelling pools, and parts-of-speech sentences, assigns tasks to a client group, and sets `available_from`, `due_date`, `max_skips`, and `max_passes`.
 
 # Acceptance Criteria
 
