@@ -3,8 +3,9 @@
 A file may include other files, and a directory include reads the ``*.yaml``
 and ``*.yml`` files in that directory, in lexicographic order, without walking
 into subdirectories. A file already loaded is skipped, so an include cycle is
-not an error. Names are unique inside each of the five namespaces. The same
-spelling may be used in two namespaces.
+not an error. Names are unique inside each of the six namespaces. The same
+spelling may be used in two namespaces. Tasks are the sixth. Their bodies
+are opaque here. S003.1 is the catalogue that reads them.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
@@ -18,11 +19,12 @@ shows ``time`` for the other one. Grace is ``time_grace`` and ``volume_grace``.
 from __future__ import annotations
 
 import io
+import json
 import re
 import socket
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 
 import yaml
@@ -32,16 +34,22 @@ from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
 from policy.rules import REVISION_TASK, absolute_http_url
 from policy.store import DEFAULT_BUCKET_SECONDS
+from policy.tasks import Task
 
 DEFAULT_TIME_GRACE = 5 * 60
 DEFAULT_VOLUME_GRACE = 1024**2
 
 _STR = "tag:yaml.org,2002:str"
 _INT = "tag:yaml.org,2002:int"
+_FLOAT = "tag:yaml.org,2002:float"
+_BOOL = "tag:yaml.org,2002:bool"
+_NULL = "tag:yaml.org,2002:null"
+_TIMESTAMP = "tag:yaml.org,2002:timestamp"
 
 _DURATION = re.compile(r"^(\d+)([hms])$")
 _SIZE = re.compile(r"^(\d+)([bkMGT])$")
 _DECIMAL = re.compile(r"^[+-]?(?:0|[1-9][0-9]*)$")
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _START_CLOCK = re.compile(
     r"^(?:(?P<h1>[01]\d|2[0-3]):(?P<m1>[0-5]\d)|(?P<h2>[01]\d|2[0-3])(?P<m2>[0-5]\d))$"
 )
@@ -74,9 +82,22 @@ _TOP_KEYS = {
     "time_windows",
     "quotas",
     "rule_sets",
+    "tasks",
 }
 _SCALARS = {"entry", "timezone", "revision_task", "bucket_length", "time_grace", "volume_grace"}
-_SECTIONS = {"client_groups", "site_groups", "time_windows", "quotas", "rule_sets"}
+_SECTIONS = {"client_groups", "site_groups", "time_windows", "quotas", "rule_sets", "tasks"}
+_TASK_KEYS = {
+    "type",
+    "group",
+    "groups",
+    "pass_cooldown",
+    "failure_cooldown",
+    "available_from",
+    "due_date",
+    "max_skips",
+    "max_passes",
+    "body",
+}
 _CONDITIONS = {
     "time_window",
     "site_group",
@@ -207,6 +228,7 @@ class Policy:
     site_groups: tuple[SiteGroup, ...] = ()
     time_windows: tuple[TimeWindow, ...] = ()
     quotas: tuple[Quota, ...] = ()
+    tasks: tuple[Task, ...] = ()
 
     def rule_set(self, name: str) -> tuple[Rule, ...] | None:
         for found, rules in self.rule_sets:
@@ -225,6 +247,9 @@ class Policy:
 
     def quota(self, name: str) -> Quota | None:
         return _named(self.quotas, name)
+
+    def task(self, name: str) -> Task | None:
+        return _named(self.tasks, name)
 
 
 def _named(items, name):
@@ -256,6 +281,8 @@ class _Build:
     window_where: dict[str, str] = field(default_factory=dict)
     quotas: dict[str, _RawQuota] = field(default_factory=dict)
     quota_where: dict[str, str] = field(default_factory=dict)
+    tasks: dict[str, Task] = field(default_factory=dict)
+    task_where: dict[str, str] = field(default_factory=dict)
     rule_sets: dict[str, tuple[Rule, ...]] = field(default_factory=dict)
     ruleset_where: dict[str, str] = field(default_factory=dict)
 
@@ -387,6 +414,8 @@ def _absorb(node: yaml.MappingNode, build: _Build) -> tuple[str, ...]:
         _take_quotas(pairs["quotas"], build)
     if "rule_sets" in pairs:
         _take_rule_sets(pairs["rule_sets"], build)
+    if "tasks" in pairs:
+        _take_tasks(pairs["tasks"], build)
     if "include" not in pairs:
         return ()
     return _include_list(pairs["include"], _at(pairs["include"]))
@@ -453,6 +482,57 @@ def _take_quotas(node: yaml.Node, build: _Build) -> None:
     for name, body, where in _entities(node, "quota"):
         quota = _quota(name, body, where)
         _claim(build.quotas, build.quota_where, name, quota, where, "quota")
+
+
+def _take_tasks(node: yaml.Node, build: _Build) -> None:
+    for name, body, where in _entities(node, "task"):
+        task = _task(name, body, where)
+        _claim(build.tasks, build.task_where, name, task, where, "task")
+
+
+def _task(name: str, node: yaml.Node, where: str) -> Task:
+    pairs = _pairs(node)
+    _reject_unknown(set(pairs), _TASK_KEYS, where)
+    if "type" not in pairs:
+        raise ConfigError(f"{where}: type is required")
+    if "pass_cooldown" not in pairs:
+        raise ConfigError(f"{where}: pass_cooldown is required")
+    groups = _one_list(pairs, "group", "groups", where)
+    seen: set[str] = set()
+    for group in groups:
+        if group in seen:
+            raise ConfigError(f"{where}: client group {group!r} is listed twice")
+        seen.add(group)
+    failure = None
+    if "failure_cooldown" in pairs:
+        failure = _whole(pairs["failure_cooldown"], f"{where}: failure_cooldown", minimum=0)
+    available = None
+    if "available_from" in pairs:
+        available = _calendar_day(pairs["available_from"], f"{where}: available_from")
+    due = None
+    if "due_date" in pairs:
+        due = _calendar_day(pairs["due_date"], f"{where}: due_date")
+    skips = None
+    if "max_skips" in pairs:
+        skips = _whole(pairs["max_skips"], f"{where}: max_skips", minimum=0)
+    passes = None
+    if "max_passes" in pairs:
+        passes = _whole(pairs["max_passes"], f"{where}: max_passes", minimum=0)
+    document = {} if "body" not in pairs else _document(pairs["body"], f"{where}: body")
+    if not isinstance(document, dict):
+        raise ConfigError(f"{where}: body must be a mapping")
+    return Task(
+        name,
+        _text(pairs["type"], f"{where}: type"),
+        groups,
+        _whole(pairs["pass_cooldown"], f"{where}: pass_cooldown", minimum=0),
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        failure,
+        available,
+        due,
+        skips,
+        passes,
+    )
 
 
 def _take_rule_sets(node: yaml.Node, build: _Build) -> None:
@@ -782,6 +862,7 @@ def _finish(
         tuple(build.sites.values()),
         tuple(build.windows.values()),
         quotas,
+        tuple(build.tasks.values()),
     )
 
 
@@ -793,6 +874,10 @@ def _check_references(entry: str, build: _Build) -> None:
     windows = set(build.windows)
     quotas = set(build.quotas)
     rulesets = set(build.rule_sets)
+    for name, task in build.tasks.items():
+        for group in task.groups:
+            if group not in clients:
+                raise ConfigError(f"task {name!r}: unknown client group {group!r}")
     for name, raw in build.quotas.items():
         if raw.ruleset not in rulesets:
             raise ConfigError(f"quota {name!r}: unknown rule set {raw.ruleset!r}")
@@ -951,6 +1036,62 @@ def _sequence(node: yaml.Node, where: str) -> list[yaml.Node]:
 
 def _string_list(node: yaml.Node, where: str) -> tuple[str, ...]:
     return tuple(_text(item, where) for item in _sequence(node, where))
+
+
+def _calendar_day(node: yaml.Node, where: str) -> date:
+    if not isinstance(node, yaml.ScalarNode) or node.tag not in {_STR, _TIMESTAMP}:
+        raise ConfigError(f"{where} must be a date like 2026-10-31")
+    text = node.value.strip()
+    if not _DAY.fullmatch(text):
+        raise ConfigError(f"{where} must be a date like 2026-10-31")
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise ConfigError(f"{where} must be a date like 2026-10-31") from exc
+
+
+def _document(node: yaml.Node, where: str) -> dict:
+    if not isinstance(node, yaml.MappingNode):
+        raise ConfigError(f"{where} must be a mapping")
+    return {key: _data(value, f"{where}.{key}") for key, value in _pair_items(node)}
+
+
+def _pair_items(node: yaml.MappingNode) -> list[tuple[str, yaml.Node]]:
+    found: list[tuple[str, yaml.Node]] = []
+    seen: set[str] = set()
+    for key_node, value_node in node.value:
+        key = _text(key_node, _at(key_node))
+        if key in seen:
+            raise ConfigError(f"{_at(key_node)}: duplicate key {key!r}")
+        seen.add(key)
+        found.append((key, value_node))
+    return found
+
+
+def _data(node: yaml.Node, where: str):
+    if isinstance(node, yaml.MappingNode):
+        return {key: _data(value, f"{where}.{key}") for key, value in _pair_items(node)}
+    if isinstance(node, yaml.SequenceNode):
+        return [_data(item, where) for item in node.value]
+    if not isinstance(node, yaml.ScalarNode):
+        raise ConfigError(f"{where} must be a JSON value")
+    if node.tag == _NULL:
+        return None
+    if node.tag == _BOOL:
+        return node.value.lower() in {"y", "yes", "true", "on"}
+    if node.tag == _INT:
+        return _whole(node, where)
+    if node.tag == _FLOAT:
+        try:
+            value = float(node.value)
+        except ValueError as exc:
+            raise ConfigError(f"{where} must be a finite number") from exc
+        if value != value or value in {float("inf"), float("-inf")}:
+            raise ConfigError(f"{where} must be a finite number")
+        return value
+    if node.tag in {_STR, _TIMESTAMP}:
+        return node.value
+    raise ConfigError(f"{where} must be a JSON value")
 
 
 def _text(node: yaml.Node, where: str) -> str:
