@@ -211,7 +211,8 @@ def _allow(stack: Stack) -> None:
 
 
 def _require_observation(entry: dict, url: str) -> None:
-    assert {"client_ip", "url", "occurred_at", "bytes"} <= set(entry)
+    assert {"client_ip", "url", "occurred_at", "bytes", "flow_id"} <= set(entry)
+    assert isinstance(entry["flow_id"], str) and entry["flow_id"]
     ipaddress.ip_address(entry["client_ip"])
     assert entry["url"] == url
     occurred = _stamp(entry["occurred_at"])

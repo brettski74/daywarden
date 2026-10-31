@@ -19,9 +19,10 @@ is replaced with the household URL before either answer is returned.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
+from policy.buckets import place
 from policy.clients import normalize_ip
 from policy.groups import matches
 from policy.hierarchy import Action, Period, Policy, Rule
@@ -105,6 +106,40 @@ class _Facts:
 
 
 @dataclass(frozen=True)
+class Assumption:
+    """When an allow should be looked at again.
+
+    ``recheck_at`` is household-local. It is the earliest moment a clock
+    assumption on the path to allow runs out, and the grace is already
+    included. None means the path did not depend on a clock. ``ceilings``
+    is ``(quota, bytes)`` for each ``volume_remaining`` check whose true
+    branch was taken. The byte count is that quota's limit plus its volume
+    grace.
+    """
+
+    recheck_at: datetime | None = None
+    ceilings: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass
+class _Notes:
+    recheck_at: datetime | None = None
+    ceilings: dict[str, int] = field(default_factory=dict)
+
+    def note(self, moment: datetime) -> None:
+        if self.recheck_at is None or moment < self.recheck_at:
+            self.recheck_at = moment
+
+    def ceiling(self, quota: str, level: int) -> None:
+        current = self.ceilings.get(quota)
+        if current is None or level < current:
+            self.ceilings[quota] = level
+
+    def assumption(self) -> Assumption:
+        return Assumption(self.recheck_at, tuple(sorted(self.ceilings.items())))
+
+
+@dataclass(frozen=True)
 class _Hit:
     action: Action
     rule_set: str
@@ -161,23 +196,64 @@ def decide(
     classified once, then ``entry`` is evaluated with no parent. A continue
     from that evaluation is a deny.
     """
-    client_group = classify_client(policy, client_ip)
-    site_group = classify_site(policy, url)
-    rules = policy.rule_set(policy.entry)
-    if rules is None:
-        return _fallthrough(client_group, site_group)
-    trace = evaluate(
+    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)[0]
+
+
+def judge(
+    policy: Policy,
+    *,
+    client_ip: str,
+    url: str,
+    at: datetime,
+    ledger: Ledger | None = None,
+) -> tuple[Trace, Assumption]:
+    """Judge one request, and note when that allow would need another look.
+
+    Classification happens once. The assumption is empty unless the access
+    path allows. A deny or a redirect has no transfer to watch.
+    """
+    return judge_frozen(
         policy,
-        rules,
-        client_group=client_group,
-        site_group=site_group,
+        client_group=classify_client(policy, client_ip),
+        site_group=classify_site(policy, url),
         at=at,
         ledger=ledger,
-        rule_set=policy.entry,
     )
-    if trace.decision.get("action") == "continue":
-        return _fallthrough(client_group, site_group)
-    return trace
+
+
+def judge_frozen(
+    policy: Policy,
+    *,
+    client_group: str,
+    site_group: str,
+    at: datetime,
+    ledger: Ledger | None = None,
+) -> tuple[Trace, Assumption]:
+    """Judge with groups already chosen.
+
+    A transfer that was allowed keeps the groups from that approval. A later
+    look uses those names, so a reload that moves an address or a host does
+    not reclassify the stream.
+    """
+    rules = policy.rule_set(policy.entry)
+    if rules is None:
+        return _fallthrough(client_group, site_group), Assumption()
+    facts = _Facts(policy, client_group, site_group, at, ledger or Ledger())
+    notes = _Notes()
+    hit = _walk(rules, policy.entry, facts, (), notes)
+    if hit is None:
+        return _fallthrough(client_group, site_group), Assumption()
+    trace = Trace(
+        client_group,
+        site_group,
+        hit.rule_set,
+        hit.rule_index,
+        False,
+        _answered(hit.action, policy),
+    )
+    if trace.decision.get("action") != "allow":
+        return trace, Assumption()
+    return trace, notes.assumption()
 
 
 def evaluate(
@@ -197,7 +273,7 @@ def evaluate(
     is the name or the inline path used when this list itself produces the hit.
     """
     facts = _Facts(policy, client_group, site_group, at, ledger or Ledger())
-    hit = _walk(rules, rule_set, facts, ())
+    hit = _walk(rules, rule_set, facts, (), None)
     if hit is None:
         return Trace(client_group, site_group, rule_set, None, False, {"action": "continue"})
     return Trace(
@@ -235,18 +311,26 @@ def _fallthrough(client_group: str, site_group: str) -> Trace:
     )
 
 
-def _walk(rules: tuple[Rule, ...], label: str, facts: _Facts, seen: tuple[int, ...]) -> _Hit | None:
+def _walk(
+    rules: tuple[Rule, ...],
+    label: str,
+    facts: _Facts,
+    seen: tuple[int, ...],
+    notes: _Notes | None,
+) -> _Hit | None:
     marker = id(rules)
     if marker in seen:
         return _Hit(Action("deny", message=NO_RULE_MESSAGE), label, 1)
     seen = seen + (marker,)
     for index, rule in enumerate(rules, start=1):
         holds = _holds(rule, facts)
+        if notes is not None:
+            _note(rule, holds, facts, notes)
         action = rule.when_true if holds else rule.when_false
         if action.kind == "continue":
             continue
         if action.kind == "evaluate":
-            hit = _evaluated(action, holds, label, index, facts, seen)
+            hit = _evaluated(action, holds, label, index, facts, seen, notes)
             if hit is None:
                 continue
             return hit
@@ -261,15 +345,16 @@ def _evaluated(
     index: int,
     facts: _Facts,
     seen: tuple[int, ...],
+    notes: _Notes | None,
 ) -> _Hit | None:
     branch = "when_true" if holds else "when_false"
     if action.ruleset is not None:
         child = facts.policy.rule_set(action.ruleset)
         if child is None:
             return _Hit(Action("deny", message=NO_RULE_MESSAGE), label, index)
-        return _walk(child, action.ruleset, facts, seen)
+        return _walk(child, action.ruleset, facts, seen, notes)
     child = action.rules or ()
-    return _walk(child, f"{label} rule {index} {branch}", facts, seen)
+    return _walk(child, f"{label} rule {index} {branch}", facts, seen, notes)
 
 
 def _holds(rule: Rule, facts: _Facts) -> bool:
@@ -297,6 +382,128 @@ def _holds(rule: Rule, facts: _Facts) -> bool:
         used = facts.ledger.stored_bytes(facts.client_group, quota.name, facts.at)
         return used < quota.byte_limit
     return False
+
+
+def _note(rule: Rule, holds: bool, facts: _Facts, notes: _Notes) -> None:
+    """Remember when this condition's current answer stops being true.
+
+    A window contributes whichever way it fell. A task count contributes
+    only when it held, because a shortfall does not become a pass on a
+    clock. A time balance contributes only when time was still left. A
+    false time check stays false until the day resets, and that reset is
+    not a cut. Volume is a ceiling, not a time.
+    """
+    if rule.condition == "time_window":
+        boundary = _window_change(facts.policy, rule.windows, facts.at, holds)
+        if boundary is not None:
+            notes.note(boundary + timedelta(seconds=facts.policy.time_grace))
+        return
+    if rule.condition == "tasks_required" and holds:
+        midnight = datetime.combine(
+            facts.at.date() + timedelta(days=1),
+            time.min,
+            tzinfo=facts.at.tzinfo,
+        )
+        notes.note(midnight + timedelta(seconds=facts.policy.time_grace))
+        return
+    if not holds:
+        return
+    quota = facts.policy.quota(rule.quota or "")
+    if quota is None:
+        return
+    if rule.condition == "time_remaining":
+        used = facts.ledger.ended_seconds(facts.client_group, quota.name, facts.at)
+        need = quota.time_limit + quota.time_grace - used
+        notes.note(_ended_deadline(facts.at, facts.policy.bucket_length, need))
+        return
+    if rule.condition == "volume_remaining":
+        notes.ceiling(quota.name, quota.byte_limit + quota.volume_grace)
+
+
+def _window_change(policy: Policy, names: tuple[str, ...], at: datetime, holds: bool) -> datetime | None:
+    """Return the next moment this window condition flips, before grace.
+
+    A true condition stays true until every period that covers ``at`` has
+    ended. A false one becomes true at the next period start. A window
+    that never opens has no such moment.
+    """
+    if holds:
+        ends: list[datetime] = []
+        for name in names:
+            window = policy.time_window(name)
+            if window is None:
+                continue
+            for period in window.periods:
+                end = _coverage_end(period, at)
+                if end is not None:
+                    ends.append(end)
+        if not ends:
+            return at
+        return max(ends)
+    starts: list[datetime] = []
+    for name in names:
+        window = policy.time_window(name)
+        if window is None:
+            continue
+        for period in window.periods:
+            start = _next_start(period, at)
+            if start is not None:
+                starts.append(start)
+    if not starts:
+        return None
+    return min(starts)
+
+
+def _coverage_end(period: Period, at: datetime) -> datetime | None:
+    """Return the end of the span that contains at, if there is one."""
+    zone = at.tzinfo
+    found: datetime | None = None
+    for back in range(period.extra_days + 3):
+        day = at.date() - timedelta(days=back)
+        if period.weekdays is not None and day.weekday() not in period.weekdays:
+            continue
+        start = datetime.combine(day, period.start, tzinfo=zone)
+        end = _base_end(start, period.end) + timedelta(hours=24 * period.extra_days)
+        if start <= at < end and (found is None or end > found):
+            found = end
+    return found
+
+
+def _next_start(period: Period, at: datetime) -> datetime | None:
+    """Return the next start of this period strictly after at, within a week."""
+    zone = at.tzinfo
+    found: datetime | None = None
+    for ahead in range(8):
+        day = at.date() + timedelta(days=ahead)
+        if period.weekdays is not None and day.weekday() not in period.weekdays:
+            continue
+        start = datetime.combine(day, period.start, tzinfo=zone)
+        if start <= at:
+            continue
+        if found is None or start < found:
+            found = start
+    return found
+
+
+def _ended_deadline(at: datetime, bucket_length: int, need: int) -> datetime:
+    """Return when ended time will have grown by need seconds.
+
+    The open bucket accrues its whole length at its end. Later buckets
+    accrue the configured length. That is the soonest a stream that keeps
+    every bucket busy can exhaust the grace. A quiet gap makes the real
+    moment later, and the next look moves the deadline forward.
+    """
+    if need <= 0:
+        return at
+    start, length = place(at, ({"length": bucket_length},))
+    if at.tzinfo is not None and start.tzinfo is None:
+        start = start.replace(tzinfo=at.tzinfo)
+    moment = start + timedelta(seconds=length)
+    accrued = length
+    while accrued < need:
+        moment += timedelta(seconds=bucket_length)
+        accrued += bucket_length
+    return moment
 
 
 def _window_contains(policy: Policy, name: str, at: datetime) -> bool:

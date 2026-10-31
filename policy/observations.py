@@ -12,6 +12,9 @@ accepts it. That path is ``policy.usage``.
 
 None of these are turned into a refusal. The proxy has already forwarded the
 response, and a failure of this call must not become a 403, a 302, or a cut.
+A report cuts the transfer only when that flow's recorded allow has reached
+a clock deadline or a volume ceiling, and the access rules no longer allow
+it. Any other answer leaves the transfer running.
 
 Run with: python -m policy.observations
 """
@@ -30,7 +33,10 @@ from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.store import PolicyStore
-from policy.usage import UsageStore, observe
+from policy.usage import UsageStore, cut_required, file_report
+
+# The only instruction the proxy treats as a cut. An empty body is not one.
+CUT_BODY = b'{"action":"cut"}'
 
 LOG_PATH = Path(os.environ.get("OBSERVATION_LOG", "/tmp/observations.jsonl"))
 PORT = int(os.environ.get("OBSERVATION_PORT", "8091"))
@@ -87,14 +93,18 @@ def status_for(
     *,
     policy: Policy | None = None,
     usage: UsageStore | None = None,
-) -> int:
-    """Return 204 after recording the body, or ignoring a report that matches nothing.
+) -> tuple[int, bytes]:
+    """Return the status and body for one observation.
 
     ``usage`` selects the hierarchical ledger. With a policy, the report is
-    filed by ``observe``. With a ledger and no policy, nothing is filed and
-    the answer is still success. The TOML ledger is used when ``usage`` is
-    omitted. The body of the answer is empty. It is not an instruction to
-    cut the transfer.
+    filed by ``file_report``. The answer is ``{"action":"cut"}`` when the
+    flow named on the report has a recorded allow whose deadline or volume
+    ceiling has been reached, and the access rules no longer allow it.
+    Otherwise the answer is 204 with an empty body, including a report that
+    names no flow, a flow that was not allowed here, a report that matches
+    nothing, and a ledger with no policy loaded. The TOML ledger is used
+    when ``usage`` is omitted, and that answer is empty too. An empty body
+    is not an instruction to cut the transfer.
     """
     try:
         document = json.loads(body)
@@ -102,10 +112,13 @@ def status_for(
         raise ValueError("an observation is a JSON object") from exc
     if usage is not None:
         if policy is not None:
-            observe(policy, usage, _clock_for(policy), document)
-        return 204
+            flow_id = _flow_id(document)
+            filing = file_report(policy, usage, _clock_for(policy), document)
+            if filing is not None and cut_required(policy, usage, filing, flow_id):
+                return 200, CUT_BODY
+        return 204, b""
     record(store, _clock(store), document)
-    return 204
+    return 204, b""
 
 
 def listen(
@@ -141,21 +154,28 @@ def listen(
                 nbytes = recorded.get("bytes", "?")
                 print(f"observation {nbytes} {url}", flush=True)
                 if path != "/v1/observations":
-                    code = 404
+                    code, payload = 404, b"not found"
                 else:
                     try:
-                        code = status_for(store, raw, policy=policy, usage=usage)
+                        code, payload = status_for(store, raw, policy=policy, usage=usage)
                     except ValueError as exc:
                         print(f"observation rejected: {exc}", flush=True)
-                        code = 400
+                        code, payload = 400, b""
                     except Exception as exc:
                         print(f"observation failed: {exc}", flush=True)
-                        code = 500
-            self._send(code, b"")
+                        code, payload = 500, b""
+                    else:
+                        if payload == CUT_BODY:
+                            print(f"observation cut {url}", flush=True)
+            self._send(code, payload)
 
         def _send(self, status: int, body: bytes) -> None:
+            if body == CUT_BODY:
+                content_type = "application/json"
+            else:
+                content_type = "text/plain; charset=utf-8"
             self.send_response(status)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -210,6 +230,16 @@ def _clock(store: PolicyStore) -> HouseholdClock:
         return HouseholdClock(named_zone(name))
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
     return HouseholdClock(machine_zone(localtime=localtime))
+
+
+def _flow_id(document: object) -> str | None:
+    """Return the flow id, or None when the report does not name one."""
+    if not isinstance(document, dict) or "flow_id" not in document or document["flow_id"] is None:
+        return None
+    flow_id = document["flow_id"]
+    if not isinstance(flow_id, str) or not flow_id:
+        raise ValueError("flow_id must be a string")
+    return flow_id
 
 
 def _document(raw: bytes) -> dict:

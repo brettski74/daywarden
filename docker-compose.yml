@@ -10,7 +10,11 @@
 # The observations service writes POST /v1/observations into the usage ledger
 # in the policy-data volume. A YAML policy files each report under the
 # classified client group and site group, and under each quota that accepts
-# it. The proxy still forwards if that service is down.
+# it. The proxy still forwards if that service is down. When a report shows
+# that this flow's recorded allow has reached a clock deadline or a volume
+# ceiling, and the access rules no longer allow it, the service answers
+# with a cut and the proxy stops that transfer. Any other answer leaves it
+# running.
 # REPORT_PORT publishes the decisions service so a parent can open /usage.
 # PARENT_PASSWORD keeps that page closed until it is set. The decision API on
 # the same port does not show the report and does not edit policy.

@@ -161,15 +161,25 @@ These do not break the finished accounting behaviour. The change is what an obse
 
 ### Grace
 
-Each quota has a time grace and a volume grace. A new transfer is judged against the limit. An in-progress transfer may continue while the balance stays under the limit plus the matching grace. Once the balance reaches the limit plus the grace, that transfer is cut.
+Each quota has a time grace and a volume grace. A new transfer is judged against the limit. Grace is not part of `time_remaining` or `volume_remaining`.
 
 Built-in defaults are five minutes and `1M`. `1M` is 1,048,576 bytes. A household that wants different defaults sets `time_grace` and `volume_grace` once in the configuration. A quota may set either grace itself. The quota's value wins. An explicit zero is allowed and means the in-progress cut sits on the limit. A negative grace is a load error.
 
-Time grace is ended-bucket time, because that is what the time balance is. The open bucket is still excluded until it ends, so a stream that started inside the limit can run to the end of the current bucket before the time balance moves. Volume grace moves on every observation, because bytes are stored as they arrive. A large download hits a `1M` grace quickly. A long video with little new data hits the time grace first. The two graces are separate on purpose.
+An allow records the flow. The record keeps the client group, the site group, and the URL from that approval, plus the earliest time a clock assumption on the walk runs out, plus a volume ceiling for each `volume_remaining` check whose true branch was taken. The decision document stays allow, deny, or redirect. The proxy sends the flow id. It does not learn the quotas or the windows.
 
-The cut is not enforceable on the path that exists today. The access rules run when the request starts. They do not run again in the middle of the response. The addon posts observations while bytes move, about once a minute and again when the flow ends, and it discards the observation response. A failed observation never changes a decision already taken. That stays true for new requests: the decision path fails closed, and metering fails open.
+These clock assumptions are the ones the walk actually evaluated:
 
-Cutting a live flow is a later story, written once this design is agreed. The observation response is the carrier. The service answers with an explicit instruction to cut when the balance has reached the limit plus the grace. A timeout, a connection error, an empty body, or any response that is not that instruction leaves the transfer running. Failure is not a cut. Until that story is built, the grace values are part of the configuration and the ledger can show a balance past the grace, but an in-progress transfer is not stopped. New transfers are still refused at the limit, without waiting for the grace.
+- A `time_window`, whether it was true or false. A true window lasts until the period covering the request ends. A false window lasts until its next start. The household `time_grace` is added to that moment. The earlier of several windows is the one that is kept.
+- A `tasks_required` check that was true. It lasts until the next local midnight, plus the household `time_grace`. A check that was false does not, because the count only goes up until the day resets.
+- A `time_remaining` check that was true. It lasts until the bucket end at which ended time reaches that quota's limit plus that quota's own `time_grace`. The open bucket counts its full length at its end. That is the soonest a busy stream can exhaust the grace. A quiet gap makes the real moment later, and the next look moves the time forward. A check that was false does not schedule a quota deadline.
+
+The stored time is the earliest of those. A `volume_remaining` check that was true stores the quota and the byte balance at its limit plus its volume grace. Bytes are not turned into a time, because they depend on how fast the transfer runs. The ceiling is the client group's balance, shared with its other transfers. A check whose true branch was not taken is not recorded. A quota the transfer accrues to, and that the access path did not require, does not cut it. A limit of zero never makes `time_remaining` or `volume_remaining` true, so that side is not a deadline and not a ceiling.
+
+The access rules run when the request starts. They run again only when an observation finds the clock at the stored time, or a stored ceiling already reached. The re-walk uses the client group and the site group from the approval, and the policy loaded at that moment. The URL stays on the record. Allow replaces the time and the ceilings, and the transfer continues. Deny or redirect cuts. A redirect cannot be applied to a body that is already streaming, so it is a cut. A missing record is not a cut: a bypass, a report with no flow id, and the TOML ledger all leave the transfer running.
+
+The addon posts observations while bytes move, about once a minute and again when the flow ends. The observation response carries the cut. The service answers `{"action":"cut"}` on HTTP 200. The addon stops that transfer. The report sent as the flow ends can still say cut, and the addon does not tear down a transfer that has already finished. A timeout, a connection error, an empty body, or any response that is not that instruction leaves the transfer running. Failure is not a cut. A failed observation never changes a decision already taken. The decision path fails closed, and metering fails open.
+
+A policy edit does not disturb a transfer until that stored time or a volume ceiling is reached. A change to who is in a client group, or which hosts are in a site group, is not applied to the transfer even then. Forcing every live transfer to classify and walk again on its next observation is left for later. A new request is still refused at the limit, without waiting for the grace, when a rule checks that side. During the grace, a new request already follows the flipped rule.
 
 ## Rule sets
 
@@ -444,7 +454,8 @@ The current report is one client and one site group. This view is wider. The rep
 
 # Later, and not required for the rule engine
 
-- **Cutting a live transfer** once the balance passes quota plus grace. The thresholds are specified above. The story for it is written after this design is agreed. The addon acts on an explicit cut in the observation response. Any failure to get that response leaves the transfer alone.
+- **Cutting a live transfer** is [S008.6](../stories/S008.6-cut-transfer.md). The thresholds are above. The addon stops the flow when the observation response is `{"action":"cut"}`. Any failure to get that response leaves the transfer alone. A household day that starts at a clock other than midnight is [S009](../stories/S009-household-day-boundary.md), and it is not part of the cut. This is not required for the rule engine.
+- **Applying a policy edit to a transfer already in flight.** The cut re-walks when a recorded deadline or ceiling is reached, and it keeps the groups from the approval. A flag that makes every live transfer walk again on its next observation, including a fresh classification, is not built.
 - **A shared quota pool** across client groups. Balances stay per client group.
 - **Any scoring other than one point per completed task.**
 - **A proxy bypass list** so some hosts still work when the policy service is down. That list would live on the proxy, not in this policy. It is useful, and it is not part of this design. Sending every request to the policy service is acceptable.
