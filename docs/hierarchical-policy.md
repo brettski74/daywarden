@@ -191,6 +191,8 @@ The same type may appear on more than one task. `parts-of-speech-1` and `parts-o
 
 `available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`.
 
+The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group. That pass counts toward `tasks_required`. The child has no request that records one.
+
 ## Rule sets
 
 A rule set has a name, unique in the rule-set namespace, and an ordered list of rules. `entry` names the rule set where access decisions start. The name is required. If it is missing, or it does not name a rule set, the load fails.
@@ -237,7 +239,7 @@ If `allow_school` allows, the request is allowed. If it continues, `younger_even
 
 An inline list has no name of its own. Logs identify it by the path of the rule that contains it. A named set is how a list is defined once and used in more than one place. A cycle in `evaluate` is a load error.
 
-`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. The addon sees only `allow`, `deny`, or `redirect`.
+`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. When a revision task is eligible for the classified client group, that URL is the page for the chosen task on the task site. The host is the host of the household `revision_task` value. When nothing is eligible, the household URL is left as it is, and that page says so instead of redirecting again. A request for a task the child is not meant to open is sent to one he is. The addon sees only `allow`, `deny`, or `redirect`.
 
 ### Conditions
 

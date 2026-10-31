@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 from policy.accounts import Accounts
 from policy.report import PageResponse, _closed_page, _document, _e, _response, _sign_in_page, open_parent
+from policy.tasks import PARENT_CHECK, PASS, AttemptStore, Task
 
 QUIZ_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -59,10 +60,13 @@ def respond_parent_check(
     cookie: str | None,
     form: Mapping[str, str],
     now: datetime,
+    tasks: tuple[Task, ...] = (),
 ) -> PageResponse:
     """Record a parent_check pass when the session is valid.
 
     A missing or expired session returns the sign-in form and writes nothing.
+    The pass is an attempt row, so it counts toward the client group's
+    revision total for the household day. The child has no page that calls this.
     """
     if accounts.count() == 0:
         return _response(403, _closed_page("Attempts"))
@@ -73,8 +77,24 @@ def respond_parent_check(
         )
     client = form.get("client", "")
     if isinstance(client, str) and client.strip():
-        accounts.record_parent_check(client.strip(), now)
+        group = client.strip()
+        AttemptStore(connection=accounts.connection).record(
+            group,
+            _parent_task(tasks, group),
+            PASS,
+            now,
+            detail={"recorded_by": "parent"},
+        )
+        accounts.record_parent_check(group, now)
     return _response(200, _attempts_body(accounts))
+
+
+def _parent_task(tasks: tuple[Task, ...], client_group: str) -> str:
+    """Return a parent_check task assigned to this group, or the type name."""
+    for task in tasks:
+        if task.type == PARENT_CHECK and client_group in task.groups:
+            return task.name
+    return PARENT_CHECK
 
 
 def https_only_page() -> str:
