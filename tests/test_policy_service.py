@@ -1,7 +1,7 @@
 """S001.1 through S001.5, and the S002.2 report route: the policy service stores
 clients, the timezone, site groups, rules, today's revision count, and today's
 usage, keeps them across a restart, and leaves the usage report closed until
-a parent password is set."""
+a parent account is added."""
 
 import json
 import os
@@ -463,12 +463,24 @@ def test_a_malformed_request_is_refused(stack):
 
 GET_USAGE = """
 import json, urllib.error, urllib.request
-request = urllib.request.Request("http://127.0.0.1:8090/usage")
+request = urllib.request.Request(
+    "http://127.0.0.1:8090/usage",
+    headers={"X-Forwarded-Proto": "https"},
+)
 try:
     with urllib.request.urlopen(request, timeout=5) as response:
-        print(json.dumps({"status": response.status, "body": response.read().decode()}))
+        answer = response
+        status = response.status
+        body = response.read().decode()
 except urllib.error.HTTPError as error:
-    print(json.dumps({"status": error.code, "body": error.read().decode()}))
+    answer = error
+    status = error.code
+    body = error.read().decode()
+print(json.dumps({
+    "status": status,
+    "body": body,
+    "set_cookie": answer.headers.get("Set-Cookie"),
+}))
 """
 
 
@@ -476,9 +488,11 @@ def test_the_usage_report_is_closed_without_a_parent_password(stack):
     completed = stack.run(["exec", "-T", "decisions", "python", "-c", GET_USAGE], timeout=30)
     answer = json.loads(completed.stdout)
     assert answer["status"] == 403
-    assert "This page is closed until a parent password is set." in answer["body"]
+    assert "Open this page over HTTPS." in answer["body"]
     assert "Younger child" not in answer["body"]
-    assert "usage report is closed until PARENT_PASSWORD is set" in stack.logs()
+    assert "00:30" not in answer["body"]
+    assert answer["set_cookie"] is None
+    assert "usage report is closed until a parent account is added" in stack.logs()
 
 
 def test_clients_timezone_groups_and_rules_survive_a_new_container_without_the_file(stack):

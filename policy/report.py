@@ -12,8 +12,8 @@ A quota shows one client group's ended time against the time limit and the
 stored bytes against the byte limit, including a limit of zero. With no
 client group, it lists every client group that has a balance on it.
 
-The page is closed unless the temporary parent gate has a password. S007.1
-replaces that gate.
+The page is closed until a parent account exists. A visitor without a
+valid session gets a username and password form and no usage.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlencode
 
+from policy.accounts import Accounts
 from policy.clients import Client
 from policy.config import BYTE_UNITS
-from policy.gate import ParentGate
 from policy.groups import SiteGroup
 from policy.hierarchy import Policy
 from policy.store import PolicyStore
@@ -132,9 +132,45 @@ def parse_form(body: bytes) -> dict[str, str]:
     return {key: values[-1] for key, values in parsed.items() if values}
 
 
+def open_parent(
+    accounts: Accounts,
+    *,
+    method: str,
+    query: Mapping[str, str],
+    cookie: str | None,
+    form: Mapping[str, str],
+    now: datetime,
+    keys: Sequence[str],
+    title: str,
+    home: str,
+) -> PageResponse | None:
+    """Return the closed page or the sign-in form, or None when the parent is signed in.
+
+    A POST is a sign-in. The password is read from the form body. A password
+    in the query string is ignored. None means the caller may render the page.
+    """
+    if accounts.count() == 0:
+        return _response(403, _closed_page(title))
+    if method == "POST":
+        key = accounts.login(form.get("username", ""), form.get("password", ""), now)
+        if key is None:
+            return _response(401, _sign_in_page(query, rejected=True, keys=keys, title=title, home=home))
+        return _response(
+            303,
+            "",
+            (
+                ("location", _return_to(query, keys, home)),
+                ("set-cookie", accounts.cookie_header(key)),
+            ),
+        )
+    if accounts.accept(cookie, now) is None:
+        return _response(200, _sign_in_page(query, rejected=False, keys=keys, title=title, home=home))
+    return None
+
+
 def respond(
     store: PolicyStore,
-    gate: ParentGate,
+    accounts: Accounts,
     *,
     method: str,
     query: Mapping[str, str],
@@ -142,23 +178,24 @@ def respond(
     form: Mapping[str, str],
     now: datetime,
 ) -> PageResponse:
-    """Return the usage page, the password form, or a closed page.
+    """Return the usage page, the sign-in form, or a closed page.
 
-    now is household-local. The report is included only after the gate accepts
-    the session cookie. A password in the query string does not open it.
+    now is household-local. The report is included only for a valid session.
+    A password in the query string does not open it.
     """
-    if not gate.configured:
-        return _response(403, _closed_page())
-    if method == "POST":
-        if gate.accepts_password(form.get("password", "")):
-            return _response(
-                303,
-                "",
-                (("location", _return_to(query)), ("set-cookie", gate.cookie_header())),
-            )
-        return _response(401, _password_page(query, rejected=True))
-    if not gate.accepts_cookie(cookie):
-        return _response(200, _password_page(query, rejected=False))
+    denied = open_parent(
+        accounts,
+        method=method,
+        query=query,
+        cookie=cookie,
+        form=form,
+        now=now,
+        keys=("client", "group"),
+        title="Usage",
+        home="/usage",
+    )
+    if denied is not None:
+        return denied
     return _response(200, _signed_in(store, query, now))
 
 
@@ -341,30 +378,36 @@ def ordered_groups(groups: Sequence[SiteGroup]) -> tuple[SiteGroup, ...]:
     return tuple([*ordinary, *default])
 
 
-def _password_page(
+def _sign_in_page(
     query: Mapping[str, str],
     *,
     rejected: bool,
     keys: Sequence[str] = ("client", "group"),
+    title: str = "Usage",
+    home: str = "/usage",
 ) -> str:
-    notice = "<p>That password is not right.</p>\n" if rejected else ""
-    action = _e(_return_to(query, keys))
+    notice = "<p>That username or password is not right.</p>\n" if rejected else ""
+    action = _e(_return_to(query, keys, home))
     return _document(
-        "<h1>Usage</h1>\n"
+        f"<h1>{_e(title)}</h1>\n"
         f"{notice}"
-        "<p>Enter the parent password.</p>\n"
+        "<p>Enter your username and password.</p>\n"
         f'<form method="post" action="{action}">\n'
+        '<label for="username">Username</label>\n'
+        '<input id="username" name="username" autocomplete="username" autofocus>\n'
         '<label for="password">Password</label>\n'
-        '<input id="password" name="password" type="password" autocomplete="current-password" autofocus>\n'
-        '<button type="submit">Open</button>\n'
-        "</form>"
+        '<input id="password" name="password" type="password" autocomplete="current-password">\n'
+        '<button type="submit">Sign in</button>\n'
+        "</form>",
+        title,
     )
 
 
-def _closed_page() -> str:
+def _closed_page(title: str = "Usage") -> str:
     return _document(
-        "<h1>Usage</h1>\n"
-        "<p>This page is closed until a parent password is set.</p>"
+        f"<h1>{_e(title)}</h1>\n"
+        "<p>This page is closed until a parent account is added.</p>",
+        title,
     )
 
 
@@ -374,20 +417,24 @@ def _timezone_line(timezone: str | None) -> str:
     return "Times are the timezone of this machine."
 
 
-def _return_to(query: Mapping[str, str], keys: Sequence[str] = ("client", "group")) -> str:
+def _return_to(
+    query: Mapping[str, str],
+    keys: Sequence[str] = ("client", "group"),
+    home: str = "/usage",
+) -> str:
     kept = [(key, query[key]) for key in keys if query.get(key)]
     if not kept:
-        return "/usage"
-    return "/usage?" + urlencode(kept)
+        return home
+    return home + "?" + urlencode(kept)
 
 
-def _document(body: str) -> str:
+def _document(body: str, title: str = "Usage") -> str:
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
-        "<title>Usage</title>\n"
+        f"<title>{_e(title)}</title>\n"
         "<style>\n"
         "body { font: 16px sans-serif; margin: 2rem auto; max-width: 42rem; line-height: 1.45; }\n"
         "h1 { font-size: 1.4rem; }\n"
@@ -439,7 +486,7 @@ _HIERARCHY_KEYS = ("view", "client", "site", "quota")
 def respond_hierarchy(
     policy: Policy | None,
     usage: UsageStore,
-    gate: ParentGate,
+    accounts: Accounts,
     *,
     method: str,
     query: Mapping[str, str],
@@ -447,26 +494,24 @@ def respond_hierarchy(
     form: Mapping[str, str],
     now: datetime,
 ) -> PageResponse:
-    """Return the group and quota report, the password form, or a closed page.
+    """Return the group and quota report, the sign-in form, or a closed page.
 
-    now is household-local. The report is included only after the gate accepts
-    the session cookie. A password in the query string does not open it.
+    now is household-local. The report is included only for a valid session.
+    A password in the query string does not open it.
     """
-    if not gate.configured:
-        return _response(403, _closed_page())
-    if method == "POST":
-        if gate.accepts_password(form.get("password", "")):
-            return _response(
-                303,
-                "",
-                (
-                    ("location", _return_to(query, _HIERARCHY_KEYS)),
-                    ("set-cookie", gate.cookie_header()),
-                ),
-            )
-        return _response(401, _password_page(query, rejected=True, keys=_HIERARCHY_KEYS))
-    if not gate.accepts_cookie(cookie):
-        return _response(200, _password_page(query, rejected=False, keys=_HIERARCHY_KEYS))
+    denied = open_parent(
+        accounts,
+        method=method,
+        query=query,
+        cookie=cookie,
+        form=form,
+        now=now,
+        keys=_HIERARCHY_KEYS,
+        title="Usage",
+        home="/usage",
+    )
+    if denied is not None:
+        return denied
     return _response(200, _hierarchy_signed_in(policy, usage, query, now))
 
 

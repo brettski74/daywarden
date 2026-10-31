@@ -2,7 +2,7 @@ Ticket: S006
 Title: Parts of speech quiz
 Status: Draft
 Story Points: 13
-Last Updated: 2026-10-18 15:05:00
+Last Updated: 2026-10-31 12:31:02
 ---
 
 # User Voice
@@ -31,3 +31,5 @@ As a parent, I want him to sort words in a sentence into their parts of speech, 
 # Notes
 
 Depends on S003. The scoring rules in the problem statement are easy to read two ways. S006.1 states the reading this project will use.
+
+A further set of sentences is a new task of this type, with its own name, its own `available_from`, `due_date`, `max_skips`, and `max_passes`, and its own attempt history. Two such tasks do not share passes or skips. `max_passes` of 3 means that client group is not offered this quiz again after the third pass. The passes before that are the reinforcement visits, spaced by the pass cooldown. Changing the sentences on a task a client group has already passed does not make that group due again. S007.3 warns on that save when the task has a due date.

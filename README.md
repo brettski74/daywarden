@@ -77,11 +77,17 @@ An allow remembers that flow. A later report cuts it only when a clock assumptio
 
 ## Usage report
 
-A parent opens `http://<this machine>:8090/usage` in a browser. The port is `REPORT_PORT` in `.env`.
+A parent opens `https://<this machine>:8090/usage` in a browser. The port is `REPORT_PORT` in `.env`. The page is HTTPS. The certificate is signed by the household CA below, for the names in `PARENT_NAMES`, and it lasts 30 days. It is replaced on the next start when 3 days or less remain, or when a configured name is missing from it. A browser that does not trust the CA gets a warning. Plain HTTP does not return the page.
 
 Choose a site group, a client group, or a quota. `default` is in both group lists. A site group also needs a client group, and shows the last 14 household-local days for that pair: the clock times each bucket covered, the time that bucket represents, and the bytes. A bucket that has not ended is listed and left out of the counted time. A day with no traffic says no usage. School traffic, which the entertainment quota does not accept, is listed the same way. A client-group view shows those buckets for every site group. A quota view is today's balance for one client group: ended time against the time limit, and stored bytes against the byte limit. A limit of zero is shown as zero. Leave the client group on "All client groups" and the page lists each client group that has a balance, including `default`. The clock is the household timezone.
 
-Export `PARENT_PASSWORD` before `make up`. A later change needs `docker compose up -d decisions`, so the container is created again. The password is not written into `config/policy.yaml` and it is not stored in the database. With no password, the page stays closed and shows no usage. This gate is temporary, and it is the reason the report is still plain HTTP. S007.1 replaces it with a local username and Argon2id password hash, serves the parent pages over HTTPS with a certificate from the CA below, and ends a session after 15 minutes idle or 180 minutes from sign-in. That certificate lasts 30 days and is replaced when fewer than 3 days remain. Leave the password set while that port is reachable on the household network.
+Add a parent account after the stack is up. The password is read once. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`.
+
+```sh
+docker compose exec decisions python -m policy.accounts ada
+```
+
+Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the page stays closed and shows no usage. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup. The attempt review at `/attempts` uses the same sign-in.
 
 ## Certificate authority
 
@@ -99,13 +105,16 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 ## Configuration
 
-`.env` sets the listen port, the usage-report port, and the CA directory:
+`.env` sets the listen port, the usage-report port, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
 
 | Variable | Meaning |
 | --- | --- |
 | `PROXY_PORT` | Port on this machine that clients use |
-| `REPORT_PORT` | Port on this machine for the usage report |
-| `CA_VOLUME_PATH` | Directory that holds the CA across container restarts |
+| `REPORT_PORT` | Port on this machine for the parent pages, over HTTPS |
+| `PARENT_NAMES` | DNS names and IP addresses on the parent certificate |
+| `PARENT_IDLE` | Idle limit for a parent session. Defaults to `15m` |
+| `PARENT_LIFETIME` | Lifetime of a parent session from sign-in. Defaults to `180m` |
+| `CA_VOLUME_PATH` | Directory that holds the CA, and the parent page key, across container restarts |
 
 If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it before the first start, so the certificate is readable by you.
 
@@ -120,4 +129,4 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 python -m pytest
 ```
 
-Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. Tests named `test_policy_*` that do not start Compose need only the standard library.
+Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. The policy unit tests import the service code. Install `policy/requirements.txt` first. Parent sign-in hashes passwords with Argon2id.

@@ -16,7 +16,7 @@ from policy import config
 from policy.clients import ClientDirectory
 from policy.clock import HouseholdClock
 from policy.decisions import DecisionRequest, answer_from_store, context_for
-from policy.gate import ParentGate
+from policy.accounts import Accounts
 from policy.groups import SiteGroups
 from policy.observations import record
 from policy.report import format_byte_limit, respond
@@ -356,20 +356,21 @@ def _token(page) -> str:
 
 
 def _signed(store: PolicyStore, now: datetime, client: str, group: str) -> str:
-    gate = ParentGate(PASSWORD)
+    accounts = Accounts(store.connection)
+    accounts.set_password("parent", PASSWORD)
     opened = respond(
         store,
-        gate,
+        accounts,
         method="POST",
         query={"client": client, "group": group},
         cookie=None,
-        form={"password": PASSWORD},
+        form={"username": "parent", "password": PASSWORD},
         now=now,
     )
     assert opened.status == 303
     page = respond(
         store,
-        gate,
+        accounts,
         method="GET",
         query={"client": client, "group": group},
         cookie=_token(opened),

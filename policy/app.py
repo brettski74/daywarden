@@ -1,11 +1,12 @@
-"""The policy service. Run with: uvicorn --factory policy.app:create_app
+"""The policy service. The container runs: python -m policy.serve
 
 On start, POLICY_FILE is loaded. The household file is YAML
 (/etc/smartproxy/policy.yaml). A YAML policy is decided by nested rule sets,
 and GET /usage slices today's usage by site group, client group, or quota.
 A path ending in .toml is still the previous engine, so older tests can
 point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
-not that path. The report stays closed until PARENT_PASSWORD is set.
+not that path. Parent pages stay closed until a parent account is added,
+and they are served only over HTTPS.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from policy import config
+from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
 from policy.clients import ClientDirectory
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.decisions import (
@@ -28,10 +30,10 @@ from policy.decisions import (
     parse_request,
 )
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, judge, log_fields
-from policy.gate import COOKIE_NAME, ParentGate, cookie_value
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
+from policy.review import QUIZ_PAGE, https_only_page, respond_attempts, respond_parent_check
 from policy.store import PolicyStore
 from policy.usage import UsageStore
 
@@ -45,7 +47,9 @@ def create_app() -> FastAPI:
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
 
     database.parent.mkdir(parents=True, exist_ok=True)
+    idle, lifetime = session_limits(os.environ)
     store = PolicyStore(database)
+    accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
     # YAML is the household policy. A .toml path is the previous engine.
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
@@ -58,11 +62,6 @@ def create_app() -> FastAPI:
             usage_store.install_length(hierarchy_policy.bucket_length, clock.local())
         ledger = usage_store
         _announce_hierarchy(hierarchy_policy, clock, source)
-        gate = ParentGate(os.environ.get("PARENT_PASSWORD"))
-        if gate.configured:
-            print("usage report is /usage", flush=True)
-        else:
-            print("usage report is closed until PARENT_PASSWORD is set", flush=True)
         directory = ClientDirectory(())
         site_groups = SiteGroups(())
     elif policy_file.is_file():
@@ -71,13 +70,16 @@ def create_app() -> FastAPI:
         _zone, source = _household_zone(loaded.timezone, localtime)
         clock = HouseholdClock(_zone)
         config.apply(loaded, store, loaded_at=clock.local())
-        directory, site_groups, gate = _announce_stored(store, clock, source)
+        directory, site_groups = _announce_stored(store, clock, source)
     else:
         print(f"{policy_file} not found; using the stored policy", flush=True)
         _zone, source = _household_zone(store.timezone(), localtime)
         clock = HouseholdClock(_zone)
-        directory, site_groups, gate = _announce_stored(store, clock, source)
+        directory, site_groups = _announce_stored(store, clock, source)
+    _announce_parents(accounts)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.idle = accounts.idle
+    app.state.lifetime = accounts.lifetime
 
     @app.get("/health")
     def health() -> PlainTextResponse:
@@ -144,34 +146,37 @@ def create_app() -> FastAPI:
             return PlainTextResponse("missing decision", status_code=500)
         return Response(decision, media_type="application/json")
 
+    @app.get("/quiz")
+    def quiz_page() -> Response:
+        # The revision page does not use the parent session.
+        return Response(QUIZ_PAGE, media_type="text/html; charset=utf-8")
+
     @app.api_route("/usage", methods=["GET", "POST"])
     async def usage_page(request: Request) -> Response:
+        return await _parent_page(request, _usage_page)
+
+    @app.api_route("/attempts", methods=["GET", "POST"])
+    async def attempts_page(request: Request) -> Response:
+        return await _parent_page(request, _attempts_page)
+
+    @app.api_route("/attempts/parent-check", methods=["POST"])
+    async def parent_check_page(request: Request) -> Response:
+        return await _parent_page(request, _parent_check_page)
+
+    async def _parent_page(request: Request, render) -> Response:
         # Stay on the event-loop thread. A sync endpoint would run in a
         # threadpool, and this process's SQLite connection is not shared.
+        # Plain HTTP does not return the page, set the cookie, or act.
+        if request.url.scheme != "https":
+            refused = Response(
+                https_only_page(),
+                status_code=403,
+                media_type="text/html; charset=utf-8",
+            )
+            refused.headers["cache-control"] = "no-store"
+            return refused
         raw = await request.body() if request.method == "POST" else b""
-        if yaml_mode:
-            assert usage_store is not None
-            query = _query(request, ("view", "client", "site", "quota"))
-            page = respond_hierarchy(
-                hierarchy_policy,
-                usage_store,
-                gate,
-                method=request.method,
-                query=query,
-                cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-                form=parse_form(raw),
-                now=clock.local(),
-            )
-        else:
-            page = respond(
-                store,
-                gate,
-                method=request.method,
-                query=_query(request, ("client", "group")),
-                cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-                form=parse_form(raw),
-                now=clock.local(),
-            )
+        page = render(request, raw)
         response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
         for name, value in page.headers:
             if name == "set-cookie":
@@ -179,6 +184,49 @@ def create_app() -> FastAPI:
             else:
                 response.headers[name] = value
         return response
+
+    def _usage_page(request: Request, raw: bytes):
+        cookie = cookie_value(request.headers.get("cookie"), COOKIE_NAME)
+        form = parse_form(raw)
+        if yaml_mode:
+            assert usage_store is not None
+            return respond_hierarchy(
+                hierarchy_policy,
+                usage_store,
+                accounts,
+                method=request.method,
+                query=_query(request, ("view", "client", "site", "quota")),
+                cookie=cookie,
+                form=form,
+                now=clock.local(),
+            )
+        return respond(
+            store,
+            accounts,
+            method=request.method,
+            query=_query(request, ("client", "group")),
+            cookie=cookie,
+            form=form,
+            now=clock.local(),
+        )
+
+    def _attempts_page(request: Request, raw: bytes):
+        return respond_attempts(
+            accounts,
+            method=request.method,
+            query={},
+            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+            form=parse_form(raw),
+            now=clock.local(),
+        )
+
+    def _parent_check_page(request: Request, raw: bytes):
+        return respond_parent_check(
+            accounts,
+            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+            form=parse_form(raw),
+            now=clock.local(),
+        )
 
     return app
 
@@ -192,6 +240,13 @@ def _query(request: Request, keys: tuple[str, ...]) -> dict[str, str]:
     return found
 
 
+def _announce_parents(accounts: Accounts) -> None:
+    if accounts.count():
+        print("usage report is /usage", flush=True)
+    else:
+        print("usage report is closed until a parent account is added", flush=True)
+
+
 def _announce_stored(store: PolicyStore, clock: HouseholdClock, source: str):
     """Print the TOML policy the way the service always has, and return what decisions use."""
     clients = store.clients()
@@ -203,11 +258,6 @@ def _announce_stored(store: PolicyStore, clock: HouseholdClock, source: str):
     if revision_task:
         print(f"revision task placeholder {revision_task}", flush=True)
     print(f"usage buckets are {_span(store.bucket_length())}", flush=True)
-    gate = ParentGate(os.environ.get("PARENT_PASSWORD"))
-    if gate.configured:
-        print("usage report is /usage", flush=True)
-    else:
-        print("usage report is closed until PARENT_PASSWORD is set", flush=True)
     for group in sorted(groups, key=lambda group: (group.default, group.priority)):
         detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
         rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
@@ -220,7 +270,7 @@ def _announce_stored(store: PolicyStore, clock: HouseholdClock, source: str):
         print(f"group {group.name}: {detail}, {rules}, {quota}, {volume}", flush=True)
     if not any(group.default for group in groups):
         print("no default group; sites outside every group are denied", flush=True)
-    return ClientDirectory(clients), SiteGroups(groups), gate
+    return ClientDirectory(clients), SiteGroups(groups)
 
 
 def _start_hierarchy(policy_file: Path, localtime: Path):

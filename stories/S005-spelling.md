@@ -2,7 +2,7 @@ Ticket: S005
 Title: Spelling quiz
 Status: Refined
 Story Points: 21
-Last Updated: 2026-10-18 15:35:00
+Last Updated: 2026-10-31 12:31:02
 ---
 
 # User Voice
@@ -35,3 +35,5 @@ As a parent, I want him to spell this week's words, plus a few older ones, from 
 # Notes
 
 Depends on S003. He is asked every word from this week's pool even after the pass mark for that pool is reached. Wrong this-week words go back on the queue only while the correct count for that pool is still short. S005.4 is not part of the initial build.
+
+A spelling task can carry `available_from`, `due_date`, `max_skips`, and `max_passes` from S003.1. A due date is a fit for "he attempts this week's words at least once." The next week's words are a new spelling task when the previous task should stay passed. There is no failure outcome, so a required spelling task stays required until he passes it or a parent changes the assignment. Give-up and practice follow S003.2.
