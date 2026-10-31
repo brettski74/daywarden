@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from policy.clock import HouseholdClock  # noqa: E402
-from policy.engine import decide  # noqa: E402
+from policy.engine import decide, judge  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
 from policy.observations import listen, status_for  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
@@ -88,13 +88,23 @@ def _clock() -> HouseholdClock:
     return HouseholdClock(SYDNEY)
 
 
-def _report(moment: datetime, *, ip: str = YOUNGER, url: str = YOUTUBE, nbytes: int = 100) -> dict:
-    return {
+def _report(
+    moment: datetime,
+    *,
+    ip: str = YOUNGER,
+    url: str = YOUTUBE,
+    nbytes: int = 100,
+    flow: str | None = None,
+) -> dict:
+    document = {
         "client_ip": ip,
         "url": url,
         "occurred_at": moment.isoformat(),
         "bytes": nbytes,
     }
+    if flow is not None:
+        document["flow_id"] = flow
+    return document
 
 
 def _observe(policy, usage: UsageStore, moment: datetime, **kwargs) -> bool:
@@ -649,7 +659,7 @@ rule_sets:
         assert usage.stored_bytes("younger", "entertainment", _at(15, 4)) == 100
 
 
-def test_the_observation_answer_is_success_and_not_a_cut(tmp_path, monkeypatch):
+def test_a_balance_on_a_zero_grace_is_a_cut_and_a_failure_is_not(tmp_path, monkeypatch):
     policy = _house(
         tmp_path,
         """\
@@ -679,10 +689,14 @@ rule_sets:
         port = server.server_address[1]
         try:
             _wait_until_ready(port)
-            assert _decision(policy, usage, _at(15, 0)) == ALLOW
-            status, body = _post(port, _report(_at(15, 0, 1), nbytes=2000))
-            assert status == 204
-            assert body == b""
+            trace, assumption = judge(
+                policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(15, 0), ledger=usage
+            )
+            assert trace.decision == ALLOW
+            usage.save_transfer("flow-1", trace.client_group, trace.site_group, YOUTUBE, assumption)
+            status, body = _post(port, _report(_at(15, 0, 1), nbytes=2000, flow="flow-1"))
+            assert status == 200
+            assert body == b'{"action":"cut"}'
             assert usage.stored_bytes("younger", "entertainment", _at(15, 4)) == 2000
             assert _decision(policy, usage, _at(15, 4)) == TOO_MUCH
 
@@ -708,7 +722,7 @@ def test_a_missing_yaml_policy_accepts_a_report_and_records_nothing(tmp_path):
     with PolicyStore(":memory:") as store:
         usage = UsageStore(connection=store.connection)
         body = json.dumps(_report(_at(15, 0, 1))).encode()
-        assert status_for(store, body, policy=None, usage=usage) == 204
+        assert status_for(store, body, policy=None, usage=usage) == (204, b"")
         assert usage.quota_clients("entertainment") == []
 
 

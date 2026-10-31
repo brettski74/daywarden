@@ -229,7 +229,8 @@ def test_allow_returns_the_origin_response(stack):
     assert logged["client"] is None
     assert logged["decision"] == {"action": "allow"}
     entry = logged["request"]
-    assert set(entry) == {"client_ip", "method", "url", "occurred_at"}
+    assert set(entry) == {"client_ip", "method", "url", "occurred_at", "flow_id"}
+    assert isinstance(entry["flow_id"], str) and entry["flow_id"]
     ipaddress.ip_address(entry["client_ip"])
     assert entry["method"] == "GET"
     assert entry["url"] == url

@@ -27,7 +27,7 @@ from policy.decisions import (
     log_entry,
     parse_request,
 )
-from policy.engine import NO_RULE_MESSAGE, Ledger, Trace, decide as decide_hierarchy, log_fields
+from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, judge, log_fields
 from policy.gate import COOKIE_NAME, ParentGate, cookie_value
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
@@ -97,7 +97,21 @@ def create_app() -> FastAPI:
                 decision_log.append(log_entry(document, None, None))
                 return PlainTextResponse(str(exc), status_code=400)
             at = clock.local(parsed.occurred_at)
-            trace = _trace_for(hierarchy_policy, ledger, parsed.client_ip, parsed.url, at)
+            trace, assumption = _judge_for(
+                hierarchy_policy, ledger, parsed.client_ip, parsed.url, at
+            )
+            if (
+                usage_store is not None
+                and parsed.flow_id
+                and trace.decision.get("action") == "allow"
+            ):
+                usage_store.save_transfer(
+                    parsed.flow_id,
+                    trace.client_group,
+                    trace.site_group,
+                    parsed.url,
+                    assumption,
+                )
             decision = json.dumps(trace.decision).encode()
             decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
             where = "no rule" if trace.continued else f"{trace.rule_set} rule {trace.rule_index}"
@@ -242,9 +256,9 @@ def _announce_hierarchy(policy: Policy | None, clock: HouseholdClock, source: st
     print("site group default: urls that match no configured group", flush=True)
 
 
-def _trace_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at) -> Trace:
+def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at):
     if policy is None:
-        return Trace(
+        trace = Trace(
             "default",
             "default",
             None,
@@ -252,7 +266,8 @@ def _trace_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, 
             True,
             {"action": "deny", "status": 403, "message": NO_RULE_MESSAGE},
         )
-    return decide_hierarchy(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)
+        return trace, Assumption()
+    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)
 
 
 def _household_zone(timezone: str | None, localtime: Path):

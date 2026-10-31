@@ -14,7 +14,7 @@ revision_task: "http://192.168.1.10:8080/tasks/next"
 
 # How long a new usage bucket is. The default is five minutes. This is not a quota.
 # The length has to divide a 24-hour day (2m, 5m, and 10m do; 7m does not).
-# bucket_length: 5m
+bucket_length: 3m
 
 # One client group per child. addresses are that computer's DHCP reservation,
 # an IP or a DNS name. DNS names are looked up when the service starts, not
@@ -22,7 +22,7 @@ revision_task: "http://192.168.1.10:8080/tasks/next"
 client_groups:
   younger:
     # PLACEHOLDER: replace with this computer's reserved IP or DNS name.
-    addresses: ["192.168.1.40"]
+    addresses: ["192.168.12.29"]
 
 # The older child is not enrolled. To enrol them, add a client group, set
 # their reserved address, and add their computer to the proxy alias on the
@@ -102,12 +102,16 @@ time_windows:
         days: monday-thursday
       # Starting suggestion: wider evening, noon until 21:00.
       - start: "12:00"
-        end: "21:00"
-        days: friday-sunday
+        end: "21:00+1"
+        days: friday
 
 quotas:
   entertainment:
-    time: 2h
+    # Two hours of ended time. A live transfer allowed on time_remaining may
+    # run the five-minute grace past that. bytes is omitted, so volume is
+    # not a ceiling. The evening window is separate: the same grace is added
+    # to the moment that window stops being true.
+    time: 25m
     ruleset: entertainment_meter
 
 rule_sets:
@@ -126,7 +130,7 @@ rule_sets:
 
   younger:
     - condition: site_group
-      group: school
+      groups: [school]
       when_true: { action: allow }
     - condition: site_group
       group: entertainment
@@ -143,18 +147,18 @@ rule_sets:
     - condition: time_window
       window: bedtime
       when_true: { action: deny, message: "It's bedtime." }
-    - condition: time_window
-      window: school_hours
-      when_true: { action: redirect, location: revision_task }
+#    - condition: time_window
+#      window: school_hours
+#      when_true: { action: redirect, location: revision_task }
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: entertainment_evening }
       when_false: { action: deny, message: "YouTube is closed for today." }
 
   entertainment_evening:
-    - condition: tasks_required
-      required: 2
-      when_false: { action: redirect, location: revision_task }
+#    - condition: tasks_required
+#      required: 0
+#      when_false: { action: redirect, location: revision_task }
     - condition: time_remaining
       quota: entertainment
       when_true: { action: allow }
@@ -166,17 +170,17 @@ rule_sets:
     - condition: time_window
       window: bedtime
       when_true: { action: deny, message: "It's bedtime." }
-    - condition: time_window
-      window: school_hours
-      when_true: { action: redirect, location: revision_task }
+#    - condition: time_window
+#      window: school_hours
+#      when_true: { action: redirect, location: revision_task }
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: default_evening }
       when_false: { action: deny, message: "The internet is closed for today." }
 
   default_evening:
-    - condition: tasks_required
-      required: 2
-      when_false: { action: redirect, location: revision_task }
+#    - condition: tasks_required
+#      required: 0
+#      when_false: { action: redirect, location: revision_task }
     - condition: always
       when_true: { action: allow }

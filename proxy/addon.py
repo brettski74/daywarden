@@ -2,10 +2,13 @@
 
 Forwarded flows also report body bytes to the observation service. A failed
 report is logged and ignored. It never changes the decision already taken.
+The only answer that stops a transfer already in progress is the cut
+instruction. An empty body, a timeout, and any other answer leave it running.
 """
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import os
@@ -36,10 +39,12 @@ _UNRECOGNIZED = object()
 
 
 class _Account:
-    def __init__(self, client_ip: str, url: str, interval: float) -> None:
+    def __init__(self, flow: http.HTTPFlow, client_ip: str, url: str, interval: float) -> None:
+        self.flow = flow
         self.client_ip = client_ip
         self.url = url
         self.meter = observe.TrafficMeter(interval, time.monotonic())
+        self.stopped = False
 
 
 def _positive_float(raw: str | None, default: float) -> float:
@@ -64,8 +69,13 @@ class DecisionEnforcer:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def running(self) -> None:
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._watch_open_flows,
@@ -154,6 +164,7 @@ class DecisionEnforcer:
             ctx.log.warn("observation skipped: missing client address")
             return
         account = _Account(
+            flow,
             peer[0],
             flow.request.pretty_url.split("#", 1)[0],
             self.interval,
@@ -173,10 +184,12 @@ class DecisionEnforcer:
     def _watch(self, flow_id: str):
         def watch(data: bytes) -> bytes:
             try:
-                if data:
+                if data and not self._is_stopped(flow_id):
                     self._note(flow_id, len(data))
             except Exception as exc:
                 print(f"observation failed: {exc}", flush=True)
+            if self._is_stopped(flow_id):
+                return b""
             return data
 
         return watch
@@ -184,7 +197,7 @@ class DecisionEnforcer:
     def _note(self, flow_id: str, nbytes: int) -> None:
         with self._lock:
             account = self._accounts.get(flow_id)
-            if account is None:
+            if account is None or account.stopped:
                 return
             count = account.meter.add(nbytes, time.monotonic())
         if count:
@@ -194,9 +207,15 @@ class DecisionEnforcer:
         try:
             with self._lock:
                 account = self._accounts.pop(flow.id, None)
-                count = account.meter.finish(time.monotonic()) if account else 0
+                count = (
+                    account.meter.finish(time.monotonic())
+                    if account and not account.stopped
+                    else 0
+                )
+            # The body has already been delivered. Filing the remainder must
+            # not tear the transfer down on its way out.
             if account and count:
-                self._post(account, count)
+                self._post(account, count, live=False)
         except Exception as exc:
             print(f"observation failed: {exc}", flush=True)
 
@@ -212,13 +231,20 @@ class DecisionEnforcer:
         ready: list[tuple[_Account, int]] = []
         with self._lock:
             for account in self._accounts.values():
+                if account.stopped:
+                    continue
                 count = account.meter.due(now)
                 if count:
                     ready.append((account, count))
         for account, count in ready:
             self._post(account, count)
 
-    def _post(self, account: _Account, nbytes: int) -> None:
+    def _is_stopped(self, flow_id: str) -> bool:
+        with self._lock:
+            account = self._accounts.get(flow_id)
+            return account is not None and account.stopped
+
+    def _post(self, account: _Account, nbytes: int, *, live: bool = True) -> None:
         if nbytes <= 0:
             return
         payload = {
@@ -226,6 +252,7 @@ class DecisionEnforcer:
             "url": account.url,
             "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "bytes": nbytes,
+            "flow_id": account.flow.id,
         }
         request = urllib.request.Request(
             OBSERVATION_URL,
@@ -237,11 +264,63 @@ class DecisionEnforcer:
             with urllib.request.urlopen(
                 request, timeout=self.observation_timeout
             ) as response:
-                response.read()
+                body = response.read()
+                status = response.status
         except Exception as exc:
             print(f"observation failed: {exc}", flush=True)
             return
         print(f"observe {nbytes} {account.url}", flush=True)
+        if live and observe.is_cut_instruction(status, body):
+            self._cut(account)
+
+    def _cut(self, account: _Account) -> None:
+        with self._lock:
+            if account.stopped:
+                return
+            account.stopped = True
+            flow = account.flow
+        self._run_on_loop(lambda flow=flow: self._disconnect(flow))
+
+    def _run_on_loop(self, action) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            action()
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            action()
+        else:
+            loop.call_soon_threadsafe(action)
+
+    def _disconnect(self, flow: http.HTTPFlow) -> None:
+        try:
+            observe.stop_transfer(flow, _live_handler(flow))
+        except Exception as exc:
+            print(f"observation cut failed: {exc}", flush=True)
+            return
+        try:
+            host = flow.request.pretty_host
+        except Exception:
+            host = "?"
+        print(f"cut {host}", flush=True)
+        ctx.log.info(f"cut {host}")
+
+
+def _live_handler(flow: http.HTTPFlow):
+    """Return the proxy connection handler for this flow, if it is still live."""
+    try:
+        addon = ctx.master.addons.get("proxyserver")
+    except Exception:
+        return None
+    if addon is None:
+        return None
+    client = getattr(flow, "client_conn", None)
+    if client is None:
+        return None
+    return addon.connections.get(client.id)
 
 
 def _request_has_body(flow: http.HTTPFlow) -> bool:
@@ -266,6 +345,7 @@ def _ask(flow: http.HTTPFlow):
         "method": flow.request.method,
         "url": flow.request.pretty_url.split("#", 1)[0],
         "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "flow_id": flow.id,
     }
     request = urllib.request.Request(
         DECISION_URL,

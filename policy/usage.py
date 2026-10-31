@@ -12,9 +12,12 @@ local day, and a load that changes it shortens a bucket that is still open
 without resizing a quota or rewriting a bucket that has already ended.
 Yesterday and another client group do not count.
 
-Grace is configuration on the quota. It is not added to either balance, and
-an observation answer is not an instruction to cut the transfer. The balance
-may sit past the limit plus the grace. S008.6 is what acts on that.
+Grace is not added to either access check. A new transfer is still refused
+at the limit. A live transfer is cut only when a clock deadline or a volume
+ceiling recorded for that flow has been reached, and walking the access
+rules again no longer allows it. A quota the report accrues to does not
+cut the flow on its own. A limit of zero is not a budget. Any other answer
+leaves the transfer running.
 
 This is the store S008.4 reads. The older ``usage_buckets`` rows, keyed by an
 enrolled client and a site group, are left where they are.
@@ -25,13 +28,21 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from policy.buckets import place, require_day_length
 from policy.clients import normalize_ip
 from policy.clock import HouseholdClock
-from policy.engine import Ledger, classify_client, classify_site, evaluate
+from policy.engine import (
+    Assumption,
+    Ledger,
+    classify_client,
+    classify_site,
+    evaluate,
+    judge_frozen,
+)
 from policy.hierarchy import Policy
 from policy.store import DEFAULT_BUCKET_SECONDS
 
@@ -334,6 +345,14 @@ class UsageStore(Ledger):
                 ON quota_buckets (client_group, quota, day);
             CREATE INDEX IF NOT EXISTS quota_buckets_by_quota
                 ON quota_buckets (quota, client_group);
+            CREATE TABLE IF NOT EXISTS transfers (
+                flow_id TEXT PRIMARY KEY,
+                client_group TEXT NOT NULL,
+                site_group TEXT NOT NULL,
+                url TEXT NOT NULL,
+                recheck_at TEXT,
+                ceilings TEXT NOT NULL
+            );
             """
         )
 
@@ -382,6 +401,46 @@ class UsageStore(Ledger):
             ),
         )
 
+    def save_transfer(
+        self,
+        flow_id: str,
+        client_group: str,
+        site_group: str,
+        url: str,
+        assumption: Assumption,
+    ) -> None:
+        """Remember the allow for this flow. A later allow replaces it."""
+        moment = None if assumption.recheck_at is None else assumption.recheck_at.isoformat()
+        payload = json.dumps(list(assumption.ceilings), separators=(",", ":"))
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO transfers "
+                "(flow_id, client_group, site_group, url, recheck_at, ceilings) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (flow_id) DO UPDATE SET "
+                "client_group = excluded.client_group, "
+                "site_group = excluded.site_group, "
+                "url = excluded.url, "
+                "recheck_at = excluded.recheck_at, "
+                "ceilings = excluded.ceilings",
+                (flow_id, client_group, site_group, url, moment, payload),
+            )
+
+    def transfer(self, flow_id: str) -> tuple[str, str, str, datetime | None, tuple[tuple[str, int], ...]] | None:
+        """Return the stored allow, or None when this flow was not recorded."""
+        row = self.connection.execute(
+            "SELECT client_group, site_group, url, recheck_at, ceilings "
+            "FROM transfers WHERE flow_id = ?",
+            (flow_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        client_group, site_group, url, raw_time, raw_ceilings = row
+        recheck_at = None if raw_time is None else datetime.fromisoformat(raw_time)
+        parsed = json.loads(raw_ceilings)
+        ceilings = tuple((str(name), int(level)) for name, level in parsed)
+        return client_group, site_group, url, recheck_at, ceilings
+
     def _setting(self, key: str) -> str | None:
         row = self.connection.execute(
             "SELECT value FROM hierarchy_settings WHERE key = ?", (key,)
@@ -407,6 +466,19 @@ class UsageStore(Ledger):
         )
 
 
+@dataclass(frozen=True)
+class Filing:
+    """One stored report, and the quotas it accrued to.
+
+    ``at`` is household-local. ``quotas`` is the names accepted before the
+    bytes were written, in policy order, without duplicates.
+    """
+
+    client_group: str
+    at: datetime
+    quotas: tuple[str, ...]
+
+
 def observe(policy: Policy, usage: UsageStore, clock: HouseholdClock, document: object) -> bool:
     """File one observation. Return False when it carried no new bytes.
 
@@ -414,9 +486,20 @@ def observe(policy: Policy, usage: UsageStore, clock: HouseholdClock, document: 
     for a report with nothing to add, and a failure here does not change an
     access decision already taken.
     """
+    return file_report(policy, usage, clock, document) is not None
+
+
+def file_report(
+    policy: Policy, usage: UsageStore, clock: HouseholdClock, document: object
+) -> Filing | None:
+    """File one observation. Return None when it carried no new bytes.
+
+    A malformed report raises ValueError. The quotas on the result are the
+    ones whose rule sets accepted the report before it was stored.
+    """
     parsed = _parse(document)
     if parsed is None:
-        return False
+        return None
     moment = clock.local(parsed[2])
     usage.ensure_length(policy.bucket_length)
     client_group = classify_client(policy, parsed[0])
@@ -427,7 +510,55 @@ def observe(policy: Policy, usage: UsageStore, clock: HouseholdClock, document: 
         if _accepts(policy, usage, quota.ruleset, client_group, site_group, moment)
     ]
     usage.file_observation(client_group, site_group, moment, parsed[3], accepted)
-    return True
+    return Filing(client_group, moment, tuple(accepted))
+
+
+def cut_required(
+    policy: Policy,
+    usage: UsageStore,
+    filing: Filing,
+    flow_id: str | None,
+) -> bool:
+    """Return whether this report should stop the transfer it belongs to.
+
+    No recorded allow means do not cut. The bytes are still filed. A recorded
+    allow is left alone until the clock reaches its deadline or a recorded
+    volume ceiling is reached. Then the access rules are walked again with
+    the groups from the approval. Allow replaces the deadline and the
+    ceilings. Anything else cuts. A fresh allow whose new deadline is already
+    due cuts as well, so the same observation cannot allow and expire together.
+    """
+    if not flow_id:
+        return False
+    row = usage.transfer(flow_id)
+    if row is None:
+        return False
+    client_group, site_group, url, recheck_at, ceilings = row
+    moment = _wall(filing.at)
+    due = recheck_at is not None and moment >= _wall(recheck_at)
+    if not due:
+        for name, level in ceilings:
+            if usage.stored_bytes(client_group, name, filing.at) >= level:
+                due = True
+                break
+    if not due:
+        return False
+    trace, assumption = judge_frozen(
+        policy,
+        client_group=client_group,
+        site_group=site_group,
+        at=filing.at,
+        ledger=usage,
+    )
+    if trace.decision.get("action") != "allow":
+        return True
+    if assumption.recheck_at is not None and moment >= _wall(assumption.recheck_at):
+        return True
+    for name, level in assumption.ceilings:
+        if usage.stored_bytes(client_group, name, filing.at) >= level:
+            return True
+    usage.save_transfer(flow_id, client_group, site_group, url, assumption)
+    return False
 
 
 def _accepts(

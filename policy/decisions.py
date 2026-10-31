@@ -35,6 +35,7 @@ class DecisionRequest:
     method: str
     url: str
     occurred_at: datetime | None
+    flow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,10 @@ def parse_request(document: object) -> DecisionRequest:
             raise ValueError("occurred_at must be an ISO 8601 time") from exc
     else:
         raise ValueError("occurred_at must be an ISO 8601 time")
-    return DecisionRequest(client_ip, document["method"], document["url"], moment)
+    flow_id = document.get("flow_id")
+    if flow_id is not None and (not isinstance(flow_id, str) or not flow_id):
+        raise ValueError("flow_id must be a string")
+    return DecisionRequest(client_ip, document["method"], document["url"], moment, flow_id)
 
 
 def context_for(

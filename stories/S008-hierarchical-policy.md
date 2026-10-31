@@ -2,7 +2,7 @@ Ticket: S008
 Title: Hierarchical policy
 Status: Refined
 Story Points: 37
-Last Updated: 2026-10-27 03:15:12
+Last Updated: 2026-10-27 07:32:47
 ---
 
 # User Voice
@@ -32,7 +32,7 @@ As a parent, I want the household rules written as nested checks on clients, tim
 | S008.3 | Accrue usage to quotas | 8 |
 | S008.4 | Report usage by group and quota | 5 |
 | S008.5 | Household policy file | 3 |
-| S008.6 | Cut a transfer past grace (later) | 5 |
+| S008.6 | Cut a transfer past grace | 5 |
 
 # Notes
 
