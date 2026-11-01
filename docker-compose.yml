@@ -15,7 +15,8 @@
 # ceiling, and the access rules no longer allow it, the service answers
 # with a cut and the proxy stops that transfer. Any other answer leaves it
 # running.
-# REPORT_PORT publishes the parent pages over HTTPS. Accounts are added with
+# POLICY_PORT publishes the policy pages over HTTPS: the usage report, the
+# attempt review, and the task pages. Accounts are added with
 # `python -m policy.accounts` inside the decisions container. The decision
 # API stays on plain HTTP inside the compose network. It does not show the
 # report and does not edit policy.
@@ -32,21 +33,28 @@ services:
       POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
       POLICY_DB: /var/lib/smartproxy/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime
+      MACHINE_HOSTNAME: /etc/host-hostname
       CA_DIR: /var/lib/smartproxy/ca
       PARENT_NAMES: ${PARENT_NAMES}
       PARENT_IDLE: ${PARENT_IDLE:-15m}
       PARENT_LIFETIME: ${PARENT_LIFETIME:-180m}
       PARENT_HTTPS_PORT: "8443"
+      # Host port clients use. Task URLs use this, not the bind port 8443.
+      POLICY_PORT: ${POLICY_PORT:-8090}
     ports:
-      # Parents open https://<this machine>:REPORT_PORT/usage. 8090 inside
+      # Clients open https://<this machine>:POLICY_PORT/usage. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
-      - "${REPORT_PORT:-8090}:8443"
+      # 8443 is where the HTTPS listener is bound.
+      - "${POLICY_PORT:-8090}:8443"
     volumes:
       - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
       - policy-data:/var/lib/smartproxy
       - ${CA_VOLUME_PATH}:/var/lib/smartproxy/ca
       # Used for the household timezone when policy.yaml does not set one.
       - /etc/localtime:/etc/host-localtime:ro
+      # Used for task URLs when policy.yaml does not set hostname. The
+      # container's own hostname is not a name clients can open.
+      - /etc/hostname:/etc/host-hostname:ro
     healthcheck:
       test:
         - CMD

@@ -25,7 +25,7 @@ from policy.usage import UsageStore  # noqa: E402
 ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
 OLDER = "192.0.2.50"
-SITE = "http://tasks.example/tasks/next"
+SITE = "https://tasks.example/tasks/next"
 YOUTUBE = "https://www.youtube.com/watch?v=abc"
 PASSWORD = "s3cret-pass"
 
@@ -50,7 +50,8 @@ def _house(tasks: str, rules: str, *, sites: str = "") -> str:
     return f"""\
 entry: gate
 timezone: America/Toronto
-revision_task: "{SITE}"
+hostname: tasks.example
+port: 443
 client_groups:
   younger:
     addresses: ["192.0.2.40"]
@@ -147,8 +148,8 @@ def test_a_never_passed_task_is_chosen_over_one_passed_last_week(tmp_path):
         second = decide(
             policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(10, 31, 16, 5), attempts=store
         )
-    assert first.decision["location"] == "http://tasks.example/tasks/zeta"
-    assert second.decision["location"] == "http://tasks.example/tasks/zeta"
+    assert first.decision["location"] == "https://tasks.example/tasks/zeta"
+    assert second.decision["location"] == "https://tasks.example/tasks/zeta"
 
 
 def test_equal_candidates_rotate_in_name_order(tmp_path):
@@ -176,9 +177,9 @@ def test_equal_candidates_rotate_in_name_order(tmp_path):
             for _ in range(3)
         ]
     assert picks == [
-        "http://tasks.example/tasks/alpha",
-        "http://tasks.example/tasks/beta",
-        "http://tasks.example/tasks/alpha",
+        "https://tasks.example/tasks/alpha",
+        "https://tasks.example/tasks/beta",
+        "https://tasks.example/tasks/alpha",
     ]
 
 
@@ -205,7 +206,7 @@ def test_a_required_task_is_chosen_over_an_optional_one(tmp_path):
     assert trace.decision == {
         "action": "redirect",
         "status": 302,
-        "location": "http://tasks.example/tasks/due",
+        "location": "https://tasks.example/tasks/due",
     }
 
 
@@ -253,7 +254,7 @@ site_groups:
     assert morning.decision["action"] == "deny"
     assert afternoon.decision["status"] == 302
     assert urlsplit(afternoon.decision["location"]).hostname == "tasks.example"
-    assert afternoon.decision["location"] == "http://tasks.example/tasks/spelling"
+    assert afternoon.decision["location"] == "https://tasks.example/tasks/spelling"
     assert page.decision == {"action": "allow"}
 
 
@@ -280,16 +281,16 @@ def test_an_optional_url_does_not_start_while_a_required_task_is_eligible(tmp_pa
         trace = decide(
             policy,
             client_ip=YOUNGER,
-            url="http://tasks.example/tasks/optional",
+            url="https://tasks.example/tasks/optional",
             at=now,
             attempts=store,
         )
         page = _open(now, "/tasks/optional", policy, store)
         assert store.in_progress("younger", "optional") is None
         assert store.attempts("younger", "optional") == ()
-    assert trace.decision["location"] == "http://tasks.example/tasks/due"
+    assert trace.decision["location"] == "https://tasks.example/tasks/due"
     assert page.status == 302
-    assert _location(page) == "http://tasks.example/tasks/due"
+    assert _location(page) == "https://tasks.example/tasks/due"
 
 
 def test_a_parent_check_increases_todays_count_and_the_child_cannot_record_one(tmp_path):
@@ -322,7 +323,7 @@ def test_a_parent_check_increases_todays_count_and_the_child_cannot_record_one(t
         before = decide(
             policy, client_ip=YOUNGER, url=YOUTUBE, at=now, ledger=usage, attempts=store
         )
-        assert before.decision["location"] == "http://tasks.example/tasks/spelling"
+        assert before.decision["location"] == "https://tasks.example/tasks/spelling"
         unsigned = respond_parent_check(
             accounts, cookie=None, form={"client": "younger"}, now=now, tasks=policy.tasks
         )
@@ -397,7 +398,7 @@ def test_a_task_at_its_pass_cap_is_not_offered(tmp_path):
         for day in (1, 2, 3):
             store.record("younger", "finished", "pass", _at(9, day))
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(10, 31), attempts=store)
-    assert trace.decision["location"] == "http://tasks.example/tasks/fresh"
+    assert trace.decision["location"] == "https://tasks.example/tasks/fresh"
 
 
 def test_giving_up_an_optional_task_abandons_it_and_opens_another(tmp_path):
@@ -426,7 +427,7 @@ def test_giving_up_an_optional_task_abandons_it_and_opens_another(tmp_path):
         assert store.passes_on("younger", now.date()) == 0
         assert store.attempts("younger", "alpha")[-1].outcome == "abandoned"
         assert left.status == 302
-        assert _location(left) == "http://tasks.example/tasks/beta"
+        assert _location(left) == "https://tasks.example/tasks/beta"
         followed = _open(now, "/tasks/beta", policy, store)
         assert followed.status == 200
         assert store.in_progress("younger", "beta") is not None
@@ -620,7 +621,7 @@ def test_a_required_task_in_its_failure_cooldown_is_not_offered(tmp_path):
         store.record("younger", "due", "failure", _at(10, 31, 9))
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(10, 31), attempts=store)
         assert not store.is_eligible(policy.task("due"), "younger", _at(10, 31).date())
-    assert trace.decision["location"] == "http://tasks.example/tasks/optional"
+    assert trace.decision["location"] == "https://tasks.example/tasks/optional"
 
 
 def test_a_task_available_tomorrow_is_not_offered_today(tmp_path):
@@ -643,7 +644,7 @@ def test_a_task_available_tomorrow_is_not_offered_today(tmp_path):
     )
     with AttemptStore(":memory:") as store:
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(10, 31), attempts=store)
-    assert trace.decision["location"] == "http://tasks.example/tasks/today"
+    assert trace.decision["location"] == "https://tasks.example/tasks/today"
 
 
 def test_nothing_eligible_is_a_page_and_not_a_redirect_loop(tmp_path):
@@ -736,9 +737,9 @@ def test_a_task_named_next_does_not_replace_the_picker_page(tmp_path):
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=now, attempts=store)
         entry = _open(now, "/tasks/next", policy, store)
         page = _open(now, "/tasks/work/next", policy, store)
-        assert trace.decision["location"] == "http://tasks.example/tasks/work/next"
+        assert trace.decision["location"] == "https://tasks.example/tasks/work/next"
         assert entry.status == 302
-        assert _location(entry) == "http://tasks.example/tasks/work/next"
+        assert _location(entry) == "https://tasks.example/tasks/work/next"
         assert page.status == 200
         assert store.in_progress("younger", "next") is not None
 
@@ -820,7 +821,7 @@ def test_the_service_serves_the_task_and_counts_a_parent_check(tmp_path, monkeyp
 
     status, body, headers = call("GET", "/tasks/optional")
     assert status == 302
-    assert headers["location"] == ["http://tasks.example/tasks/due"]
+    assert headers["location"] == ["https://tasks.example/tasks/due"]
     status, body, _headers = call("GET", "/tasks/due")
     assert status == 200
     assert "Try a different task" in body

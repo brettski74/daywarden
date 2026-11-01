@@ -18,7 +18,7 @@ Every request is sent to the policy service (the Compose service `decisions`) as
 
 `config/policy.yaml` is the household policy. The decisions service loads it each time it starts. Edit the file, then run `docker compose restart decisions`. The observations service reads the same file when it starts, so restart that too (`docker compose restart observations`) when an edit changes which traffic is counted. If the file is missing, the service starts with nothing loaded and denies requests.
 
-The file names client groups, site groups, time windows, quotas, and rule sets. `entry` is the rule set where a decision starts. `revision_task` is the absolute URL substituted for the `revision_task` token. `timezone` is an IANA name. The sample sets `America/Toronto`. Delete that line to use the timezone of the machine running Compose, which is read from that machine's `/etc/localtime`.
+The file names client groups, site groups, time windows, quotas, and rule sets. `entry` is the rule set where a decision starts. `hostname` is the DNS name external clients use to open the policy server. It is a host, not a URL. Leave it out to use the hostname of the machine running Compose, read from that machine's `/etc/hostname`. The name inside the decisions container is not used. Set it when that name is not the one in the browser's address bar. `port` is the port those clients use. Leave it out to use `POLICY_PORT`. Set it when a reverse proxy presents the pages on a different port. A redirect to the `revision_task` token is `https://<hostname>:<port>/tasks/<name>`, and port 443 is left off. The file does not contain a `revision_task` URL. `timezone` is an IANA name. The sample sets `America/Toronto`. Delete that line to use the timezone of the machine running Compose, which is read from that machine's `/etc/localtime`.
 
 An address that belongs to no client group is the implicit client group `default`. A URL that matches no site group is the implicit site group `default`. Neither group is written in the file. This file grants access only to the younger child's group, so an address in `default` is denied with "No rule granted access.", including a school site.
 
@@ -34,7 +34,7 @@ A pattern that contains `://` is matched against the whole URL, without its `#fr
 
 What remains after every configured group misses is the implicit site group `default`. It has no priority and no patterns, and it is not written in the file.
 
-School is a starter list of Classroom hosts and the Google hosts a Classroom session loads. It is allowed at any time for the younger child, and it has no quota. It is not every school site, and it is not all of Google. Entertainment is YouTube. Monday to Thursday, bedtime denies, school hours redirect to revision, and the evening continues only when today's revision count has reached 2. A `2h` quota then allows the request or denies it. Friday, Saturday, and Sunday are in the file as a starting suggestion, with a wider evening. The implicit `default` site group uses those same hours and the same revision count, and it has no time quota. The school hosts and the host of `revision_task` are listed again in `config/bypass.txt`. Edit the two files together. Nothing copies one into the other.
+School is a starter list of Classroom hosts and the Google hosts a Classroom session loads. It is allowed at any time for the younger child, and it has no quota. It is not every school site, and it is not all of Google. Entertainment is YouTube. Monday to Thursday, bedtime denies, school hours redirect to revision, and the evening continues only when today's revision count has reached 2. A `2h` quota then allows the request or denies it. Friday, Saturday, and Sunday are in the file as a starting suggestion, with a wider evening. The implicit `default` site group uses those same hours and the same revision count, and it has no time quota. The school hosts and the policy server named by `hostname` are listed again in `config/bypass.txt`. Edit the two files together. Nothing copies one into the other.
 
 ## Rules
 
@@ -64,10 +64,10 @@ The three answers the proxy sees are:
 ```json
 { "action": "allow" }
 { "action": "deny", "status": 403, "message": "Time is up for today." }
-{ "action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next" }
+{ "action": "redirect", "status": 302, "location": "https://garden:8090/tasks/next" }
 ```
 
-When the household has an eligible revision task, that location is the page for the chosen task on the same site. The sample has no tasks yet, so the location stays the `revision_task` URL. A rule that allows the task host is what lets the page load after the redirect. The host does not have to be on the proxy bypass list.
+When the household has an eligible revision task, that location is `https://<hostname>:<port>/tasks/<name>` for the task chosen for the client group. The sample has no tasks yet, so the location is `https://garden:8090/tasks/next`, and that page says there is nothing to revise. A rule that allows the policy server is what lets the page load after the redirect. The host does not have to be on the proxy bypass list.
 
 ## Decision and observation logs
 
@@ -79,7 +79,7 @@ An allow remembers that flow. A later report cuts it only when a clock assumptio
 
 ## Usage report
 
-A parent opens `https://<this machine>:8090/usage` in a browser. The port is `REPORT_PORT` in `.env`. The page is HTTPS. The certificate is signed by the household CA below, for the names in `PARENT_NAMES`, and it lasts 30 days. It is replaced on the next start when 3 days or less remain, or when a configured name is missing from it. A browser that does not trust the CA gets a warning. Plain HTTP does not return the page.
+A parent opens `https://<this machine>:8090/usage` in a browser. The port is `POLICY_PORT` in `.env`. The same port serves the attempt review and the task pages. The page is HTTPS. The certificate is signed by the household CA below, for the names in `PARENT_NAMES`, and it lasts 30 days. It is replaced on the next start when 3 days or less remain, or when a configured name is missing from it. A browser that does not trust the CA gets a warning. Plain HTTP does not return the page.
 
 Choose a site group, a client group, or a quota. `default` is in both group lists. A site group also needs a client group, and shows the last 14 household-local days for that pair: the clock times each bucket covered, the time that bucket represents, and the bytes. A bucket that has not ended is listed and left out of the counted time. A day with no traffic says no usage. School traffic, which the entertainment quota does not accept, is listed the same way. A client-group view shows those buckets for every site group. A quota view is today's balance for one client group: ended time against the time limit, and stored bytes against the byte limit. A limit of zero is shown as zero. Leave the client group on "All client groups" and the page lists each client group that has a balance, including `default`. The clock is the household timezone.
 
@@ -107,12 +107,12 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 ## Configuration
 
-`.env` sets the listen port, the usage-report port, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
+`.env` sets the listen port, the policy-page port, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
 
 | Variable | Meaning |
 | --- | --- |
 | `PROXY_PORT` | Port on this machine that clients use |
-| `REPORT_PORT` | Port on this machine for the parent pages, over HTTPS |
+| `POLICY_PORT` | Port on this machine for the policy pages, over HTTPS. The container still binds HTTPS on 8443 |
 | `PARENT_NAMES` | DNS names and IP addresses on the parent certificate |
 | `PARENT_IDLE` | Idle limit for a parent session. Defaults to `15m` |
 | `PARENT_LIFETIME` | Lifetime of a parent session from sign-in. Defaults to `180m` |
@@ -123,7 +123,7 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 | File | Meaning |
 | --- | --- |
 | `config/policy.yaml` | Household policy: client groups, site groups, windows, quotas, and rule sets. `default` is the implicit group for an address or a URL that matches nothing configured |
-| `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down. The sample lists the school hosts and the task-site host |
+| `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down. The sample lists the school hosts and the policy server named by `hostname` |
 
 ## Tests
 

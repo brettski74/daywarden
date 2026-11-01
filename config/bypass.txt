@@ -4,12 +4,12 @@
 # Lines starting with # are comments.
 #
 # Sample list for the household policy in policy.yaml. These are the
-# school hosts, plus the task-site host from revision_task.
+# school hosts, plus the policy server named by hostname.
 # Those pages keep working when the policy service is down. Edit this file
 # and policy.yaml together. Nothing copies one into the other.
 
-# Task site. The host of household.revision_task.
-192.168.1.10
+# Policy server. The hostname in policy.yaml.
+garden
 
 # School work. The same host globs as that group.
 classroom.google.com

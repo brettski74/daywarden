@@ -239,7 +239,7 @@ If `allow_school` allows, the request is allowed. If it continues, `younger_even
 
 An inline list has no name of its own. Logs identify it by the path of the rule that contains it. A named set is how a list is defined once and used in more than one place. A cycle in `evaluate` is a load error.
 
-`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. When a revision task is eligible for the classified client group, that URL is the page for the chosen task on the task site. The host is the host of the household `revision_task` value. When nothing is eligible, the household URL is left as it is, and that page says so instead of redirecting again. A request for a task the child is not meant to open is sent to one he is. The addon sees only `allow`, `deny`, or `redirect`.
+`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. The scheme is always `https`. The host is the household `hostname`, or the hostname of the machine running Compose when that is left out. That name is read from the machine's `/etc/hostname`, not from the container's own hostname. The port is the household `port`, or the published policy port (`POLICY_PORT`) when that is left out. Port 443 is left off the URL. When a revision task is eligible for the classified client group, the URL is `https://<hostname>:<port>/tasks/<name>` for the chosen task. When nothing is eligible, the URL is `https://<hostname>:<port>/tasks/next`, and that page says there is nothing to revise. A request for a task the child is not meant to open is sent to one he is. The addon sees only `allow`, `deny`, or `redirect`. The policy file does not set a `revision_task` URL. A file that still sets one fails to load. Rules still redirect to the token `revision_task`.
 
 ### Conditions
 
@@ -274,7 +274,9 @@ This sketch is the shape, not a proposed household policy. The younger client gr
 ```yaml
 entry: household
 timezone: America/Toronto
-revision_task: "http://192.168.1.10:8080/tasks/next"
+# The name external clients use to open the policy server.
+hostname: policy.home
+# Set port when a reverse proxy changes the port. The default is the published policy port.
 bucket_length: 5m
 time_grace: 5m
 volume_grace: 1M
