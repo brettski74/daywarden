@@ -191,7 +191,7 @@ The same type may appear on more than one task. `parts-of-speech-1` and `parts-o
 
 `available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`.
 
-The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group. That pass counts toward `tasks_required`. The child has no request that records one.
+The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass counts toward `tasks_required` and is listed with the group's other attempts. The child has no request that records one.
 
 ## Rule sets
 

@@ -295,6 +295,30 @@ class AttemptStore:
         if self._owns:
             self.connection.close()
 
+    def get(self, attempt_id: int) -> Attempt | None:
+        """Return one attempt, or None when that id is not stored."""
+        if isinstance(attempt_id, bool) or not isinstance(attempt_id, int) or attempt_id < 1:
+            raise ValueError("an attempt id is a whole number")
+        row = self.connection.execute(
+            f"SELECT {_COLUMNS} FROM attempts WHERE id = ?",
+            (attempt_id,),
+        ).fetchone()
+        return None if row is None else _attempt(row)
+
+    def recent(self, client_group: str) -> tuple[Attempt, ...]:
+        """Return this group's attempts, newest start first.
+
+        The same start time is ordered by the newer id. Another client
+        group's rows are never included.
+        """
+        _label(client_group, "a client group")
+        rows = self.connection.execute(
+            f"SELECT {_COLUMNS} FROM attempts WHERE client_group = ? "
+            "ORDER BY started_at DESC, id DESC",
+            (client_group,),
+        ).fetchall()
+        return tuple(_attempt(row) for row in rows)
+
     def attempts(self, client_group: str, task: str | None = None) -> tuple[Attempt, ...]:
         """Return this group's attempts, oldest id first.
 

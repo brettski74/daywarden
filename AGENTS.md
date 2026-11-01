@@ -43,3 +43,4 @@ After implementing a story, append an Implementation section (L1 heading) to the
 2. Consist of a numbered list of acceptance test cases that the human reviewer should perform on the delivered work.
 3. Sort the acceptance test cases with the most important or impactful test cases listed first.
 4. Cover all all exposed areas with functionality exposed via configuration files or UI.
+5. Be provided in the AI chat response.
