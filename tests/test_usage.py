@@ -469,7 +469,6 @@ def test_a_decision_does_not_record_and_the_next_request_is_its_own(tmp_path):
         """\
 entry: entry
 timezone: Australia/Sydney
-revision_task: "http://tasks.example/next"
 client_groups:
   younger:
     addresses: ["192.0.2.40"]

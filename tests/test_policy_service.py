@@ -124,7 +124,7 @@ class Stack:
         self.config_dir = config_dir
         self.env = os.environ.copy()
         self.env["PROXY_PORT"] = str(_free_port())
-        self.env["REPORT_PORT"] = str(_free_port())
+        self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)

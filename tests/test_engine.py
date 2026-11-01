@@ -20,7 +20,7 @@ from policy.engine import (  # noqa: E402
 from policy.hierarchy import ConfigError, SiteGroup, load  # noqa: E402
 
 SYDNEY = ZoneInfo("Australia/Sydney")
-PLACEHOLDER = "http://tasks.example/next"
+PLACEHOLDER = "https://tasks.example/tasks/next"
 NO_RULE = "No rule granted access."
 BEDTIME = {"action": "deny", "status": 403, "message": "It's bedtime."}
 CLOSED = {"action": "deny", "status": 403, "message": "YouTube is closed for today."}
@@ -33,7 +33,8 @@ YOUTUBE = "https://www.youtube.com/watch?v=abc"
 WEDNESDAY_POLICY = """\
 entry: younger
 timezone: Australia/Sydney
-revision_task: "http://tasks.example/next"
+hostname: tasks.example
+port: 443
 
 client_groups:
   younger:
@@ -469,12 +470,15 @@ rule_sets:
     assert no_time.decision["message"] == "No time left."
 
 
-def test_revision_task_is_replaced_before_the_answer_is_returned(tmp_path):
+def test_revision_task_is_replaced_before_the_answer_is_returned(tmp_path, monkeypatch):
+    monkeypatch.setenv("POLICY_PORT", "8090")
+    monkeypatch.setenv("MACHINE_HOSTNAME", str(tmp_path / "no-such-hostname"))
     policy = _load(
         tmp_path,
         """\
 entry: entry
-revision_task: "http://tasks.example/next"
+hostname: tasks.example
+port: 443
 rule_sets:
   entry:
     - condition: always
@@ -493,11 +497,12 @@ rule_sets:
       when_true: { action: redirect, location: revision_task }
 """,
     )
-    refused = decide(unset, client_ip="192.0.2.10", url="https://example.com/", at=_at(21, 10, 0))
-    assert refused.decision == {
-        "action": "deny",
-        "status": 403,
-        "message": "The revision task page is not configured.",
+    monkeypatch.setattr("policy.selection.socket.gethostname", lambda: "lounge")
+    named = decide(unset, client_ip="192.0.2.10", url="https://example.com/", at=_at(21, 10, 0))
+    assert named.decision == {
+        "action": "redirect",
+        "status": 302,
+        "location": "https://lounge:8090/tasks/next",
     }
 
 

@@ -10,7 +10,14 @@
 
 entry: household
 timezone: America/Toronto
-revision_task: "http://192.168.1.10:8080/tasks/next"
+# The name external clients use to open the policy server. Set this when
+# the name in the browser's address bar for the policy pages is not the
+# hostname of the machine running Compose. Leave it out to use that name,
+# read from the machine's /etc/hostname. The container's own name is not used.
+# hostname: garden
+# Set port when a reverse proxy changes the port. The default is the
+# published policy port.
+# port: 8443
 
 # How long a new usage bucket is. The default is five minutes. This is not a quota.
 # The length has to divide a 24-hour day (2m, 5m, and 10m do; 7m does not).
@@ -79,11 +86,11 @@ site_groups:
 time_windows:
   bedtime:
     periods:
-      - start: "00:00"
+      - start: "04:00"
         end: "07:00"
         days: monday-thursday
       # Starting suggestion: weekend bedtime runs an hour later.
-      - start: "00:00"
+      - start: "04:00"
         end: "08:00"
         days: friday-sunday
   school_hours:
@@ -102,7 +109,7 @@ time_windows:
         days: monday-thursday
       # Starting suggestion: wider evening, noon until 21:00.
       - start: "12:00"
-        end: "21:00+1"
+        end: "21:00+2"
         days: friday
 
 quotas:
@@ -147,18 +154,18 @@ rule_sets:
     - condition: time_window
       window: bedtime
       when_true: { action: deny, message: "It's bedtime." }
-#    - condition: time_window
-#      window: school_hours
-#      when_true: { action: redirect, location: revision_task }
+    - condition: time_window
+      window: school_hours
+      when_true: { action: redirect, location: revision_task }
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: entertainment_evening }
       when_false: { action: deny, message: "YouTube is closed for today." }
 
   entertainment_evening:
-#    - condition: tasks_required
-#      required: 0
-#      when_false: { action: redirect, location: revision_task }
+    - condition: tasks_required
+      required: 0
+      when_false: { action: redirect, location: revision_task }
     - condition: time_remaining
       quota: entertainment
       when_true: { action: allow }
@@ -170,17 +177,17 @@ rule_sets:
     - condition: time_window
       window: bedtime
       when_true: { action: deny, message: "It's bedtime." }
-#    - condition: time_window
-#      window: school_hours
-#      when_true: { action: redirect, location: revision_task }
+    - condition: time_window
+      window: school_hours
+      when_true: { action: redirect, location: revision_task }
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: default_evening }
       when_false: { action: deny, message: "The internet is closed for today." }
 
   default_evening:
-#    - condition: tasks_required
-#      required: 0
-#      when_false: { action: redirect, location: revision_task }
+    - condition: tasks_required
+      required: 3
+      when_false: { action: redirect, location: revision_task }
     - condition: always
       when_true: { action: allow }

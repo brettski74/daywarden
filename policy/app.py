@@ -35,7 +35,7 @@ from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
-from policy.selection import entry_path
+from policy.selection import picker_url
 from policy.store import PolicyStore
 from policy.task_page import respond_task
 from policy.tasks import AttemptStore
@@ -189,18 +189,6 @@ def create_app() -> FastAPI:
             else:
                 response.headers[name] = value
         return response
-
-    def _entry_page(path: str):
-        async def endpoint(request: Request) -> Response:
-            return await _task_page(request, path)
-
-        return endpoint
-
-    entry = None
-    if hierarchy_policy is not None and hierarchy_policy.revision_task:
-        entry = entry_path(hierarchy_policy.revision_task)
-    if entry and entry not in _TASK_PATHS and not entry.startswith("/tasks/") and "{" not in entry:
-        app.add_api_route(entry, _entry_page(entry), methods=["GET", "POST"])
 
     @app.api_route("/usage", methods=["GET", "POST"])
     async def usage_page(request: Request) -> Response:
@@ -366,8 +354,7 @@ def _announce_hierarchy(policy: Policy | None, clock: HouseholdClock, source: st
     if policy is None:
         print("no hierarchical policy loaded", flush=True)
         return
-    if policy.revision_task:
-        print(f"revision task placeholder {policy.revision_task}", flush=True)
+    print(f"task pages are {picker_url(policy)}", flush=True)
     print(f"usage buckets are {_span(policy.bucket_length)}", flush=True)
     print(f"entry {policy.entry}", flush=True)
     for group in policy.client_groups:
@@ -379,9 +366,6 @@ def _announce_hierarchy(policy: Policy | None, clock: HouseholdClock, source: st
             flush=True,
         )
     print("site group default: urls that match no configured group", flush=True)
-
-
-_TASK_PATHS = {"/health", "/usage", "/quiz", "/attempts", "/attempts/parent-check", "/v1/decisions"}
 
 
 def _empty_policy() -> Policy:

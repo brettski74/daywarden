@@ -17,8 +17,8 @@ from policy.engine import classify_client
 from policy.hierarchy import Policy
 from policy.report import PageResponse, _document, _e, _response
 from policy.selection import (
+    PICKER_PATH,
     chosen_task_url,
-    entry_path,
     may_abandon,
     may_open,
     task_name_from_path,
@@ -45,17 +45,15 @@ def respond_task(
     """Open a task, give it up, or say there is nothing to revise."""
     client = classify_client(policy, client_ip)
     today = household_day(now)
-    revision = policy.revision_task
-    entry = "/tasks/next" if not revision else entry_path(revision)
-    name = task_name_from_path(path, entry)
+    name = task_name_from_path(path, PICKER_PATH)
     if name is None:
         return _send_to_choice(policy, store, client, today)
     task = policy.task(name)
     rows = store.attempts(client)
     if task is None or not may_open(policy.tasks, name, client, today, rows):
         page = _send_to_choice(policy, store, client, today)
-        if task is not None and revision and page.status == 302:
-            target = task_page_url(revision, task.name)
+        if task is not None and page.status == 302:
+            target = task_page_url(policy, task.name)
             if _location(page) == target:
                 return _page(NOTHING)
         return page
@@ -66,8 +64,6 @@ def respond_task(
 
 
 def _send_to_choice(policy, store, client, today) -> PageResponse:
-    if not policy.revision_task:
-        return _page(NOTHING)
     location = chosen_task_url(policy, client, today, store)
     if location is None:
         return _page(NOTHING)
@@ -84,17 +80,15 @@ def _give_up(policy, store, task, client, today, cookie, now, path: str) -> Page
         current = store.begin(client, task.name, now)
     store.finish(current.id, ABANDONED, now, detail=current.detail)
     visit = _read_visit(cookie) | {task.name}
-    location = None
-    if policy.revision_task:
-        location = chosen_task_url(
-            policy,
-            client,
-            today,
-            store,
-            exclude=frozenset(visit),
-            reopen_required=True,
-            leaving=task.name,
-        )
+    location = chosen_task_url(
+        policy,
+        client,
+        today,
+        store,
+        exclude=frozenset(visit),
+        reopen_required=True,
+        leaving=task.name,
+    )
     header = _visit_cookie(visit)
     if location is None:
         return _page(NOTHING_ELSE, extra=(("set-cookie", header),))

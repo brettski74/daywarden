@@ -16,8 +16,11 @@ required task other than the one he just left.
 
 from __future__ import annotations
 
+import os
+import socket
 from collections.abc import Sequence
 from datetime import date, datetime
+from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from policy.hierarchy import Policy
@@ -39,47 +42,126 @@ CREATE TABLE IF NOT EXISTS task_turns (
 );
 """
 
-
-def task_origin(revision_task: str) -> str:
-    """Return ``scheme://host`` for the household task site."""
-    parts = urlsplit(revision_task)
-    return f"{parts.scheme}://{parts.netloc}"
-
-
-def entry_path(revision_task: str) -> str:
-    """Return the path of the household ``revision_task`` URL."""
-    path = urlsplit(revision_task).path
-    return path if path else "/"
+PICKER_PATH = "/tasks/next"
+DEFAULT_PUBLISHED_PORT = 8090
+# Compose mounts the machine's /etc/hostname here. The container's own
+# hostname is an id such as 1c45a70451e1, which clients do not use.
+HOST_HOSTNAME = Path("/etc/host-hostname")
 
 
-def task_page_path(revision_task: str, name: str) -> str:
-    """Return the path of one task on the task site.
+def published_port() -> int:
+    """Return the port external clients use when the policy file omits ``port``.
 
-    The household entry path is reserved for the picker. A task whose
-    ordinary path would be that entry is served under ``/tasks/work/``.
+    That is ``POLICY_PORT``, the host port Compose publishes onto the
+    container's HTTPS listener. It is not the port the process binds. An
+    unset variable uses the Compose default, 8090.
+    """
+    raw = os.environ.get("POLICY_PORT", "").strip()
+    if not raw:
+        return DEFAULT_PUBLISHED_PORT
+    if not raw.isdecimal():
+        raise ValueError("POLICY_PORT must be a whole number from 1 to 65535")
+    value = int(raw)
+    if not 1 <= value <= 65535:
+        raise ValueError("POLICY_PORT must be a whole number from 1 to 65535")
+    return value
+
+
+def machine_hostname(path: Path | None = None) -> str | None:
+    """Return the hostname of the machine running Compose, when that file is mounted.
+
+    The file is one line, the contents of the host's ``/etc/hostname``. A
+    missing file, or a line that is not a host name, returns None so the
+    caller can fall back to the name of this process's machine.
+    """
+    if path is None:
+        target = Path(os.environ.get("MACHINE_HOSTNAME", str(HOST_HOSTNAME)))
+    else:
+        target = path
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    name = lines[0]
+    if any(char.isspace() for char in name) or any(char in name for char in ":/\\?#"):
+        return None
+    return name
+
+
+def task_host(policy: Policy) -> str:
+    """Return the host external clients use for the policy server.
+
+    A configured ``hostname`` wins. Otherwise the name is the host machine's
+    ``/etc/hostname`` when Compose has mounted it, and the name reported by
+    this process when that file is absent.
+    """
+    if policy.hostname:
+        return policy.hostname
+    mounted = machine_hostname()
+    if mounted:
+        return mounted
+    name = socket.gethostname().strip()
+    return name or "localhost"
+
+
+def task_port(policy: Policy) -> int:
+    """Return the port external clients use for the policy server."""
+    if policy.port is not None:
+        return policy.port
+    return published_port()
+
+
+def task_origin(policy: Policy) -> str:
+    """Return ``https://host`` or ``https://host:port`` for the policy server.
+
+    The scheme is always https. Port 443 is left off.
+    """
+    host = task_host(policy)
+    port = task_port(policy)
+    if port == 443:
+        return f"https://{host}"
+    return f"https://{host}:{port}"
+
+
+def picker_url(policy: Policy) -> str:
+    """Return the task picker on the policy server."""
+    return task_origin(policy) + PICKER_PATH
+
+
+def task_page_path(name: str) -> str:
+    """Return the path of one task on the policy server.
+
+    ``/tasks/next`` is the picker. A task of that name is served under
+    ``/tasks/work/``.
     """
     path = "/tasks/" + quote(name, safe="")
-    if path == entry_path(revision_task):
+    if path == PICKER_PATH:
         return "/tasks/work/" + quote(name, safe="")
     return path
 
 
-def task_page_url(revision_task: str, name: str) -> str:
-    """Return the absolute URL of one task on the task site."""
-    return task_origin(revision_task) + task_page_path(revision_task, name)
+def task_page_url(policy: Policy, name: str) -> str:
+    """Return the absolute URL of one task on the policy server."""
+    return task_origin(policy) + task_page_path(name)
 
 
-def same_task_site(url: str, revision_task: str) -> bool:
-    """Return whether url is on the host named by ``revision_task``."""
+def same_task_site(url: str, policy: Policy) -> bool:
+    """Return whether url is an https request for this policy server."""
     left = urlsplit(url)
-    right = urlsplit(revision_task)
-    if left.scheme.lower() not in {"http", "https"}:
+    if left.scheme.lower() != "https":
         return False
-    return (
-        left.scheme.lower() == right.scheme.lower()
-        and (left.hostname or "").lower() == (right.hostname or "").lower()
-        and left.port == right.port
+    return (left.hostname or "").lower() == task_host(policy).lower() and _port_matches(
+        left.port, task_port(policy)
     )
+
+
+def _port_matches(url_port: int | None, configured: int) -> bool:
+    if configured == 443:
+        return url_port in {None, 443}
+    return url_port == configured
 
 
 def task_name_from_path(path: str, entry: str) -> str | None:
@@ -198,8 +280,6 @@ def chosen_task_url(
     None means nothing in the pool is eligible. The caller then shows the
     plain-language page instead of redirecting.
     """
-    if not policy.revision_task:
-        return None
     task, ties = choose_task(
         policy.tasks,
         client_group,
@@ -214,7 +294,7 @@ def chosen_task_url(
         return None
     if ties > 1:
         advance_turn(store, client_group)
-    return task_page_url(policy.revision_task, task.name)
+    return task_page_url(policy, task.name)
 
 
 def apply_task_selection(
@@ -229,17 +309,15 @@ def apply_task_selection(
 
     A task he may open is allowed through, including when the rule said
     ``revision_task``, so the follow-up request does not redirect in a circle.
-    An allow for the picker entry, or for a task he may not open, becomes a
+    An allow for the picker, or for a task he may not open, becomes a
     redirect. When nothing is eligible, a request that is already the
-    household ``revision_task`` URL is allowed so that page can say so.
+    picker is allowed so that page can say so.
     """
-    revision = policy.revision_task
-    if not revision:
-        return decision
+    revision = picker_url(policy)
     action = decision.get("action")
     today = household_day(at)
-    on_site = same_task_site(url, revision)
-    entry = entry_path(revision)
+    on_site = same_task_site(url, policy)
+    entry = PICKER_PATH
     path = urlsplit(url).path or "/"
     name = task_name_from_path(path, entry) if on_site else None
     if name is not None and may_open(policy.tasks, name, client_group, today, store.attempts(client_group)):
@@ -263,7 +341,7 @@ def apply_task_selection(
         if name is None:
             return decision
         return {"action": "redirect", "status": 302, "location": revision}
-    if name is not None and picked == task_page_url(revision, name):
+    if name is not None and picked == task_page_url(policy, name):
         return decision
     _use_turn(store, client_group, ties)
     return {"action": "redirect", "status": 302, "location": picked}
@@ -275,8 +353,6 @@ def _preview(
     today: date,
     store: AttemptStore,
 ) -> tuple[str | None, int]:
-    if not policy.revision_task:
-        return None, 0
     task, ties = choose_task(
         policy.tasks,
         client_group,
@@ -286,7 +362,7 @@ def _preview(
     )
     if task is None:
         return None, 0
-    return task_page_url(policy.revision_task, task.name), ties
+    return task_page_url(policy, task.name), ties
 
 
 def _use_turn(store: AttemptStore, client_group: str, ties: int) -> None:

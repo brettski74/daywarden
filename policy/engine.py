@@ -14,9 +14,12 @@ this call, which has no parent, becomes a deny: "No rule granted access."
 
 ``evaluate`` is the same walk for a caller that wants the raw decision.
 A quota uses it, and a continue there stays a continue. ``revision_task``
-is replaced with the household URL before either answer is returned.
-When an attempt store is passed, that URL is the chosen task on the task
-site, or the household URL itself when nothing is eligible.
+is replaced with an https URL on the policy server before either answer
+is returned. The host is the household hostname, or the hostname of the machine
+running Compose when that is left out. The port is the household port, or the
+published policy port when that is left out. When an attempt store is
+passed, that URL is the chosen task, or ``/tasks/next`` when nothing is
+eligible.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from policy.clients import normalize_ip
 from policy.groups import matches
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.rules import REVISION_TASK, UNCONFIGURED_TASK_MESSAGE, absolute_http_url
-from policy.selection import apply_task_selection
+from policy.selection import apply_task_selection, picker_url
 from policy.tasks import AttemptStore, household_day
 
 NO_RULE_MESSAGE = "No rule granted access."
@@ -201,7 +204,7 @@ def decide(
     ``at`` is already household-local. The client group and the site group are
     classified once, then ``entry`` is evaluated with no parent. A continue
     from that evaluation is a deny. ``attempts`` is what turns ``revision_task``
-    into one task's URL. Without it, the household URL is used as stored.
+    into one task's URL. Without it, the picker URL is used.
     """
     return judge(
         policy,
@@ -590,7 +593,7 @@ def _answered(action: Action, policy: Policy) -> dict:
     if action.kind == "deny":
         return {"action": "deny", "status": 403, "message": action.message}
     if action.kind == "redirect":
-        location = policy.revision_task if action.location == REVISION_TASK else action.location
+        location = picker_url(policy) if action.location == REVISION_TASK else action.location
         if location and absolute_http_url(location):
             return {"action": "redirect", "status": 302, "location": location}
         return {"action": "deny", "status": 403, "message": UNCONFIGURED_TASK_MESSAGE}

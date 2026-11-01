@@ -1,0 +1,2 @@
+alias logs="docker compose logs -f decisions"
+

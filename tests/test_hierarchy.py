@@ -72,7 +72,8 @@ def test_the_design_illustration_loads(tmp_path):
     )
     assert policy.entry == "household"
     assert policy.timezone == "America/Toronto"
-    assert policy.revision_task == "http://192.168.1.10:8080/tasks/next"
+    assert policy.hostname == "policy.home"
+    assert policy.port is None
     assert policy.bucket_length == 300
     assert policy.time_grace == DEFAULT_TIME_GRACE
     assert policy.volume_grace == DEFAULT_VOLUME_GRACE

@@ -5,7 +5,6 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,7 +28,7 @@ WEDNESDAY = date(2026, 10, 21)
 
 BEDTIME = {"action": "deny", "status": 403, "message": "It's bedtime."}
 CLOSED = {"action": "deny", "status": 403, "message": "YouTube is closed for today."}
-REDIRECT = {"action": "redirect", "status": 302, "location": "http://192.168.1.10:8080/tasks/next"}
+REDIRECT = {"action": "redirect", "status": 302, "location": "https://garden:8090/tasks/next"}
 ALLOW = {"action": "allow"}
 TIME_UP = {"action": "deny", "status": 403, "message": "Time is up for today."}
 INTERNET_CLOSED = {"action": "deny", "status": 403, "message": "The internet is closed for today."}
@@ -68,7 +67,8 @@ def test_the_file_enrols_the_younger_child_and_a_two_hour_entertainment_quota():
     assert quota is not None
     assert quota.time_limit == 2 * 60 * 60
     assert quota.byte_limit == 0
-    assert policy.revision_task == REDIRECT["location"]
+    assert policy.hostname == "garden"
+    assert policy.port is None
 
 
 @pytest.mark.parametrize(
@@ -160,7 +160,7 @@ def test_the_bypass_list_names_the_school_hosts_and_the_task_site():
     school = policy.site_group("school")
     assert school is not None
     patterns = bypass.load_patterns(BYPASS)
-    host = urlsplit(policy.revision_task).hostname
+    host = policy.hostname
     assert set(patterns) == set(school.patterns) | {host}
     assert bypass.is_bypassed("classroom.google.com", patterns)
     assert bypass.is_bypassed("docs.google.com", patterns)

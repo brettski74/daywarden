@@ -72,7 +72,8 @@ _WEEKDAY_NAME = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturd
 _TOP_KEYS = {
     "entry",
     "timezone",
-    "revision_task",
+    "hostname",
+    "port",
     "bucket_length",
     "time_grace",
     "volume_grace",
@@ -84,7 +85,8 @@ _TOP_KEYS = {
     "rule_sets",
     "tasks",
 }
-_SCALARS = {"entry", "timezone", "revision_task", "bucket_length", "time_grace", "volume_grace"}
+_SCALARS = {"entry", "timezone", "hostname", "port", "bucket_length", "time_grace", "volume_grace"}
+_PORT_TEXT = re.compile(r"[1-9][0-9]*")
 _SECTIONS = {"client_groups", "site_groups", "time_windows", "quotas", "rule_sets", "tasks"}
 _TASK_KEYS = {
     "type",
@@ -220,7 +222,10 @@ class Policy:
     entry: str
     rule_sets: tuple[tuple[str, tuple[Rule, ...]], ...]
     timezone: str | None = None
-    revision_task: str | None = None
+    # DNS name external clients use. None means the Compose host's hostname.
+    hostname: str | None = None
+    # Port external clients use. None means the published POLICY_PORT.
+    port: int | None = None
     bucket_length: int = DEFAULT_BUCKET_SECONDS
     time_grace: int = DEFAULT_TIME_GRACE
     volume_grace: int = DEFAULT_VOLUME_GRACE
@@ -396,6 +401,10 @@ def _compose(text: str, source: Path) -> yaml.Node | None:
 
 def _absorb(node: yaml.MappingNode, build: _Build) -> tuple[str, ...]:
     pairs = _pairs(node)
+    if "revision_task" in pairs:
+        raise ConfigError(
+            f"{_at(pairs['revision_task'])}: revision_task is not set in the policy file"
+        )
     _reject_unknown(set(pairs), _TOP_KEYS, _at(node))
     for key in _SCALARS:
         if key not in pairs:
@@ -431,11 +440,10 @@ def _scalar(key: str, node: yaml.Node, where: str) -> object:
         except ValueError as exc:
             raise ConfigError(f"{where}: {exc}") from exc
         return name
-    if key == "revision_task":
-        url = _text(node, where)
-        if not absolute_http_url(url):
-            raise ConfigError(f"{where}: revision_task must be an absolute http or https URL")
-        return url
+    if key == "hostname":
+        return _hostname(node, where)
+    if key == "port":
+        return _port_number(node, where)
     if key == "bucket_length":
         length = _duration(node, where)
         if length < 1:
@@ -824,7 +832,8 @@ def _finish(
         raise ConfigError("entry is required")
     entry = str(build.scalars["entry"][0])
     timezone = build.scalars["timezone"][0] if "timezone" in build.scalars else None
-    revision_task = build.scalars["revision_task"][0] if "revision_task" in build.scalars else None
+    hostname = build.scalars["hostname"][0] if "hostname" in build.scalars else None
+    port = build.scalars["port"][0] if "port" in build.scalars else None
     bucket_length = (
         int(build.scalars["bucket_length"][0])
         if "bucket_length" in build.scalars
@@ -854,7 +863,8 @@ def _finish(
         entry,
         tuple(build.rule_sets.items()),
         None if timezone is None else str(timezone),
-        None if revision_task is None else str(revision_task),
+        None if hostname is None else str(hostname),
+        None if port is None else int(port),
         bucket_length,
         time_grace,
         volume_grace,
@@ -1092,6 +1102,38 @@ def _data(node: yaml.Node, where: str):
     if node.tag in {_STR, _TIMESTAMP}:
         return node.value
     raise ConfigError(f"{where} must be a JSON value")
+
+
+def _hostname(node: yaml.Node, where: str) -> str:
+    """Return a host name. A scheme, port, path, space, or empty value is refused."""
+    message = f"{where}: hostname must be a host name, without a scheme, port, path, or space"
+    if not isinstance(node, yaml.ScalarNode) or node.tag != _STR:
+        raise ConfigError(message)
+    text = node.value
+    if not text.strip():
+        raise ConfigError(f"{where}: hostname must not be empty")
+    if any(char.isspace() for char in text) or any(char in text for char in ":/\\?#"):
+        raise ConfigError(message)
+    return text
+
+
+def _port_number(node: yaml.Node, where: str) -> int:
+    """Return a TCP port from 1 to 65535."""
+    message = f"{where}: port must be a whole number from 1 to 65535"
+    if not isinstance(node, yaml.ScalarNode) or node.tag not in {_INT, _STR}:
+        raise ConfigError(message)
+    if node.tag == _INT:
+        text = node.value.replace("_", "")
+        if not _DECIMAL.fullmatch(text):
+            raise ConfigError(message)
+        value = int(text)
+    else:
+        if _PORT_TEXT.fullmatch(node.value) is None:
+            raise ConfigError(message)
+        value = int(node.value)
+    if not 1 <= value <= 65535:
+        raise ConfigError(message)
+    return value
 
 
 def _text(node: yaml.Node, where: str) -> str:

@@ -62,7 +62,6 @@ def _policy(text: str, directory: Path):
 HOUSE = """\
 entry: gate
 timezone: America/Toronto
-revision_task: "http://tasks.example/next"
 client_groups:
   younger:
     addresses: ["192.0.2.40", "192.0.2.41"]
