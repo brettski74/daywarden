@@ -2,7 +2,7 @@ Ticket: S003
 Title: Revision task platform
 Status: Draft
 Story Points: 13
-Last Updated: 2026-10-31 13:03:05
+Last Updated: 2026-10-31 20:36:35
 ---
 
 # User Voice
@@ -32,9 +32,12 @@ As a parent, I want a refused entertainment site to become a revision task chose
 | S003.1 | Task catalogue, cooldown, and attempts | 5 |
 | S003.2 | Task selection and give-up | 5 |
 | S003.3 | Parent review of attempts | 3 |
+| S003.4 | Policy server hostname for task URLs | 3 |
 
 # Notes
 
 Depends on S008.2 for `tasks_required` and the client group on the request. Quiz types in S004, S005, and S006 plug into this epic. A minimal built-in task that a parent marks complete from the parent pages is enough to prove the gate before those quizzes exist. That minimal task is part of S003.2, not a fourth quiz.
 
-Every address in a client group shares that group's tasks and today's count. The implicit `default` group is a client group like any other. This epic does not add a sign-in for the child. The task site this project serves is HTTPS, with a certificate from the household CA under the lifetime rules in S007.1. The placeholder URL in the sample policy stays until that site exists.
+Every address in a client group shares that group's tasks and today's count. The implicit `default` group is a client group like any other. This epic does not add a sign-in for the child. The task site this project serves is HTTPS, with a certificate from the household CA under the lifetime rules in S007.1.
+
+S003.4 builds the task redirect from the policy server's external hostname instead of a full `revision_task` URL. The real-quiz pass rule stays open until S004 records a pass from answers the child submitted. S003 closes after S003.4 and that S004 pass are both done.
