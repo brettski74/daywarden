@@ -89,7 +89,7 @@ Add a parent account after the stack is up. The password is read once. It is sto
 docker compose exec decisions python -m policy.accounts ada
 ```
 
-Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the page stays closed and shows no usage. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup. The attempt review at `/attempts` uses the same sign-in.
+Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the page stays closed and shows no usage. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup. The attempt review at `/attempts` uses the same sign-in. Choose a client group to see that group's attempts, newest first: the task, the household-local start and finish, the outcome, and the duration. Open an attempt to read the answers that were stored. Record a parent check there to store a pass for a client group. The child has no page that records one.
 
 ## Certificate authority
 

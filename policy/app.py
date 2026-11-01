@@ -34,7 +34,7 @@ from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_c
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
-from policy.review import QUIZ_PAGE, https_only_page, respond_attempts, respond_parent_check
+from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
 from policy.selection import entry_path
 from policy.store import PolicyStore
 from policy.task_page import respond_task
@@ -214,6 +214,13 @@ def create_app() -> FastAPI:
     async def parent_check_page(request: Request) -> Response:
         return await _parent_page(request, _parent_check_page)
 
+    @app.api_route("/attempts/{attempt_id}", methods=["GET", "POST"])
+    async def attempt_page(request: Request, attempt_id: str) -> Response:
+        def render(request: Request, raw: bytes) -> object:
+            return _attempt_page(request, raw, attempt_id)
+
+        return await _parent_page(request, render)
+
     async def _parent_page(request: Request, render) -> Response:
         # Stay on the event-loop thread. A sync endpoint would run in a
         # threadpool, and this process's SQLite connection is not shared.
@@ -265,10 +272,24 @@ def create_app() -> FastAPI:
         return respond_attempts(
             accounts,
             method=request.method,
+            query=_query(request, ("client",)),
+            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
+            form=parse_form(raw),
+            now=clock.local(),
+            attempts=attempts,
+            clients=_client_names(hierarchy_policy),
+        )
+
+    def _attempt_page(request: Request, raw: bytes, attempt_id: str):
+        return respond_attempt(
+            accounts,
+            attempt_id=attempt_id,
+            method=request.method,
             query={},
             cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
             form=parse_form(raw),
             now=clock.local(),
+            attempts=attempts,
         )
 
     def _parent_check_page(request: Request, raw: bytes):
@@ -278,6 +299,8 @@ def create_app() -> FastAPI:
             form=parse_form(raw),
             now=clock.local(),
             tasks=() if hierarchy_policy is None else hierarchy_policy.tasks,
+            attempts=attempts,
+            clients=_client_names(hierarchy_policy),
         )
 
     return app
@@ -363,6 +386,16 @@ _TASK_PATHS = {"/health", "/usage", "/quiz", "/attempts", "/attempts/parent-chec
 
 def _empty_policy() -> Policy:
     return Policy(entry="", rule_sets=())
+
+
+def _client_names(policy: Policy | None) -> tuple[str, ...]:
+    """Return the client groups a parent can review, including ``default``."""
+    if policy is None:
+        return ()
+    names = [group.name for group in policy.client_groups]
+    if "default" not in names:
+        names.append("default")
+    return tuple(names)
 
 
 def _client_address(request: Request, policy: Policy | None) -> str:
