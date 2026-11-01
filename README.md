@@ -69,6 +69,8 @@ The three answers the proxy sees are:
 
 When the household has an eligible revision task, that location is `https://<hostname>:<port>/tasks/<name>` for the task chosen for the client group. The sample has no tasks yet, so the location is `https://garden:8090/tasks/next`, and that page says there is nothing to revise. A rule that allows the policy server is what lets the page load after the redirect. The host does not have to be on the proxy bypass list.
 
+A task with `type: arithmetic` is a timed quiz on that page: one large question, an answer box, and a timer bar that shrinks as he gets more right. Its `body` sets the operation, `max_timeout`, `min_timeout`, `correct_answers_required`, and weighted `operands`, and a bad body fails the load. The sound effects are the audio files in `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`, one chosen at random per answer. Add or remove a file there and rebuild the policy image. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#arithmetic-tasks) for the fields, the timing rules, and the stored record.
+
 ## Decision and observation logs
 
 Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
@@ -124,6 +126,24 @@ If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it be
 | --- | --- |
 | `config/policy.yaml` | Household policy: client groups, site groups, windows, quotas, and rule sets. `default` is the implicit group for an address or a URL that matches nothing configured |
 | `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down. The sample lists the school hosts and the policy server named by `hostname` |
+
+## Maintenance
+
+Maintenance commands are scripts in `bin/`, run on the machine running Compose. Each one runs its job inside the decisions container, against the same database and policy file as the service, so the stack has to be up. Link them onto your `PATH` once:
+
+```sh
+ln -s "$PWD"/bin/rm-attempts ~/bin/
+```
+
+`rm-attempts` removes stored task attempts, for example to try a task again without waiting out its cooldown. `rm-attempts --help` lists every option. `--client`, `--task`, and `--type` may each be given more than once; several values for one filter match any of them, and different filters must all match. `--older-than` and `--newer-than` take an age such as `30m`, `2h`, or `7d`, measured from the finish, or from the start of an attempt still in progress. Without `--yes` it only lists what matches. With no filter it refuses unless given `--all`.
+
+```sh
+rm-attempts --client younger --task sums
+rm-attempts --client younger --task sums --yes
+rm-attempts --type arithmetic --newer-than 2h --yes
+```
+
+A removed attempt is gone from `/attempts`. A removed pass no longer counts toward today's `tasks_required` and no longer starts a cooldown. A removed failure or abandonment is no longer a skip day. The change takes effect on the next request, with no restart.
 
 ## Tests
 

@@ -6,7 +6,8 @@ and GET /usage slices today's usage by site group, client group, or quota.
 A path ending in .toml is still the previous engine, so older tests can
 point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
 not that path. Parent pages stay closed until a parent account is added,
-and they are served only over HTTPS.
+and they are served only over HTTPS. The quiz sound sets are read once at
+start, from SOUND_DIR or the image's policy/static/sounds.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from policy import config
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
@@ -36,6 +37,7 @@ from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
 from policy.selection import picker_url
+from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.store import PolicyStore
 from policy.task_page import respond_task
 from policy.tasks import AttemptStore
@@ -82,6 +84,7 @@ def create_app() -> FastAPI:
         clock = HouseholdClock(_zone)
         directory, site_groups = _announce_stored(store, clock, source)
     _announce_parents(accounts)
+    sounds = load_sounds(Path(os.environ.get("SOUND_DIR", str(SOUND_DIR))))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.idle = accounts.idle
     app.state.lifetime = accounts.lifetime
@@ -169,9 +172,15 @@ def create_app() -> FastAPI:
     async def task_page(request: Request, task_name: str) -> Response:
         return await _task_page(request, "/tasks/" + quote(task_name, safe=""))
 
+    @app.get(SOUND_PATH + "{outcome}/{name}")
+    def sound_file(outcome: str, name: str) -> Response:
+        found = sounds.path(outcome, name)
+        if found is None:
+            return PlainTextResponse("not found", status_code=404)
+        return FileResponse(found, media_type=media_type(name), headers={"cache-control": "max-age=3600"})
+
     async def _task_page(request: Request, path: str) -> Response:
-        if request.method == "POST":
-            await request.body()
+        raw = await request.body() if request.method == "POST" else b""
         policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
         page = respond_task(
             policy,
@@ -181,6 +190,9 @@ def create_app() -> FastAPI:
             client_ip=_client_address(request, hierarchy_policy),
             cookie=request.headers.get("cookie"),
             now=clock.local(),
+            query=_query(request, ("do",)),
+            body=raw,
+            sounds=sounds,
         )
         response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
         for name, value in page.headers:

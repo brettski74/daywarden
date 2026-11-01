@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Remove stored task attempts, from the machine running Compose.
+#   rm-attempts --client younger --task sums        list what matches
+#   rm-attempts --client younger --task sums --yes  remove it
+#   rm-attempts --help                              every option
+# Runs `python -m policy.maintenance remove-attempts` in the decisions
+# container. Works from any directory, including through a symlink in ~/bin.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+repo=$(dirname -- "$(dirname -- "$script")")
+tty=()
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    tty=(-T)
+fi
+exec docker compose --project-directory "$repo" exec "${tty[@]}" decisions \
+    python -m policy.maintenance remove-attempts "$@"

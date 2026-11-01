@@ -339,6 +339,26 @@ class AttemptStore:
             ).fetchall()
         return tuple(_attempt(row) for row in rows)
 
+    def everything(self) -> tuple[Attempt, ...]:
+        """Return every client group's attempts, oldest id first. Maintenance reads this."""
+        rows = self.connection.execute(f"SELECT {_COLUMNS} FROM attempts ORDER BY id").fetchall()
+        return tuple(_attempt(row) for row in rows)
+
+    def remove(self, attempt_ids: Sequence[int]) -> int:
+        """Delete these attempts and return how many were stored.
+
+        Skip days, cooldowns, and pass counts are read from the rows, so they
+        forget a removed attempt straight away.
+        """
+        ids = list(attempt_ids)
+        if any(isinstance(item, bool) or not isinstance(item, int) for item in ids):
+            raise ValueError("an attempt id is a whole number")
+        removed = 0
+        with self.connection:
+            for attempt_id in ids:
+                removed += self.connection.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,)).rowcount
+        return removed
+
     def in_progress(self, client_group: str, task: str) -> Attempt | None:
         """Return the open attempt for this group and task, if there is one."""
         _label(client_group, "a client group")
@@ -413,6 +433,21 @@ class AttemptStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("this attempt is already finished")
+        return self._by_id(attempt_id)
+
+    def save(self, attempt_id: int, detail: Mapping) -> Attempt:
+        """Replace the detail of an in-progress attempt, so a reload keeps it.
+
+        A finished attempt is not changed.
+        """
+        payload = _payload(detail)
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE attempts SET detail = ? WHERE id = ? AND outcome = ?",
+                (payload, attempt_id, IN_PROGRESS),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("only an attempt in progress can be saved")
         return self._by_id(attempt_id)
 
     def record(
