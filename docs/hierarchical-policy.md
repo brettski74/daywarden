@@ -193,6 +193,53 @@ The same type may appear on more than one task. `parts-of-speech-1` and `parts-o
 
 The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass counts toward `tasks_required` and is listed with the group's other attempts. The child has no request that records one.
 
+### Arithmetic tasks
+
+A task with `type: arithmetic` is a timed quiz. Its `body` is checked when the file is loaded. A bad body fails the load, the previous policy stays in force, and the error names the task and the field.
+
+| Field | Required | Value |
+| --- | --- | --- |
+| `operation` | Yes | `addition`. Subtraction, multiplication, and division arrive with S004.3 to S004.5. |
+| `max_timeout` | Yes | The time for the first question. A duration greater than zero. |
+| `min_timeout` | Yes | The time once `correct_answers_required - 1` answers are right. Greater than zero and no longer than `max_timeout`. |
+| `correct_answers_required` | Yes | The number of right answers that pass the attempt. 1 or more. |
+| `operands` | Yes | The weighted list the right-hand number `n` is drawn from, and `m` too when `first` is left out. |
+| `first` | No | A weighted list for the left-hand number `m` only, such as a single `7` to drill the seven times table. An empty list is an error. |
+
+A duration is a whole number with `h`, `m`, `s`, or `ms`, such as `10s` or `7500ms`. A bare number such as `10` is an error. Each list entry has a `weight`, a whole number 1 or more, and either one `value` or an inclusive `from` and `to`. Every number in a range gets the full weight. Operands are whole numbers, 0 or more. A value may appear once in a list. A repeated value, overlapping ranges, `from` above `to`, an entry with both `value` and `from`, and any other field are errors. `first` and `operands` are separate lists, so the same value may appear in both with different weights.
+
+```yaml
+tasks:
+  sums:
+    type: arithmetic
+    group: younger
+    pass_cooldown: 1
+    body:
+      operation: addition
+      max_timeout: 10s
+      min_timeout: 4s
+      correct_answers_required: 20
+      operands:
+        - { value: 1, weight: 5 }
+        - { value: 2, weight: 7 }
+        - { from: 3, to: 9, weight: 10 }
+        - { value: 10, weight: 5 }
+```
+
+`m` and `n` are drawn independently. A question is the ordered pair, so `6 + 7` and `7 + 6` are different questions. None of the last three questions in the attempt is asked again while another question is possible. After `k` right answers the time allowed is `max_timeout * (min_timeout / max_timeout) ^ (k / (correct_answers_required - 1))`. Wrong answers and timeouts do not shorten it.
+
+The server issues each question, times it from that moment, and judges the answer. An answer it receives more than half a second after the time allowed is a timeout, whatever it says. When the timer bar runs out, the page sends what is in the box: the right answer is correct, and anything else is a timeout. Reaching `correct_answers_required` passes the attempt at that answer. Wrong answers never fail it.
+
+Progress is stored on the attempt as each answer is recorded. A reload records the question that was showing as a timeout and returns to the start screen with the same count. Coming back more than an hour after the last page load, question, or answer starts the same attempt again from zero, with the task settings in force then. The earlier questions stay in the record as an expired run. A run in progress keeps the settings it started with when the policy file is edited.
+
+The attempt `detail` holds `settings`, `runs`, `questions`, and `last_activity`. Each question has its `run`, `m`, `n`, the `question` as shown, the `expected` answer, his `answer`, the `outcome` (`correct`, `incorrect`, or `timeout`), `allowed_ms`, `taken_ms`, and the household-local `issued` time.
+
+The quiz talks to the server by posting to its own task URL, `?do=visit`, `?do=question`, and `?do=answer`, so the rule that lets the task page load also lets the quiz run. A plain GET of the page changes nothing on the attempt. A revision redirect also catches the browser's background requests, such as favicons and telemetry, and a browser that follows one fetches the task page without showing it. Only the page's own `?do=visit`, sent when it loads in a tab, counts as a reload.
+
+### Sound sets
+
+Each outcome plays one sound, chosen at random from that outcome's directory in the policy image: `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`. Every audio file in the directory is equally likely. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`. Any other file, such as an attribution note, is never played. Adding or removing a sound is a file change in that directory. It takes effect when the policy image is rebuilt and the service restarts. A set with no audio plays nothing for that outcome, and the service logs a warning naming that set when it starts. The files are served at `/static/sounds/<set>/<file>` on the task host. A rule that allows the task page, or redirects to `revision_task`, allows them too. A new sound stops the one before it. The page has no mute control.
+
 ## Rule sets
 
 A rule set has a name, unique in the rule-set namespace, and an ordered list of rules. `entry` names the rule set where access decisions start. The name is required. If it is missing, or it does not name a rule set, the load fails.

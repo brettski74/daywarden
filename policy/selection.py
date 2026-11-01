@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from policy.hierarchy import Policy
+from policy.sounds import SOUND_PATH
 from policy.tasks import (
     PARENT_CHECK,
     PASS,
@@ -309,6 +310,8 @@ def apply_task_selection(
 
     A task he may open is allowed through, including when the rule said
     ``revision_task``, so the follow-up request does not redirect in a circle.
+    A quiz request is a post to that same task URL. The quiz sound files are
+    allowed by the same answer that would let a task page load.
     An allow for the picker, or for a task he may not open, becomes a
     redirect. When nothing is eligible, a request that is already the
     picker is allowed so that page can say so.
@@ -319,6 +322,10 @@ def apply_task_selection(
     on_site = same_task_site(url, policy)
     entry = PICKER_PATH
     path = urlsplit(url).path or "/"
+    if on_site and path.startswith(SOUND_PATH):
+        if action == "redirect" and decision.get("location") == revision:
+            return {"action": "allow"}
+        return decision
     name = task_name_from_path(path, entry) if on_site else None
     if name is not None and may_open(policy.tasks, name, client_group, today, store.attempts(client_group)):
         if action == "allow" or (action == "redirect" and decision.get("location") == revision):

@@ -5,7 +5,9 @@ and ``*.yml`` files in that directory, in lexicographic order, without walking
 into subdirectories. A file already loaded is skipped, so an include cycle is
 not an error. Names are unique inside each of the six namespaces. The same
 spelling may be used in two namespaces. Tasks are the sixth. Their bodies
-are opaque here. S003.1 is the catalogue that reads them.
+are opaque here, except that an ``arithmetic`` body is checked by
+``policy.arithmetic`` so a bad operand list fails the load. S003.1 is the
+catalogue that reads them.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
@@ -29,6 +31,7 @@ from pathlib import Path
 
 import yaml
 
+from policy.arithmetic import ARITHMETIC, parse_settings
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
@@ -529,9 +532,15 @@ def _task(name: str, node: yaml.Node, where: str) -> Task:
     document = {} if "body" not in pairs else _document(pairs["body"], f"{where}: body")
     if not isinstance(document, dict):
         raise ConfigError(f"{where}: body must be a mapping")
+    kind = _text(pairs["type"], f"{where}: type")
+    if kind == ARITHMETIC:
+        try:
+            parse_settings(document)
+        except ValueError as exc:
+            raise ConfigError(f"{where}: task {name!r}: body.{exc}") from exc
     return Task(
         name,
-        _text(pairs["type"], f"{where}: type"),
+        kind,
         groups,
         _whole(pairs["pass_cooldown"], f"{where}: pass_cooldown", minimum=0),
         json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
