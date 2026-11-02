@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS task_turns (
 """
 
 PICKER_PATH = "/tasks/next"
+MEDIA_SEGMENT = "/audio/"
 DEFAULT_PUBLISHED_PORT = 8090
 # Compose mounts the machine's /etc/hostname here. The container's own
 # hostname is an id such as 1c45a70451e1, which clients do not use.
@@ -147,6 +148,23 @@ def task_page_path(name: str) -> str:
 def task_page_url(policy: Policy, name: str) -> str:
     """Return the absolute URL of one task on the policy server."""
     return task_origin(policy) + task_page_path(name)
+
+
+def task_media_path(name: str) -> str:
+    """Return the path a task's own audio files are served under, ending in ``/``."""
+    return task_page_path(name) + MEDIA_SEGMENT
+
+
+def task_media_from_path(path: str) -> tuple[str, str] | None:
+    """Return the task name and file name in a ``/tasks/<name>/audio/<file>`` path, or None."""
+    for prefix in ("/tasks/work/", "/tasks/"):
+        if not path.startswith(prefix):
+            continue
+        name, found, file_name = path[len(prefix) :].partition(MEDIA_SEGMENT)
+        name = unquote(name)
+        if found and name and "/" not in name and file_name and "/" not in file_name:
+            return name, file_name
+    return None
 
 
 def same_task_site(url: str, policy: Policy) -> bool:
@@ -311,7 +329,8 @@ def apply_task_selection(
     A task he may open is allowed through, including when the rule said
     ``revision_task``, so the follow-up request does not redirect in a circle.
     A quiz request is a post to that same task URL. The quiz sound files are
-    allowed by the same answer that would let a task page load.
+    allowed by the same answer that would let a task page load, and so are a
+    task's own audio files under ``<task URL>/audio/`` while he may open it.
     An allow for the picker, or for a task he may not open, becomes a
     redirect. When nothing is eligible, a request that is already the
     picker is allowed so that page can say so.
@@ -324,6 +343,12 @@ def apply_task_selection(
     path = urlsplit(url).path or "/"
     if on_site and path.startswith(SOUND_PATH):
         if action == "redirect" and decision.get("location") == revision:
+            return {"action": "allow"}
+        return decision
+    media = task_media_from_path(path) if on_site else None
+    if media is not None:
+        opened = may_open(policy.tasks, media[0], client_group, today, store.attempts(client_group))
+        if opened and action == "redirect" and decision.get("location") == revision:
             return {"action": "allow"}
         return decision
     name = task_name_from_path(path, entry) if on_site else None

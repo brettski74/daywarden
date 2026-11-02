@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _show(env: dict[str, str]) -> tuple[str, str]:
+def _show(env: dict[str, str]) -> tuple[str, str, str]:
     completed = subprocess.run(
         ["make", "show-env"],
         cwd=ROOT,
@@ -17,23 +17,32 @@ def _show(env: dict[str, str]) -> tuple[str, str]:
         timeout=30,
         check=True,
     )
-    names, ca_path = completed.stdout.splitlines()
-    return names, ca_path
+    names, ca_path, data_dir = completed.stdout.splitlines()
+    return names, ca_path, data_dir
 
 
 def test_an_exported_parent_names_wins_over_the_env_file():
     env = os.environ.copy()
     env["PARENT_NAMES"] = "localhost,127.0.0.1"
-    names, _ca_path = _show(env)
+    names, _ca_path, _data_dir = _show(env)
     assert names == "localhost,127.0.0.1"
 
 
 def test_an_unset_parent_names_comes_from_the_env_file():
     env = os.environ.copy()
     env.pop("PARENT_NAMES", None)
-    names, ca_path = _show(env)
+    names, ca_path, _data_dir = _show(env)
     assert names == "127.0.0.1"
     assert ca_path == "./data/ca"
+
+
+def test_the_data_directory_defaults_under_home_and_an_exported_one_wins():
+    env = os.environ.copy()
+    env.pop("DAYWARDEN_DATA_DIR", None)
+    env["HOME"] = "/home/example"
+    assert _show(env)[2] == "/home/example/daywarden"
+    env["DAYWARDEN_DATA_DIR"] = "/srv/daywarden"
+    assert _show(env)[2] == "/srv/daywarden"
 
 
 def test_up_loads_the_env_file_without_replacing_the_shell():

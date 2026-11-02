@@ -7,7 +7,8 @@ A path ending in .toml is still the previous engine, so older tests can
 point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
 not that path. Parent pages stay closed until a parent account is added,
 and they are served only over HTTPS. The quiz sound sets are read once at
-start, from SOUND_DIR or the image's policy/static/sounds.
+start, from SOUND_DIR or the image's policy/static/sounds. Spelling words
+are read from DAYWARDEN_DATA_DIR each time a run starts.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_a
 from policy.selection import picker_url
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.store import PolicyStore
-from policy.task_page import respond_task
+from policy.task_page import respond_task, task_media
 from policy.tasks import AttemptStore
 from policy.usage import UsageStore
 
@@ -164,6 +165,14 @@ def create_app() -> FastAPI:
         # The revision page does not use the parent session.
         return Response(QUIZ_PAGE, media_type="text/html; charset=utf-8")
 
+    @app.get("/tasks/work/{task_name}/audio/{file_name}")
+    async def task_work_audio(request: Request, task_name: str, file_name: str) -> Response:
+        return _task_audio(request, "/tasks/work/" + quote(task_name, safe="") + "/audio/" + file_name)
+
+    @app.get("/tasks/{task_name}/audio/{file_name}")
+    async def task_audio(request: Request, task_name: str, file_name: str) -> Response:
+        return _task_audio(request, "/tasks/" + quote(task_name, safe="") + "/audio/" + file_name)
+
     @app.api_route("/tasks/work/{task_name}", methods=["GET", "POST"])
     async def task_work_page(request: Request, task_name: str) -> Response:
         return await _task_page(request, "/tasks/work/" + quote(task_name, safe=""))
@@ -178,6 +187,19 @@ def create_app() -> FastAPI:
         if found is None:
             return PlainTextResponse("not found", status_code=404)
         return FileResponse(found, media_type=media_type(name), headers={"cache-control": "max-age=3600"})
+
+    def _task_audio(request: Request, path: str) -> Response:
+        policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
+        found = task_media(
+            policy,
+            attempts,
+            path=path,
+            client_ip=_client_address(request, hierarchy_policy),
+            now=clock.local(),
+        )
+        if found is None:
+            return PlainTextResponse("not found", status_code=404)
+        return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, max-age=3600"})
 
     async def _task_page(request: Request, path: str) -> Response:
         raw = await request.body() if request.method == "POST" else b""

@@ -41,6 +41,7 @@ services:
       PARENT_HTTPS_PORT: "8443"
       # Host port clients use. Task URLs use this, not the bind port 8443.
       POLICY_PORT: ${POLICY_PORT:-8090}
+      DAYWARDEN_DATA_DIR: /var/lib/daywarden
     ports:
       # Clients open https://<this machine>:POLICY_PORT/usage. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
@@ -55,6 +56,15 @@ services:
       # Used for task URLs when policy.yaml does not set hostname. The
       # container's own hostname is not a name clients can open.
       - /etc/hostname:/etc/host-hostname:ro
+      # Parent-managed task files, such as spelling recordings under
+      # spelling/current and spelling/revision. Read on each new quiz run.
+      # make up creates the directory. Docker would create it owned by root.
+      - type: bind
+        source: ${DAYWARDEN_DATA_DIR:-${HOME}/daywarden}
+        target: /var/lib/daywarden
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         - CMD

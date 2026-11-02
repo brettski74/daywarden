@@ -73,6 +73,8 @@ A task with `type: arithmetic` is a timed quiz on that page: one large question,
 
 A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with blank boxes to fill in. He gets three tries per question, worth 1, 0.5, and 0.25 points. With `maximum_questions` set, an attempt that runs out of questions without enough points is a failure. Every field has a default, so `body: {}` is a working task. Each difference may set its own `minimum_value` and `maximum_value`. The defaults keep counting by 2 under 100. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#skip-counting-tasks) for the fields, the configuration checks, and the scoring.
 
+A task with `type: spelling` plays recordings of words, and he types each one. The recordings live on the host in `DAYWARDEN_DATA_DIR` (`$HOME/daywarden` by default, set in `.env`), in `spelling/current` for this week's words and `spelling/revision` for older ones. Name each file after the word, such as `rope.opus`, and add `rope.sentence.opus` for a sentence that uses it. New or replaced files are used from the next quiz run without a restart. `make up` creates the directory if it is missing. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#spelling-tasks) for the file names, the fields, and the rules.
+
 ## Decision and observation logs
 
 Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
