@@ -236,6 +236,60 @@ The attempt `detail` holds `settings`, `runs`, `questions`, and `last_activity`.
 
 The quiz talks to the server by posting to its own task URL, `?do=visit`, `?do=question`, and `?do=answer`, so the rule that lets the task page load also lets the quiz run. A plain GET of the page changes nothing on the attempt. A revision redirect also catches the browser's background requests, such as favicons and telemetry, and a browser that follows one fetches the task page without showing it. Only the page's own `?do=visit`, sent when it loads in a tab, counts as a reload.
 
+### Skip counting tasks
+
+A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with some boxes left blank for him to fill in. Its `body` is checked when the file is loaded, the same way as an arithmetic body. Every field is optional.
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `sequence_length` | 8 | Numbers in each sequence, 4 to 12. |
+| `completed` | 3 | Numbers filled in, 2 to `sequence_length - 1`. |
+| `consecutive` | `true` | When true, at least two filled-in numbers are next to each other. |
+| `multiples_only` | `false` | When true, every number is a multiple of the difference's size, for a difference that does not set its own. |
+| `difference` | 2, 5, 10, 25, 100, and their negatives, weight 1 each, with the maximums below | The weighted list of common differences. A negative difference counts down. |
+| `minimum_value` | 1 | The lowest number in a box, for a difference that does not set its own. It may be zero or negative. |
+| `maximum_value` | 999 | The highest number in a box, for a difference that does not set its own. Greater than `minimum_value`. |
+| `timeout` | `3m` | The time for each question, a duration as for arithmetic. |
+| `correct_answers_required` | Worked out below | The points needed to pass. 1 or more. |
+| `minimum_questions` | `correct_answers_required` | Questions he must finish before the attempt can pass or fail early. |
+| `maximum_questions` | Not set | Questions after which the attempt ends. Without it, the attempt cannot fail. |
+
+When `correct_answers_required` is left out, it is the larger of 8 and `ceil(0.8 × minimum_questions)`, or 8 when `minimum_questions` is also left out, and no more than `maximum_questions`. `minimum_questions` then defaults to `correct_answers_required`.
+
+`difference` entries follow the arithmetic `operands` rules, except that values may be negative and zero is not allowed. A range that includes 0 is an error, so both directions are two ranges, such as `{ from: -5, to: -1 }` and `{ from: 1, to: 5 }`. An entry may also set its own `minimum_value`, `maximum_value`, and `multiples_only`, which replace the body's for every difference in that entry, such as `{ value: 2, weight: 1, maximum_value: 99 }` or `{ value: 25, weight: 1, multiples_only: true }`. Any of the three an entry leaves out comes from the body. Its maximum must be greater than its minimum. An entry's range may go outside the body's. Each box is wide enough for the longest number any difference allows.
+
+The default list caps counting by 2 at 99, by 5 at 199, and by 10 at 499, in both directions. Counting by 25 and 100 uses `maximum_value`. Counting by 25 and -25 always starts on a multiple of 25. The other defaults use the body's `multiples_only`. When `maximum_value` is lower than a cap, the lower one wins, so a parent who narrows the range is never overridden by a default they did not write. Every default difference uses `minimum_value`. A `minimum_value` at or above a cap fails the load, and the error says to write a difference list. The load also fails when `minimum_questions` or `correct_answers_required` is more than `maximum_questions`. It fails when one difference allows fewer than 3 distinct sequences in its range, with the error naming that difference. It fails when all the differences together allow fewer sequences than `maximum_questions`, or than the larger of `correct_answers_required` and `minimum_questions` when there is no maximum. Counting by 100 with 8 numbers between 1 and 999 starts anywhere from 1 to 299. With `multiples_only` it can only start on 100 or 200, so the load fails.
+
+```yaml
+tasks:
+  skip-counting:
+    type: skip_counting
+    group: younger
+    pass_cooldown: 1
+    failure_cooldown: 0
+    body:
+      sequence_length: 10
+      completed: 4
+      minimum_value: 0
+      maximum_value: 200
+      difference:
+        - { value: 2, weight: 3, maximum_value: 60 }
+        - { value: 5, weight: 2 }
+        - { value: -2, weight: 3, maximum_value: 60 }
+        - { value: -5, weight: 2 }
+      minimum_questions: 10
+      maximum_questions: 15
+      timeout: 2m
+```
+
+Each question draws a difference, leaving out the differences of the last two questions, and the rest keep their weights. With two differences they alternate. With one, every question uses it. The start is drawn evenly from every start that keeps the sequence in range, leaving out the last two starts used with that difference. The filled-in positions are drawn evenly from every set that meets `consecutive`.
+
+He has three tries. A right answer scores 1 point on the first try, 0.5 on the second, and 0.25 on the third. After a wrong try the page says how many boxes are wrong. After the second, the boxes he got right lock in black and the wrong ones turn red. A wrong third try scores 0 and shows the answer for 10 seconds. Enter skips ahead after 3 seconds. The timer runs for the whole question and is not reset by a try. When it runs out, the page sends what is in the boxes: every box right scores for the try he was on, and anything else is a timeout. The server judges each try from its own clock, with the same half-second allowance as arithmetic, and refuses a fourth try or a try with a blank box.
+
+The attempt passes when his points reach `correct_answers_required` and at least `minimum_questions` questions are finished. With `maximum_questions`, it fails when that many are finished without a pass, or once at least `minimum_questions` are finished and full marks on every question left could not reach the points. A failure uses `failure_cooldown` and counts as a skip day. Without `maximum_questions` the attempt never fails. A question left showing on a reload or a give-up is a timeout. When that is what passes or fails the attempt, the pass or failure is recorded rather than an abandonment.
+
+The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`. Each question has its `run`, `difference`, `start`, the full `sequence`, the `filled` positions, every try in `tries` (his `entries` in the blank boxes left to right, the number `wrong`, whether it was `expired`, and `received_ms` from issue), the `outcome`, the `correct_try`, the `points`, `allowed_ms`, and the household-local `issued` time. Resume and expiry work as for arithmetic.
+
 ### Sound sets
 
 Each outcome plays one sound, chosen at random from that outcome's directory in the policy image: `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`. Every audio file in the directory is equally likely. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`. Any other file, such as an attribution note, is never played. Adding or removing a sound is a file change in that directory. It takes effect when the policy image is rebuilt and the service restarts. A set with no audio plays nothing for that outcome, and the service logs a warning naming that set when it starts. The files are served at `/static/sounds/<set>/<file>` on the task host. A rule that allows the task page, or redirects to `revision_task`, allows them too. A new sound stops the one before it. The page has no mute control.

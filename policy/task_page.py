@@ -5,8 +5,9 @@ Giving up abandons that attempt when the selection rules allow it, and
 otherwise leaves the attempt in progress and says this task has to be
 finished. ``parent_check`` is not a page the child can open, and nothing
 on these pages records a pass except a quiz that reaches its target.
-An ``arithmetic`` task is the quiz in ``policy.arithmetic_page``. Its page
-load, questions, and answers are posts to the task's own URL with ``?do=``.
+An ``arithmetic`` task is the quiz in ``policy.arithmetic_page``, and a
+``skip_counting`` task is the one in ``policy.skip_counting_page``. A quiz's
+page load, questions, and answers are posts to the task's own URL with ``?do=``.
 """
 
 from __future__ import annotations
@@ -16,10 +17,11 @@ from collections.abc import Mapping
 from datetime import datetime
 from urllib.parse import quote, unquote
 
-from policy import arithmetic_page
+from policy import arithmetic_page, skip_counting_page
 from policy.arithmetic import ARITHMETIC
 from policy.engine import classify_client
 from policy.hierarchy import Policy
+from policy.quiz_page import reload
 from policy.report import PageResponse, _document, _e, _response
 from policy.selection import (
     PICKER_PATH,
@@ -29,6 +31,7 @@ from policy.selection import (
     task_name_from_path,
     task_page_url,
 )
+from policy.skip_counting import SKIP_COUNTING
 from policy.sounds import SoundSets
 from policy.tasks import ABANDONED, Attempt, AttemptStore, Task, household_day
 
@@ -36,6 +39,8 @@ NOTHING = "There is nothing to revise right now."
 NOTHING_ELSE = "There is nothing else available right now."
 MUST_FINISH = "This task has to be finished before another one."
 VISIT_COOKIE = "task_visit"
+
+_QUIZZES = {ARITHMETIC: arithmetic_page, SKIP_COUNTING: skip_counting_page}
 
 
 def respond_task(
@@ -66,21 +71,20 @@ def respond_task(
     rows = store.attempts(client)
     if task is None or not may_open(policy.tasks, name, client, today, rows):
         if method.upper() == "POST" and action is not None:
-            return arithmetic_page.reload()
+            return reload()
         page = _send_to_choice(policy, store, client, today)
         if task is not None and page.status == 302:
             target = task_page_url(policy, task.name)
             if _location(page) == target:
                 return _page(NOTHING)
         return page
+    quiz = _QUIZZES.get(task.type)
     if method.upper() == "POST":
-        if action is not None and task.type == ARITHMETIC:
-            return arithmetic_page.respond_api(
-                policy, store, task, client, action=action, body=body, now=now, sounds=sounds
-            )
+        if action is not None and quiz is not None:
+            return quiz.respond_api(policy, store, task, client, action=action, body=body, now=now, sounds=sounds)
         return _give_up(policy, store, task, client, today, cookie, now, path)
     attempt = store.begin(client, task.name, now)
-    return _show(store, task, attempt, path, now, stuck=False)
+    return _show(policy, store, task, attempt, path, now, stuck=False)
 
 
 def _send_to_choice(policy, store, client, today) -> PageResponse:
@@ -94,14 +98,15 @@ def _give_up(policy, store, task, client, today, cookie, now, path: str) -> Page
     rows = store.attempts(client)
     if not may_abandon(task, policy.tasks, client, today, rows):
         current = store.begin(client, task.name, now)
-        return _show(store, task, current, path, now, stuck=True)
+        return _show(policy, store, task, current, path, now, stuck=True)
     current = store.in_progress(client, task.name)
     if current is None:
         current = store.begin(client, task.name, now)
-    detail = current.detail
-    if task.type == ARITHMETIC:
-        detail = arithmetic_page.settle(task, detail, now)
-    store.finish(current.id, ABANDONED, now, detail=detail)
+    detail, outcome = current.detail, ABANDONED
+    quiz = _QUIZZES.get(task.type)
+    if quiz is not None:
+        detail, outcome = quiz.settle(task, detail, now)
+    store.finish(current.id, outcome, now, detail=detail)
     visit = _read_visit(cookie) | {task.name}
     location = chosen_task_url(
         policy,
@@ -119,6 +124,7 @@ def _give_up(policy, store, task, client, today, cookie, now, path: str) -> Page
 
 
 def _show(
+    policy: Policy,
     store: AttemptStore,
     task: Task,
     attempt: Attempt,
@@ -127,9 +133,10 @@ def _show(
     *,
     stuck: bool,
 ) -> PageResponse:
-    if task.type == ARITHMETIC:
+    quiz = _QUIZZES.get(task.type)
+    if quiz is not None:
         note = MUST_FINISH if stuck else ""
-        return arithmetic_page.show(store, task, attempt, path=action, now=now, note=note, record=stuck)
+        return quiz.show(store, task, attempt, path=action, now=now, policy=policy, note=note, record=stuck)
     note = f"<p>{_e(MUST_FINISH)}</p>\n" if stuck else ""
     form = (
         f'<form method="post" action="{_e(action)}">\n'

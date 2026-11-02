@@ -6,8 +6,8 @@ into subdirectories. A file already loaded is skipped, so an include cycle is
 not an error. Names are unique inside each of the six namespaces. The same
 spelling may be used in two namespaces. Tasks are the sixth. Their bodies
 are opaque here, except that an ``arithmetic`` body is checked by
-``policy.arithmetic`` so a bad operand list fails the load. S003.1 is the
-catalogue that reads them.
+``policy.arithmetic`` and a ``skip_counting`` body by ``policy.skip_counting``,
+so a bad quiz body fails the load. S003.1 is the catalogue that reads them.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import yaml
 
-from policy.arithmetic import ARITHMETIC, parse_settings
+from policy import arithmetic, skip_counting
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
@@ -501,6 +501,12 @@ def _take_tasks(node: yaml.Node, build: _Build) -> None:
         _claim(build.tasks, build.task_where, name, task, where, "task")
 
 
+_QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
+    arithmetic.ARITHMETIC: arithmetic.parse_settings,
+    skip_counting.SKIP_COUNTING: skip_counting.parse_settings,
+}
+
+
 def _task(name: str, node: yaml.Node, where: str) -> Task:
     pairs = _pairs(node)
     _reject_unknown(set(pairs), _TASK_KEYS, where)
@@ -533,9 +539,10 @@ def _task(name: str, node: yaml.Node, where: str) -> Task:
     if not isinstance(document, dict):
         raise ConfigError(f"{where}: body must be a mapping")
     kind = _text(pairs["type"], f"{where}: type")
-    if kind == ARITHMETIC:
+    parse = _QUIZ_BODIES.get(kind)
+    if parse is not None:
         try:
-            parse_settings(document)
+            parse(document)
         except ValueError as exc:
             raise ConfigError(f"{where}: task {name!r}: body.{exc}") from exc
     return Task(
