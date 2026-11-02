@@ -127,8 +127,8 @@ class Stack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
-        self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.toml"
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.cmd = [
             "docker", "compose", "-p", project,
             "-f", "docker-compose.yml", "-f", "tests/policy.compose.yml",
@@ -184,14 +184,14 @@ def _request(
 
 @pytest.fixture(scope="module")
 def stack(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-s0011-") as raw:
+    with tempfile.TemporaryDirectory(prefix="daywarden-s0011-") as raw:
         root = Path(raw)
         (root / "ca").mkdir()
         config_dir = root / "config"
         config_dir.mkdir()
         (config_dir / "decision.json").write_text('{"action": "allow", "marker": "from the file"}')
         (config_dir / "policy.toml").write_text(POLICY)
-        running = Stack(root / "ca", config_dir, f"smartproxy-s0011-{os.getpid()}")
+        running = Stack(root / "ca", config_dir, f"daywarden-s0011-{os.getpid()}")
         try:
             running.up_decisions()
             yield running
@@ -262,7 +262,7 @@ import json, sys
 from datetime import date
 from policy.store import PolicyStore
 document = json.load(sys.stdin)
-store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+store = PolicyStore("/var/lib/daywarden/policy.sqlite3")
 row = store.connection.execute(
     "SELECT id FROM clients WHERE name = ?", (document["name"],)
 ).fetchone()
@@ -291,7 +291,7 @@ import json, sys
 from datetime import datetime, timedelta
 from policy.store import PolicyStore
 document = json.load(sys.stdin)
-store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+store = PolicyStore("/var/lib/daywarden/policy.sqlite3")
 row = store.connection.execute(
     "SELECT id FROM clients WHERE name = ?", (document["name"],)
 ).fetchone()
@@ -308,7 +308,7 @@ store.close()
 
 CLEAR_BUCKETS = """
 from policy.store import PolicyStore
-store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+store = PolicyStore("/var/lib/daywarden/policy.sqlite3")
 store.connection.execute("DELETE FROM usage_buckets")
 store.connection.commit()
 store.close()
@@ -388,7 +388,7 @@ LEDGER = """
 import json
 from datetime import datetime
 from policy.store import PolicyStore
-store = PolicyStore("/var/lib/smartproxy/policy.sqlite3")
+store = PolicyStore("/var/lib/daywarden/policy.sqlite3")
 (client_id,) = store.connection.execute(
     "SELECT id FROM clients WHERE name = 'Younger child'"
 ).fetchone()

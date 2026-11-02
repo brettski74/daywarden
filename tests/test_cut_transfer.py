@@ -96,8 +96,8 @@ class Stack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
-        self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.yaml"
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.yaml"
         self.env["OBSERVATION_INTERVAL"] = "1"
         self.cmd = [
             "docker",
@@ -186,7 +186,7 @@ def _status(headers: str) -> int:
 
 @pytest.fixture(scope="module")
 def stack(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-s0086-") as raw:
+    with tempfile.TemporaryDirectory(prefix="daywarden-s0086-") as raw:
         root = Path(raw)
         ca_dir = root / "ca"
         config_dir = root / "config"
@@ -199,7 +199,7 @@ def stack(request):
         loaded = load(policy_path)
         assert loaded is not None and loaded.quota("pipe") is not None
         (config_dir / "bypass.txt").write_text("")
-        running = Stack(ca_dir, config_dir, _free_port(), f"smartproxy-s0086-{os.getpid()}")
+        running = Stack(ca_dir, config_dir, _free_port(), f"daywarden-s0086-{os.getpid()}")
         try:
             running.up()
             yield running
@@ -218,7 +218,7 @@ def test_a_forwarded_stream_is_cut_at_the_limit_and_a_new_request_is_denied(stac
         completed, headers, body = _exchange(stack, "http://origin/still-allowed")
         assert completed.returncode == 0, completed.stderr
         assert _status(headers) == 200
-        assert body == b"smartproxy-origin-ok /still-allowed"
+        assert body == b"daywarden-origin-ok /still-allowed"
     finally:
         stack.start_observations()
 
@@ -253,4 +253,4 @@ def test_a_forwarded_stream_is_cut_at_the_limit_and_a_new_request_is_denied(stac
     completed, headers, body = _exchange(stack, "http://origin/after-the-cut")
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
-    assert body == b"smartproxy-origin-ok /after-the-cut"
+    assert body == b"daywarden-origin-ok /after-the-cut"

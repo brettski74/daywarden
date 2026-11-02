@@ -14,7 +14,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "mitmproxy/mitmproxy:12.2.3"
 CA_TARGET = "/home/mitmproxy/.mitmproxy"
-ORIGIN_BODY = b"smartproxy-origin-ok"
+ORIGIN_BODY = b"daywarden-origin-ok"
+ALLOW_EVERYTHING = """\
+entry: household
+rule_sets:
+  household:
+    - condition: always
+      when_true: { action: allow }
+"""
 
 
 def _free_port() -> int:
@@ -41,8 +48,18 @@ def _run(cmd, *, env, timeout, check=True):
     return completed
 
 
+def _stack_dirs(root: Path) -> tuple[Path, Path]:
+    ca_dir = root / "ca"
+    config_dir = root / "config"
+    ca_dir.mkdir()
+    config_dir.mkdir()
+    (config_dir / "policy.yaml").write_text(ALLOW_EVERYTHING, encoding="utf-8")
+    (config_dir / "bypass.txt").write_text("", encoding="utf-8")
+    return ca_dir, config_dir
+
+
 class ProxyStack:
-    def __init__(self, ca_dir: Path, port: int, project: str, *, with_origin: bool):
+    def __init__(self, ca_dir: Path, config_dir: Path, port: int, project: str, *, with_origin: bool):
         self.ca_dir = ca_dir
         self.port = port
         self.project = project
@@ -51,6 +68,8 @@ class ProxyStack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.yaml"
         self.cmd = ["docker", "compose", "-p", project, "-f", "docker-compose.yml"]
         if with_origin:
             self.cmd += ["-f", "tests/origin.compose.yml"]
@@ -111,12 +130,13 @@ def _curl(args, *, timeout=20):
 
 @pytest.fixture(scope="module")
 def proxy(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-ca-") as raw:
-        ca_dir = Path(raw)
+    with tempfile.TemporaryDirectory(prefix="daywarden-ca-") as raw:
+        ca_dir, config_dir = _stack_dirs(Path(raw))
         stack = ProxyStack(
             ca_dir,
+            config_dir,
             _free_port(),
-            f"smartproxy-s0001-{os.getpid()}",
+            f"daywarden-s0001-{os.getpid()}",
             with_origin=True,
         )
         try:
@@ -139,7 +159,7 @@ def test_listen_port_and_ca_path_come_from_configuration(tmp_path):
     env["CA_VOLUME_PATH"] = str(ca_dir)
 
     completed = _run(
-        ["docker", "compose", "-p", "smartproxy-config", "config", "--format", "json"],
+        ["docker", "compose", "-p", "daywarden-config", "config", "--format", "json"],
         env=env,
         timeout=30,
     )
@@ -159,6 +179,41 @@ def test_listen_port_and_ca_path_come_from_configuration(tmp_path):
     command = service["command"]
     assert command[0] == "mitmdump"
     assert "regular" in command
+
+
+def test_every_service_has_mounts_docker_can_create(tmp_path):
+    ca_dir = tmp_path / "household-ca"
+    data_dir = tmp_path / "household-data"
+    ca_dir.mkdir()
+    data_dir.mkdir()
+    env = os.environ.copy()
+    env["PROXY_PORT"] = "17432"
+    env["CA_VOLUME_PATH"] = str(ca_dir)
+    env["DAYWARDEN_DATA_DIR"] = str(data_dir)
+
+    completed = _run(
+        ["docker", "compose", "-p", "daywarden-config", "config", "--format", "json"],
+        env=env,
+        timeout=30,
+    )
+    config = json.loads(completed.stdout)
+
+    for name, service in config["services"].items():
+        mounts = service.get("volumes", [])
+        targets = [item["target"] for item in mounts]
+        assert len(targets) == len(set(targets)), f"{name} mounts a target twice: {targets}"
+        read_only = [item["target"] for item in mounts if item.get("read_only")]
+        for parent in read_only:
+            nested = [t for t in targets if t.startswith(parent.rstrip("/") + "/")]
+            assert not nested, f"{name} nests {nested} under read-only {parent}"
+
+    decisions = config["services"]["decisions"]
+    data_targets = [
+        item["target"]
+        for item in decisions["volumes"]
+        if item.get("source") == str(data_dir)
+    ]
+    assert data_targets == [decisions["environment"]["DAYWARDEN_DATA_DIR"]]
 
 
 def test_http_request_reaches_the_origin(proxy):
@@ -246,13 +301,14 @@ def test_new_container_reuses_the_same_ca(proxy):
 
 def test_ca_volume_owned_by_a_group_the_image_does_not_know():
     """The published image refuses a CA directory whose group is missing."""
-    with tempfile.TemporaryDirectory(prefix="smartproxy-ca-foreign-") as raw:
-        ca_dir = Path(raw)
+    with tempfile.TemporaryDirectory(prefix="daywarden-ca-foreign-") as raw:
+        ca_dir, config_dir = _stack_dirs(Path(raw))
         _chown_ca(ca_dir, "1001:1001")
         stack = ProxyStack(
             ca_dir,
+            config_dir,
             _free_port(),
-            f"smartproxy-s0001-foreign-{os.getpid()}",
+            f"daywarden-s0001-foreign-{os.getpid()}",
             with_origin=False,
         )
         try:

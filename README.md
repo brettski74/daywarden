@@ -1,4 +1,4 @@
-# smartproxy
+# daywarden
 
 Household explicit proxy. `make up` starts mitmproxy with a certificate authority that stays on disk across container restarts.
 

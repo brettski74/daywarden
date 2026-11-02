@@ -304,7 +304,7 @@ def main(argv: list[str] | None = None) -> None:
     # Imported here so a sign-in check does not load the policy loader.
     from policy.store import PolicyStore
 
-    database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
+    database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database)
     try:

@@ -1,7 +1,7 @@
 """The policy service. The container runs: python -m policy.serve
 
 On start, POLICY_FILE is loaded. The household file is YAML
-(/etc/smartproxy/policy.yaml). A YAML policy is decided by nested rule sets,
+(/etc/daywarden/policy.yaml). A YAML policy is decided by nested rule sets,
 and GET /usage slices today's usage by site group, client group, or quota.
 A path ending in .toml is still the previous engine, so older tests can
 point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
@@ -46,9 +46,9 @@ from policy.usage import UsageStore
 
 
 def create_app() -> FastAPI:
-    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/smartproxy/policy.yaml"))
-    database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
-    decision_file = Path(os.environ.get("DECISION_FILE", "/etc/smartproxy/decision.json"))
+    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml"))
+    database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
+    decision_file = Path(os.environ.get("DECISION_FILE", "/etc/daywarden/decision.json"))
     decision_stub = os.environ.get("DECISION_STUB") == "1"
     decision_log = DecisionLog(Path(os.environ.get("DECISION_LOG", "/tmp/decisions.jsonl")))
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
@@ -421,10 +421,10 @@ def _client_address(request: Request, policy: Policy | None) -> str:
 
     A browser that reaches this service directly is classified from the
     connection. A request the proxy forwarded carries the child address in
-    ``X-Smartproxy-Client``, because the connection itself is the proxy.
+    ``X-Daywarden-Client``, because the connection itself is the proxy.
     """
     peer = request.client.host if request.client is not None else ""
-    header = request.headers.get("x-smartproxy-client", "")
+    header = request.headers.get("x-daywarden-client", "")
     if policy is not None and peer and classify_client(policy, peer) != "default":
         return peer
     if normalize_ip(header) is not None:

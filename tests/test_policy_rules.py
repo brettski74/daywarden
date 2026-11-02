@@ -1,6 +1,7 @@
 """S001.3: ordered rules and time windows. The task count is S001.4. Quota is S001.5."""
 
 import re
+import sqlite3
 import sys
 from datetime import datetime, time
 from pathlib import Path
@@ -13,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy import config
 from policy.rules import Action, Rule, TimeWindow, evaluate
-from policy.store import SCHEMA_VERSION, PolicyStore
+from policy.store import _MIGRATIONS, SCHEMA_VERSION, PolicyStore
 from proxy.decision import recognize
 
 SYDNEY = ZoneInfo("Australia/Sydney")
@@ -317,21 +318,16 @@ def test_omitting_the_placeholder_clears_the_stored_one():
 def test_a_version_2_database_is_upgraded_and_keeps_its_groups(tmp_path):
     database = tmp_path / "policy.sqlite3"
     plain = '[[groups]]\nname = "Entertainment"\npriority = 30\npatterns = ["*.youtube.com"]\n'
-    with PolicyStore(database) as store:
-        config.apply(config.parse(plain), store, warn=_quiet)
-        store.connection.executescript(
-            """
-            DROP TABLE usage_buckets;
-            ALTER TABLE site_groups DROP COLUMN byte_limit;
-            ALTER TABLE site_groups DROP COLUMN quota_seconds;
-            DROP TABLE rule_weekday_counts;
-            DROP TABLE task_completions;
-            DROP TABLE rule_actions;
-            DROP TABLE rule_windows;
-            DROP TABLE rules;
-            PRAGMA user_version = 2;
-            """
-        )
+    old = sqlite3.connect(database)
+    old.executescript(
+        "".join(_MIGRATIONS[:2])
+        + """
+        INSERT INTO site_groups (id, name, priority, is_default) VALUES (1, 'Entertainment', 30, 0);
+        INSERT INTO site_group_patterns (group_id, position, pattern) VALUES (1, 0, '*.youtube.com');
+        PRAGMA user_version = 2;
+        """
+    )
+    old.close()
     with PolicyStore(database) as upgraded:
         (version,) = upgraded.connection.execute("PRAGMA user_version").fetchone()
         assert version == SCHEMA_VERSION

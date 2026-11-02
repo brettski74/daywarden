@@ -21,36 +21,36 @@
 # API stays on plain HTTP inside the compose network. It does not show the
 # report and does not edit policy.
 
-name: smartproxy
+name: daywarden
 
 services:
   decisions:
     build: ./policy
-    image: smartproxy-policy:local
+    image: daywarden-policy:local
     pull_policy: build
     environment:
-      DECISION_FILE: /etc/smartproxy/decision.json
-      POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
-      POLICY_DB: /var/lib/smartproxy/policy.sqlite3
+      DECISION_FILE: /etc/daywarden/decision.json
+      POLICY_FILE: ${POLICY_FILE:-/etc/daywarden/policy.yaml}
+      POLICY_DB: /var/lib/daywarden/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime
       MACHINE_HOSTNAME: /etc/host-hostname
-      CA_DIR: /var/lib/smartproxy/ca
+      CA_DIR: /var/lib/daywarden/ca
       PARENT_NAMES: ${PARENT_NAMES}
       PARENT_IDLE: ${PARENT_IDLE:-15m}
       PARENT_LIFETIME: ${PARENT_LIFETIME:-180m}
       PARENT_HTTPS_PORT: "8443"
       # Host port clients use. Task URLs use this, not the bind port 8443.
       POLICY_PORT: ${POLICY_PORT:-8090}
-      DAYWARDEN_DATA_DIR: /var/lib/daywarden
+      DAYWARDEN_DATA_DIR: /var/lib/daywarden/data
     ports:
       # Clients open https://<this machine>:POLICY_PORT/usage. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
       # 8443 is where the HTTPS listener is bound.
       - "${POLICY_PORT:-8090}:8443"
     volumes:
-      - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
-      - policy-data:/var/lib/smartproxy
-      - ${CA_VOLUME_PATH}:/var/lib/smartproxy/ca
+      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
+      - policy-data:/var/lib/daywarden
+      - ${CA_VOLUME_PATH}:/var/lib/daywarden/ca
       # Used for the household timezone when policy.yaml does not set one.
       - /etc/localtime:/etc/host-localtime:ro
       # Used for task URLs when policy.yaml does not set hostname. The
@@ -59,9 +59,11 @@ services:
       # Parent-managed task files, such as spelling recordings under
       # spelling/current and spelling/revision. Read on each new quiz run.
       # make up creates the directory. Docker would create it owned by root.
+      # It sits under the writable policy-data mount: a read-only parent
+      # mount would stop Docker creating the nested mount point.
       - type: bind
         source: ${DAYWARDEN_DATA_DIR:-${HOME}/daywarden}
-        target: /var/lib/daywarden
+        target: /var/lib/daywarden/data
         read_only: true
         bind:
           create_host_path: false
@@ -79,21 +81,21 @@ services:
 
   observations:
     build: ./policy
-    image: smartproxy-policy:local
+    image: daywarden-policy:local
     pull_policy: build
     command:
       - python
       - -m
       - policy.observations
     environment:
-      POLICY_FILE: ${POLICY_FILE:-/etc/smartproxy/policy.yaml}
-      POLICY_DB: /var/lib/smartproxy/policy.sqlite3
+      POLICY_FILE: ${POLICY_FILE:-/etc/daywarden/policy.yaml}
+      POLICY_DB: /var/lib/daywarden/policy.sqlite3
       OBSERVATION_LOG: /tmp/observations.jsonl
       OBSERVATION_PORT: "8091"
       MACHINE_LOCALTIME: /etc/host-localtime
     volumes:
-      - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
-      - policy-data:/var/lib/smartproxy
+      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
+      - policy-data:/var/lib/daywarden
       # Used when policy.yaml does not set a timezone, so a report lands on
       # the same local day the decisions service uses.
       - /etc/localtime:/etc/host-localtime:ro
@@ -116,7 +118,7 @@ services:
     image: mitmproxy/mitmproxy:12.2.3
     entrypoint:
       - /bin/bash
-      - /opt/smartproxy/entrypoint.sh
+      - /opt/daywarden/entrypoint.sh
     command:
       - mitmdump
       - --mode
@@ -130,20 +132,20 @@ services:
       - --set
       - connection_strategy=lazy
       - --scripts
-      - /opt/smartproxy/addon.py
+      - /opt/daywarden/addon.py
     environment:
       DECISION_URL: http://decisions:8090/v1/decisions
       OBSERVATION_URL: http://observations:8091/v1/observations
       OBSERVATION_INTERVAL: ${OBSERVATION_INTERVAL:-60}
       OBSERVATION_TIMEOUT: ${OBSERVATION_TIMEOUT:-2}
-      BYPASS_PATH: /etc/smartproxy/bypass.txt
+      BYPASS_PATH: /etc/daywarden/bypass.txt
       DECISION_TIMEOUT: "2"
     ports:
       - "${PROXY_PORT}:8080"
     volumes:
       - "${CA_VOLUME_PATH}:/home/mitmproxy/.mitmproxy"
-      - ./proxy:/opt/smartproxy:ro
-      - ${SMARTPROXY_CONFIG_DIR:-./config}:/etc/smartproxy:ro
+      - ./proxy:/opt/daywarden:ro
+      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
     depends_on:
       decisions:
         condition: service_healthy

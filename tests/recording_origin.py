@@ -56,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/hold":
             self._hold(parse_qs(urlsplit(path).query))
             return
-        payload = f"smartproxy-origin-ok {path}".encode()
+        payload = f"daywarden-origin-ok {path}".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))

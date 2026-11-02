@@ -10,10 +10,10 @@ import bypass
 
 
 def test_star_matches_a_suffix_and_leaves_other_hosts_alone():
-    patterns = ["*.google.test", "tasks.smartproxy.test"]
+    patterns = ["*.google.test", "tasks.daywarden.test"]
     assert bypass.is_bypassed("class.google.test", patterns)
     assert bypass.is_bypassed("CLASS.Google.Test", patterns)
-    assert bypass.is_bypassed("tasks.smartproxy.test", patterns)
+    assert bypass.is_bypassed("tasks.daywarden.test", patterns)
     assert not bypass.is_bypassed("notgoogle.test", patterns)
     assert not bypass.is_bypassed("google.test", patterns)
     assert not bypass.is_bypassed("class.google.test.evil", patterns)
