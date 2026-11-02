@@ -171,7 +171,7 @@ rule_sets:
 
   entertainment_evening:
     - condition: tasks_required
-      required: 3
+      required: 2
       when_false: { action: redirect, location: revision_task }
     - condition: time_remaining
       quota: entertainment
@@ -194,7 +194,7 @@ rule_sets:
 
   default_evening:
     - condition: tasks_required
-      required: 3
+      required: 2
       when_false: { action: redirect, location: revision_task }
     - condition: always
       when_true: { action: allow }
@@ -216,35 +216,7 @@ tasks:
         - { value: 2, weight: 7 }
         - { from: 3, to: 9, weight: 10 }
         - { value: 10, weight: 5 }
-  moresums:
-    type: arithmetic
+  skip_counting:
+    type: skip_counting
     group: younger
     pass_cooldown: 1
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 7s
-      correct_answers_required: 7
-      first:
-        - { from: 7, to: 9, weight: 10 }
-      operands:
-        - { value: 1, weight: 5 }
-        - { value: 2, weight: 7 }
-        - { from: 3, to: 9, weight: 10 }
-        - { value: 10, weight: 5 }
-  again:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 1
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 7s
-      correct_answers_required: 5
-      first:
-        - { from: 2, to: 5, weight: 10 }
-      operands:
-        - { value: 1, weight: 5 }
-        - { value: 2, weight: 7 }
-        - { from: 3, to: 9, weight: 10 }
-        - { value: 10, weight: 5 }

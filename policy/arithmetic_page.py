@@ -22,16 +22,24 @@ from datetime import datetime
 
 from policy.arithmetic import Session, StaleQuestion
 from policy.hierarchy import Policy
+from policy.quiz_page import (
+    ANSWER,
+    QUESTION,
+    VISIT,
+    document,
+    json_response,
+    next_task_url,
+    note_html,
+    reload,
+)
 from policy.report import PageResponse, _e, _response
-from policy.selection import choose_task, picker_url
 from policy.sounds import SoundSets
-from policy.tasks import PASS, Attempt, AttemptStore, Task, household_day
+from policy.tasks import ABANDONED, PASS, Attempt, AttemptStore, Task
+
+__all__ = ["next_task_url", "reload", "respond_api", "settle", "show"]
 
 CORRECT_PAUSE_MS = 1000
 WRONG_PAUSE_MS = 2500
-VISIT = "visit"
-QUESTION = "question"
-ANSWER = "answer"
 
 _RNG = random.Random()
 _NO_SOUNDS = SoundSets()
@@ -44,6 +52,7 @@ def show(
     *,
     path: str,
     now: datetime,
+    policy: Policy | None = None,
     note: str = "",
     record: bool = False,
 ) -> PageResponse:
@@ -68,11 +77,11 @@ def show(
     return _response(200, _document(settings.operation.label, session.correct, settings.required, config, note))
 
 
-def settle(task: Task, detail: Mapping, now: datetime) -> dict:
-    """Return the detail with a question left showing closed as a timeout."""
+def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
+    """Return the detail with a question left showing closed as a timeout, and how giving up ends."""
     session = Session(detail, task.document())
     session.settle(now)
-    return session.detail
+    return session.detail, ABANDONED
 
 
 def respond_api(
@@ -100,11 +109,11 @@ def respond_api(
     if action == VISIT:
         session.visit(now)
         store.save(attempt.id, session.detail)
-        return _json(200, {"correct": session.correct, "required": session.settings.required})
+        return json_response(200, {"correct": session.correct, "required": session.settings.required})
     if action == QUESTION:
         question = session.issue(now, rng or _RNG)
         store.save(attempt.id, session.detail)
-        return _json(
+        return json_response(
             200,
             {
                 "id": len(session.questions) - 1,
@@ -115,23 +124,23 @@ def respond_api(
             },
         )
     if action != ANSWER:
-        return _json(404, {"error": "unknown request"})
+        return json_response(404, {"error": "unknown request"})
     try:
         sent = json.loads(body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return _json(400, {"error": "the answer is not JSON"})
+        return json_response(400, {"error": "the answer is not JSON"})
     if not isinstance(sent, dict):
-        return _json(400, {"error": "the answer is not a JSON object"})
+        return json_response(400, {"error": "the answer is not a JSON object"})
     number = sent.get("id")
     if isinstance(number, bool) or not isinstance(number, int):
-        return _json(400, {"error": "the answer names no question"})
+        return json_response(400, {"error": "the answer names no question"})
     try:
         judged = session.answer(now, number, sent.get("answer"), expired=sent.get("expired") is True)
     except StaleQuestion:
         store.save(attempt.id, session.detail)
         return reload()
     except ValueError as exc:
-        return _json(400, {"error": str(exc)})
+        return json_response(400, {"error": str(exc)})
     following = None
     if judged.finished:
         store.finish(attempt.id, PASS, now, detail=session.detail)
@@ -139,7 +148,7 @@ def respond_api(
     else:
         store.save(attempt.id, session.detail)
     question = judged.question
-    return _json(
+    return json_response(
         200,
         {
             "outcome": judged.outcome,
@@ -153,107 +162,34 @@ def respond_api(
     )
 
 
-def next_task_url(policy: Policy, store: AttemptStore, client_group: str, now: datetime) -> str | None:
-    """Return the picker when another task is eligible, or None when there is nothing."""
-    chosen, _ties = choose_task(policy.tasks, client_group, household_day(now), store.attempts(client_group))
-    if chosen is None:
-        return None
-    return picker_url(policy)
-
-
-def reload() -> PageResponse:
-    """Tell the page to load again, because the question it holds is gone."""
-    return _json(409, {"reload": True})
-
-
-def _json(status: int, payload: Mapping) -> PageResponse:
-    return _response(status, json.dumps(payload), (("content-type", "application/json"),))
-
-
 def _document(label: str, correct: int, required: int, config: Mapping, note: str) -> str:
-    data = json.dumps(config).replace("</", "<\\/")
-    notice = f'<p class="note">{_e(note)}</p>\n' if note else ""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
-<title>{_e(label)}</title>
-<style>
-html, body {{ height: 100%; margin: 0; }}
-body {{ display: flex; flex-direction: column; font-family: sans-serif; background: #fbfbf7; color: #222; }}
-header {{ display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; min-height: 2rem; }}
-#progress {{ font-size: 1.1rem; color: #555; }}
-#give-up {{ font-size: 0.85rem; padding: 0.3rem 0.7rem; background: none; border: 1px solid #aaa; border-radius: 4px; color: #555; cursor: pointer; }}
-main {{ flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1rem; }}
-.screen h1 {{ font-size: 4rem; margin: 0 0 1rem; }}
-.screen p {{ font-size: 1.8rem; margin: 0 0 2rem; }}
-.note {{ color: #b42318; }}
-.big {{ font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: #2f6fd6; color: #fff; cursor: pointer; text-decoration: none; }}
-#question {{ font-size: clamp(3rem, 13vw, 9rem); font-weight: bold; margin: 0 0 2rem; white-space: nowrap; }}
-#answer {{ font-size: 3rem; width: 5em; text-align: center; padding: 0.15em; border: 3px solid #888; border-radius: 8px; }}
-#feedback {{ min-height: 3rem; font-size: 2.2rem; margin-top: 1.5rem; font-weight: bold; }}
-#feedback.correct {{ color: #1a7f37; }}
-#feedback.incorrect, #feedback.timeout {{ color: #b42318; }}
-#timer {{ height: 2rem; background: #e4e4e4; }}
-#bar {{ height: 100%; width: 100%; background: #2f6fd6; }}
-#confirm {{ position: fixed; top: 3rem; right: 1rem; background: #fff; border: 1px solid #aaa; border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }}
-#confirm button {{ margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }}
-.hidden-label {{ position: absolute; left: -10000px; }}
-[hidden] {{ display: none !important; }}
-</style>
-</head>
-<body>
-<header>
-<span id="progress" hidden>{correct} / {required}</span>
-<span></span>
-<button type="button" id="give-up">Try a different task</button>
-</header>
-<div id="confirm" role="dialog" aria-label="Try a different task" hidden>
-<div>Are you sure?</div>
-<button type="button" id="confirm-yes">Yes, try a different task</button>
-<button type="button" id="confirm-no">No, keep going</button>
-</div>
-<form id="give-up-form" method="post" action="{_e(str(config["action"]))}" hidden></form>
-<main>
-<section id="start" class="screen">
-<h1>{_e(label)}</h1>
-{notice}<p id="start-progress">{correct} / {required} correct</p>
-<button type="button" id="start-button" class="big" autofocus>Start</button>
-</section>
-<section id="ask" hidden>
-<div id="question" aria-live="polite"></div>
-<label for="answer" class="hidden-label">Answer</label>
-<input id="answer" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="12" disabled>
-<div id="feedback" aria-live="polite"></div>
-</section>
-<section id="done" class="screen" hidden>
-<h1>Well done</h1>
-<p id="all-done" hidden>All done for now</p>
-<a id="next-task" class="big" href="#" hidden>Next task</a>
-</section>
-</main>
-<div id="timer" hidden><div id="bar"></div></div>
-<script type="application/json" id="quiz-config">{data}</script>
-<script>
-{_SCRIPT}
-</script>
-</body>
-</html>
+    return document(
+        title=label,
+        config=config,
+        header=f'<span id="progress" hidden>{correct} / {required}</span>\n<span></span>',
+        start=(
+            f"<h1>{_e(label)}</h1>\n"
+            f'{note_html(note)}<p id="start-progress">{correct} / {required} correct</p>\n'
+            '<button type="button" id="start-button" class="big" autofocus>Start</button>'
+        ),
+        ask=(
+            '<div id="question" aria-live="polite"></div>\n'
+            '<label for="answer" class="hidden-label">Answer</label>\n'
+            '<input id="answer" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="12" disabled>\n'
+            '<div id="feedback" aria-live="polite"></div>'
+        ),
+        style=_STYLE,
+        script=_SCRIPT,
+    )
+
+
+_STYLE = """\
+#question { font-size: clamp(3rem, 13vw, 9rem); font-weight: bold; margin: 0 0 2rem; white-space: nowrap; }
+#answer { font-size: 3rem; width: 5em; text-align: center; padding: 0.15em; border: 3px solid #888; border-radius: 8px; }
 """
 
-
 _SCRIPT = """\
-(() => {
-  const config = JSON.parse(document.getElementById("quiz-config").textContent);
-  const $ = (id) => document.getElementById(id);
-  const startScreen = $("start"), askScreen = $("ask"), doneScreen = $("done");
-  const startButton = $("start-button"), questionText = $("question"), box = $("answer");
-  const feedback = $("feedback"), progress = $("progress"), timer = $("timer"), bar = $("bar");
-  const giveUp = $("give-up"), confirmBox = $("confirm"), form = $("give-up-form");
-  const player = new Audio();
-  let state = "start";
+  const questionText = $("question"), box = $("answer");
   let current = null;
   let deadline = 0;
   let expiry = null;
@@ -262,43 +198,8 @@ _SCRIPT = """\
     progress.textContent = correct + " / " + required;
   }
 
-  function play(url) {
-    player.pause();
-    if (!url) return;
-    player.src = url;
-    const started = player.play();
-    if (started) started.catch(() => {});
-  }
-
-  function trouble() {
-    feedback.className = "timeout";
-    feedback.textContent = "Lost touch with the server. Starting again...";
-    setTimeout(() => window.location.reload(), 2500);
-  }
-
-  async function post(action, payload) {
-    let response;
-    try {
-      response = await fetch(config.action + "?do=" + action, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload || {}),
-        cache: "no-store",
-      });
-    } catch (error) {
-      trouble();
-      return null;
-    }
-    const type = response.headers.get("content-type") || "";
-    if (response.redirected || response.status === 409 || !type.startsWith("application/json")) {
-      window.location.reload();
-      return null;
-    }
-    if (!response.ok) {
-      trouble();
-      return null;
-    }
-    return response.json();
+  function refocus() {
+    if (state === "asking") box.focus();
   }
 
   const visited = post("visit").then((progress) => {
@@ -361,24 +262,6 @@ _SCRIPT = """\
     setTimeout(() => (result.finished ? finish(result.next) : ask()), pause);
   }
 
-  function finish(next) {
-    state = "done";
-    startScreen.hidden = true;
-    askScreen.hidden = true;
-    timer.hidden = true;
-    giveUp.hidden = true;
-    confirmBox.hidden = true;
-    doneScreen.hidden = false;
-    if (next) {
-      const link = $("next-task");
-      link.href = next;
-      link.hidden = false;
-      link.focus();
-    } else {
-      $("all-done").hidden = false;
-    }
-  }
-
   box.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -396,20 +279,5 @@ _SCRIPT = """\
   startButton.addEventListener("click", () => {
     if (state === "start") ask();
   });
-  for (const button of [giveUp, $("confirm-yes"), $("confirm-no")]) {
-    button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") event.preventDefault();
-    });
-  }
-  giveUp.addEventListener("click", () => {
-    confirmBox.hidden = false;
-  });
-  $("confirm-yes").addEventListener("click", () => form.submit());
-  $("confirm-no").addEventListener("click", () => {
-    confirmBox.hidden = true;
-    if (state === "asking") box.focus();
-  });
   startButton.focus();
-})();
 """

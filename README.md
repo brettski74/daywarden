@@ -71,6 +71,8 @@ When the household has an eligible revision task, that location is `https://<hos
 
 A task with `type: arithmetic` is a timed quiz on that page: one large question, an answer box, and a timer bar that shrinks as he gets more right. Its `body` sets the operation, `max_timeout`, `min_timeout`, `correct_answers_required`, and weighted `operands`, and a bad body fails the load. The sound effects are the audio files in `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`, one chosen at random per answer. Add or remove a file there and rebuild the policy image. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#arithmetic-tasks) for the fields, the timing rules, and the stored record.
 
+A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with blank boxes to fill in. He gets three tries per question, worth 1, 0.5, and 0.25 points. With `maximum_questions` set, an attempt that runs out of questions without enough points is a failure. Every field has a default, so `body: {}` is a working task. Each difference may set its own `minimum_value` and `maximum_value`. The defaults keep counting by 2 under 100. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#skip-counting-tasks) for the fields, the configuration checks, and the scoring.
+
 ## Decision and observation logs
 
 Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
