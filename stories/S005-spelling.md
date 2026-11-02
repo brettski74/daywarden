@@ -33,6 +33,7 @@ As a parent, I want him to spell this week's words, plus a few older ones, from 
 | --- | --- | --- |
 | S005.1 | Spelling quiz | 8 |
 | S005.2 | Spelling practice mode | 5 |
+| S005.3 | Spelling audio processor | 5 |
 
 # Notes
 
