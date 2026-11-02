@@ -174,7 +174,7 @@ def test_a_query_string_password_and_an_old_gate_cookie_do_not_sign_in():
         assert from_query.status == 200
         assert "Enter your username and password." in from_query.body
         assert "set-cookie" not in dict(from_query.headers)
-        old = hmac.new(PASSWORD.encode(), b"smartproxy-parent", hashlib.sha256).hexdigest()
+        old = hmac.new(PASSWORD.encode(), b"daywarden-parent", hashlib.sha256).hexdigest()
         forged = _usage(store, accounts, "GET", cookie=old)
         assert "Enter your username and password." in forged.body
         assert "set-cookie" not in dict(forged.headers)

@@ -26,14 +26,14 @@ fi
 python3 -c '
 import importlib.util
 import sys
-sys.path.insert(0, "/opt/smartproxy")
-spec = importlib.util.spec_from_file_location("smartproxy_addon", "/opt/smartproxy/addon.py")
+sys.path.insert(0, "/opt/daywarden")
+spec = importlib.util.spec_from_file_location("daywarden_addon", "/opt/daywarden/addon.py")
 if spec is None or spec.loader is None:
-    raise SystemExit("smartproxy addon could not be loaded")
+    raise SystemExit("daywarden addon could not be loaded")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 if not getattr(module, "addons", None):
-    raise SystemExit("smartproxy addon did not register")
+    raise SystemExit("daywarden addon did not register")
 '
 
 exec /usr/local/bin/docker-entrypoint.sh "$@"

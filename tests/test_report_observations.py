@@ -63,8 +63,8 @@ class Stack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
-        self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.toml"
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.env["OBSERVATION_INTERVAL"] = "1"
         self.cmd = [
             "docker",
@@ -174,13 +174,13 @@ def _wait_for(ready, timeout: float, detail: str):
 
 @pytest.fixture(scope="module")
 def stack(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-s0003-") as raw:
+    with tempfile.TemporaryDirectory(prefix="daywarden-s0003-") as raw:
         root = Path(raw)
         ca_dir = root / "ca"
         config_dir = root / "config"
         ca_dir.mkdir()
         config_dir.mkdir()
-        (config_dir / "bypass.txt").write_text("tasks.smartproxy.test\n")
+        (config_dir / "bypass.txt").write_text("tasks.daywarden.test\n")
         _write_decision(config_dir, {"action": "allow"})
         (config_dir / "policy.toml").write_text(
             '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
@@ -189,7 +189,7 @@ def stack(request):
             ca_dir,
             config_dir,
             _free_port(),
-            f"smartproxy-s0003-{os.getpid()}",
+            f"daywarden-s0003-{os.getpid()}",
         )
         try:
             running.up()
@@ -228,7 +228,7 @@ def test_short_allowed_request_is_observed(stack):
     completed, headers, body = _exchange(stack, url)
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
-    assert body == b"smartproxy-origin-ok /index.html?v=abc"
+    assert body == b"daywarden-origin-ok /index.html?v=abc"
 
     observations = stack.jsonl("observations", OBSERVATION_LOG)
     assert observations, stack.logs()
@@ -332,7 +332,7 @@ def test_observation_outage_does_not_change_an_allow(stack):
         completed, headers, body = _exchange(stack, "http://origin/still-allowed")
         assert completed.returncode == 0, completed.stderr
         assert _status(headers) == 200
-        assert body == b"smartproxy-origin-ok /still-allowed"
+        assert body == b"daywarden-origin-ok /still-allowed"
     finally:
         stack.start_observations()
 
@@ -382,11 +382,11 @@ def test_bypassed_host_is_observed(stack):
     stack.clear_jsonl("observations", OBSERVATION_LOG)
     stack.clear_jsonl("origin", ORIGIN_LOG)
     stack.clear_jsonl("decisions", DECISION_LOG)
-    url = "http://tasks.smartproxy.test/tasks/next"
+    url = "http://tasks.daywarden.test/tasks/next"
     completed, headers, body = _exchange(stack, url)
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
-    assert body == b"smartproxy-origin-ok /tasks/next"
+    assert body == b"daywarden-origin-ok /tasks/next"
     assert stack.jsonl("decisions", DECISION_LOG) == []
 
     observations = stack.jsonl("observations", OBSERVATION_LOG)

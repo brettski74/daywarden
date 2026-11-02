@@ -19,8 +19,6 @@ ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
 OLDER = "192.0.2.50"
 YOUTUBE = "https://www.youtube.com/watch?v=abc"
-SAMPLE = ROOT / "config" / "policy.yaml"
-BYPASS = ROOT / "config" / "bypass.txt"
 
 OPEN = """\
 entry: open
@@ -275,27 +273,3 @@ def test_a_file_that_sets_revision_task_fails_to_load(tmp_path):
     assert previous is not None
     assert previous.entry == "open"
     assert previous.rule_set("open")[0].when_true.kind == "allow"
-
-
-def test_the_sample_names_the_host_and_leaves_the_port_to_the_published_one():
-    text = SAMPLE.read_text(encoding="utf-8")
-    assert "revision_task:" not in text.split("rule_sets:", 1)[0]
-    assert "name external clients use to open the policy server" in text
-    assert "name in the browser's address bar" in text
-    port_at = text.index("# Set port when a reverse proxy changes the port")
-    assert "published policy port" in text[port_at : port_at + 200]
-    assert "\n# port:" in text[port_at : port_at + 200]
-    bypass = BYPASS.read_text(encoding="utf-8")
-    assert "192.168.1.10" not in bypass
-    assert "hostname" in bypass
-    assert "\ngarden\n" in bypass
-    env = (ROOT / ".env").read_text(encoding="utf-8")
-    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "POLICY_PORT=8090" in env
-    assert "REPORT_PORT" not in env
-    assert "REPORT_PORT" not in compose
-    assert "${POLICY_PORT:-8090}:8443" in compose
-    assert 'PARENT_HTTPS_PORT: "8443"' in compose
-    assert "POLICY_PORT: ${POLICY_PORT:-8090}" in compose
-    assert "MACHINE_HOSTNAME: /etc/host-hostname" in compose
-    assert "/etc/hostname:/etc/host-hostname:ro" in compose

@@ -870,7 +870,7 @@ def _call(app, method, path, *, query=b"", body=b""):
         "path": path,
         "raw_path": path.encode(),
         "query_string": query,
-        "headers": [(b"x-smartproxy-client", YOUNGER.encode()), (b"content-type", b"application/json")],
+        "headers": [(b"x-daywarden-client", YOUNGER.encode()), (b"content-type", b"application/json")],
         "client": ("172.17.0.2", 12345),
         "server": ("127.0.0.1", 80),
         "root_path": "",

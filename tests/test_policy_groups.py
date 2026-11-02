@@ -1,6 +1,7 @@
 """S001.2: site groups are matched by glob in priority order and stored in SQLite."""
 
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy import config
 from policy.groups import SiteGroup, SiteGroups, matches
-from policy.store import SCHEMA_VERSION, PolicyStore
+from policy.store import _MIGRATIONS, SCHEMA_VERSION, PolicyStore
 
 GROUPS = """
 [[groups]]
@@ -175,21 +176,16 @@ def test_a_group_removed_from_the_file_is_removed_from_the_database():
 
 def test_a_version_1_database_is_upgraded_and_keeps_its_clients(tmp_path):
     database = tmp_path / "policy.sqlite3"
-    with PolicyStore(database) as store:
-        config.apply(config.parse('[[clients]]\nname = "A"\naddress = "10.0.0.1"\n'), store, warn=_quiet)
-        store.connection.executescript(
-            """
-            DROP TABLE usage_buckets;
-            DROP TABLE rule_weekday_counts;
-            DROP TABLE task_completions;
-            DROP TABLE rule_actions;
-            DROP TABLE rule_windows;
-            DROP TABLE rules;
-            DROP TABLE site_group_patterns;
-            DROP TABLE site_groups;
-            PRAGMA user_version = 1;
-            """
-        )
+    old = sqlite3.connect(database)
+    old.executescript(
+        "".join(_MIGRATIONS[:1])
+        + """
+        INSERT INTO clients (id, name, address) VALUES (1, 'A', '10.0.0.1');
+        INSERT INTO client_ips (ip, client_id) VALUES ('10.0.0.1', 1);
+        PRAGMA user_version = 1;
+        """
+    )
+    old.close()
     with PolicyStore(database) as upgraded:
         (version,) = upgraded.connection.execute("PRAGMA user_version").fetchone()
         assert version == SCHEMA_VERSION

@@ -36,7 +36,7 @@ def main() -> None:
     app = create_app()
     http_port = int(os.environ.get("PORT", "8090"))
     https_port = int(os.environ.get("PARENT_HTTPS_PORT", "8443"))
-    ca_dir = Path(os.environ.get("CA_DIR", "/var/lib/smartproxy/ca"))
+    ca_dir = Path(os.environ.get("CA_DIR", "/var/lib/daywarden/ca"))
     http = uvicorn.Server(
         uvicorn.Config(
             app,

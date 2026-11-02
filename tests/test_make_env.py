@@ -28,14 +28,6 @@ def test_an_exported_parent_names_wins_over_the_env_file():
     assert names == "localhost,127.0.0.1"
 
 
-def test_an_unset_parent_names_comes_from_the_env_file():
-    env = os.environ.copy()
-    env.pop("PARENT_NAMES", None)
-    names, ca_path, _data_dir = _show(env)
-    assert names == "127.0.0.1"
-    assert ca_path == "./data/ca"
-
-
 def test_the_data_directory_defaults_under_home_and_an_exported_one_wins():
     env = os.environ.copy()
     env.pop("DAYWARDEN_DATA_DIR", None)
@@ -43,8 +35,3 @@ def test_the_data_directory_defaults_under_home_and_an_exported_one_wins():
     assert _show(env)[2] == "/home/example/daywarden"
     env["DAYWARDEN_DATA_DIR"] = "/srv/daywarden"
     assert _show(env)[2] == "/srv/daywarden"
-
-
-def test_up_loads_the_env_file_without_replacing_the_shell():
-    recipe = (ROOT / "Makefile").read_text(encoding="utf-8").split("up:\n", 1)[1]
-    assert recipe.startswith("\t$(load_env);")

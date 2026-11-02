@@ -187,7 +187,7 @@ def listen(
 
 
 def main() -> None:
-    database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
+    database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database, check_same_thread=False)
     policy, usage = _hierarchical(store)

@@ -4,14 +4,14 @@ services:
     image: mitmproxy/mitmproxy:12.2.3
     entrypoint:
       - python3
-      - /opt/smartproxy/recording_origin.py
+      - /opt/daywarden/recording_origin.py
     volumes:
-      - ./tests/recording_origin.py:/opt/smartproxy/recording_origin.py:ro
+      - ./tests/recording_origin.py:/opt/daywarden/recording_origin.py:ro
     networks:
       default:
         aliases:
           - class.google.test
-          - tasks.smartproxy.test
+          - tasks.daywarden.test
     healthcheck:
       test:
         - CMD

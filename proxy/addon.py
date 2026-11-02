@@ -29,7 +29,7 @@ DECISION_URL = os.environ.get("DECISION_URL", "http://decisions:8090/v1/decision
 OBSERVATION_URL = os.environ.get(
     "OBSERVATION_URL", "http://observations:8091/v1/observations"
 )
-BYPASS_PATH = Path(os.environ.get("BYPASS_PATH", "/etc/smartproxy/bypass.txt"))
+BYPASS_PATH = Path(os.environ.get("BYPASS_PATH", "/etc/daywarden/bypass.txt"))
 TIMEOUT = float(os.environ.get("DECISION_TIMEOUT", "2"))
 # How often an open flow is checked for bytes that are ready to report.
 _POLL_SECONDS = 0.2
@@ -126,7 +126,7 @@ class DecisionEnforcer:
                 # The task site is fetched by the proxy, so the origin would
                 # otherwise see the proxy's address. The child IP is the one
                 # the decision was made for.
-                flow.request.headers["X-Smartproxy-Client"] = peer[0]
+                flow.request.headers["X-Daywarden-Client"] = peer[0]
             self._arm(flow)
             return
         if action == "deny":

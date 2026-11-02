@@ -792,7 +792,7 @@ def test_the_service_serves_the_task_and_counts_a_parent_check(tmp_path, monkeyp
         async def send(message):
             messages.append(message)
 
-        headers = [(b"x-smartproxy-client", client.encode())]
+        headers = [(b"x-daywarden-client", client.encode())]
         if content_type:
             headers.append((b"content-type", content_type.encode()))
         if cookie:

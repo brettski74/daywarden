@@ -156,7 +156,7 @@ def _remove_attempts(parser: argparse.ArgumentParser, args: argparse.Namespace, 
     if chosen.empty and not args.all:
         parser.error("remove-attempts needs a filter, or --all to match every attempt")
     task_types, zone = _household(need_types=bool(chosen.types))
-    database = Path(os.environ.get("POLICY_DB", "/var/lib/smartproxy/policy.sqlite3"))
+    database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
     if not database.is_file():
         print(f"no policy database at {database}", file=sys.stderr)
         return 1
@@ -187,7 +187,7 @@ def _household(*, need_types: bool) -> tuple[dict[str, str], tzinfo]:
     from policy.hierarchy import ConfigError, load
 
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
-    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/smartproxy/policy.yaml"))
+    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml"))
     policy = None
     try:
         policy = load(policy_file, warn=lambda message: print(message, file=sys.stderr))

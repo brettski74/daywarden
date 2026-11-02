@@ -32,8 +32,14 @@ general guidelines.
 
 Avoid writing pointless tests, such as tests that do nothing but mirror a set of constants, configuration or data and
 verify that the other copy is still the same. Similarly, don't write tests whose only purpose is to verify that static
-UI elements are still the same statis UI elements we just put into the UI layer. Tests should primarily be about testing
-functional code and verifying that the code behaves the way it should, not a duplicate of static content elsewhere.
+UI elements are still the same statis UI elements we just put into the UI layer. Tests that verify file contents rather
+than functionality should also be avoided, especially files which are likely to change over time like .env, Makefile,
+policy.yaml and the linek. Tests should primarily be about testing functional code and verifying that the code behaves
+the way it should, not a duplicate of static content elsewhere.
+
+Tests need to pass. All tests should be passing for work on a story to be considered done. If there are failing tests,
+then you need to work to figure out why they're failing, what needs to be done to fix them and fix them. Tests that are
+failing and no longer relevant or that meet the definition of pointless tests above should be removed.
 
 # Implementation Summary
 

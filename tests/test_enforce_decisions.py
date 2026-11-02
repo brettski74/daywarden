@@ -67,8 +67,8 @@ class Stack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
-        self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.toml"
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.cmd = [
             "docker",
             "compose",
@@ -183,14 +183,14 @@ def _paths(entries: list[dict]) -> list[str]:
 
 @pytest.fixture(scope="module")
 def stack(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-s0002-") as raw:
+    with tempfile.TemporaryDirectory(prefix="daywarden-s0002-") as raw:
         root = Path(raw)
         ca_dir = root / "ca"
         config_dir = root / "config"
         ca_dir.mkdir()
         config_dir.mkdir()
         (config_dir / "bypass.txt").write_text(
-            "# task site and classroom\n*.google.test\ntasks.smartproxy.test\n"
+            "# task site and classroom\n*.google.test\ntasks.daywarden.test\n"
         )
         _write_decision(config_dir, {"action": "allow"})
         (config_dir / "policy.toml").write_text(
@@ -200,7 +200,7 @@ def stack(request):
             ca_dir,
             config_dir,
             _free_port(),
-            f"smartproxy-s0002-{os.getpid()}",
+            f"daywarden-s0002-{os.getpid()}",
         )
         try:
             running.up()
@@ -222,7 +222,7 @@ def test_allow_returns_the_origin_response(stack):
     completed, headers, body = _exchange(stack, url)
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
-    assert body == b"smartproxy-origin-ok /index.html?v=abc"
+    assert body == b"daywarden-origin-ok /index.html?v=abc"
     assert _paths(stack.jsonl("origin", ORIGIN_LOG)) == ["/index.html?v=abc"]
 
     logged = stack.jsonl("decisions", DECISION_LOG)[-1]
@@ -287,7 +287,7 @@ def test_bypass_host_skips_the_decision_api(stack):
     completed, headers, body = _exchange(stack, "http://Class.Google.Test/index.html")
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
-    assert b"smartproxy-origin-ok /index.html" in body
+    assert b"daywarden-origin-ok /index.html" in body
     assert stack.jsonl("decisions", DECISION_LOG) == []
     assert stack.jsonl("origin", ORIGIN_LOG)[0]["host"].lower().startswith("class.google.test")
 
@@ -329,11 +329,11 @@ def test_decision_api_down_fails_closed_except_for_the_bypass_list(stack):
     try:
         stack.clear_jsonl("origin", ORIGIN_LOG)
         allowed, allowed_headers, allowed_body = _exchange(
-            stack, "http://tasks.smartproxy.test/tasks/next"
+            stack, "http://tasks.daywarden.test/tasks/next"
         )
         assert allowed.returncode == 0, allowed.stderr
         assert _status(allowed_headers) == 200
-        assert b"smartproxy-origin-ok /tasks/next" in allowed_body
+        assert b"daywarden-origin-ok /tasks/next" in allowed_body
 
         refused, refused_headers, refused_body = _exchange(stack, "http://notgoogle.test/secret")
         assert refused.returncode == 0, refused.stderr

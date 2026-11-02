@@ -13,8 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DECISION_LOG = "/tmp/decisions.jsonl"
-URL = "https://example.com/smartproxy-s0004"
-FIREFOX_URL = "https://example.com/smartproxy-s0004-firefox"
+URL = "https://example.com/daywarden-s0004"
+FIREFOX_URL = "https://example.com/daywarden-s0004-firefox"
 
 
 def _free_port() -> int:
@@ -52,8 +52,8 @@ class Stack:
         self.env["POLICY_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
-        self.env["SMARTPROXY_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/smartproxy/policy.toml"
+        self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.cmd = [
             "docker",
             "compose",
@@ -94,7 +94,7 @@ class Stack:
 
 @pytest.fixture(scope="module")
 def stack(request):
-    with tempfile.TemporaryDirectory(prefix="smartproxy-s0004-") as raw:
+    with tempfile.TemporaryDirectory(prefix="daywarden-s0004-") as raw:
         root = Path(raw)
         ca_dir = root / "ca"
         config_dir = root / "config"
@@ -109,7 +109,7 @@ def stack(request):
             ca_dir,
             config_dir,
             _free_port(),
-            f"smartproxy-s0004-{os.getpid()}",
+            f"daywarden-s0004-{os.getpid()}",
         )
         try:
             running.up()

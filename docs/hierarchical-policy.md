@@ -292,7 +292,7 @@ The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`.
 
 ### Spelling tasks
 
-A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden`. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
+A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden/data`. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
 
 | Field | Default | Value |
 | --- | --- | --- |

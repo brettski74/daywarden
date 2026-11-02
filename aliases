@@ -1,2 +1,8 @@
+BASEDIR=$HOME/dev/daywarden
+
 alias logs="docker compose logs -f decisions"
+
+if echo "$PATH" | grep -v $BASEDIR/bin; then
+  export PATH=$BASEDIR/bin:$PATH
+fi
 
