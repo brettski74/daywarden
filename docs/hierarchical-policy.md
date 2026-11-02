@@ -290,6 +290,47 @@ The attempt passes when his points reach `correct_answers_required` and at least
 
 The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`. Each question has its `run`, `difference`, `start`, the full `sequence`, the `filled` positions, every try in `tries` (his `entries` in the blank boxes left to right, the number `wrong`, whether it was `expired`, and `received_ms` from issue), the `outcome`, the `correct_try`, the `points`, `allowed_ms`, and the household-local `issued` time. Resume and expiry work as for arithmetic.
 
+### Spelling tasks
+
+A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden`. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `current_dir` | `spelling/current` | The words he is learning now, relative to the data directory. |
+| `revision_dir` | `spelling/revision` | Older words for revision, relative to the data directory. |
+| `alphabet_dir` | `spelling/alphabet` | Letter recordings for practice mode (S005.2), relative to the data directory. |
+| `timeout` | `30s` | Typing time for each word, not counting audio. A duration as for arithmetic. |
+| `maximum_replays` | 3 | "Repeat word" clicks allowed per word. 0 or more. |
+| `maximum_sentence_plays` | 2 | "Use in a sentence" clicks allowed per word. 0 or more. |
+| `current_required` | Every word in `current_dir` | Current words he must spell right. 0 up to the number of current words. |
+| `revision_required` | 5, or every revision word when there are fewer | Revision words he must spell right. 0 up to the number of revision words. |
+
+Each word is one recording named `<word>.<ext>`, spoken clearly on its own, with an optional `<word>.sentence.<ext>` of a sentence that uses it. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`, and the two files of a word may use different formats. The file name is the spelling: letters, `-`, and `'`, up to 22 characters. Homographs add a number, such as `read.1.opus` and `read.2.opus`, each with its own sentence clip. Both are spelled `read`. Names are matched without regard to case, and the word clip's casing is the one shown. Hidden files and other files, such as notes, are ignored.
+
+```yaml
+tasks:
+  weekly-spelling:
+    type: spelling
+    group: younger
+    pass_cooldown: 1
+    body:
+      timeout: 25s
+      current_required: 8
+      revision_required: 4
+```
+
+The load fails, naming the task and the field or the file, for an unknown field, a bare-number or zero `timeout`, a directory path that is absolute or uses `..`, a directory the body names that does not exist, a badly formed audio file name, two word clips or two sentence clips for one word (`rope.opus` and `rope.mp3`), a sentence clip with no word clip, a word in both pools, a target above its pool's size, or no work at all (no current words and `revision_required` of 0). A default directory that does not exist is an empty pool.
+
+The directories are read when the policy loads and again whenever a run starts, so new recordings are used from the next run without a restart. Recording lengths are kept in memory and read again only for a new or changed file. A run keeps a copy of its words, targets, and queue on the attempt, so a file changed during a run does not disturb it. A directory that goes bad after the load keeps the last list that read cleanly, and the service logs why.
+
+A run asks every current word and `revision_required` revision words drawn at random, shuffled together. A right spelling, ignoring case and spaces at either end, scores for its own pool. A missed current word goes to the back of the queue while the current score is short of `current_required`. A missed revision word, while the revision score is short, is replaced at the back by a different revision word that is not right yet and not already waiting, or by the same word when there is no other. A word that will come back is not shown on screen. A word that will not come back is shown with the feedback. The attempt passes when every current word has been asked and both targets are met, so a target of 7 out of 10 still asks the last three words. There is no failure.
+
+The word plays when the question appears. The box and the two buttons stay disabled, and the timer does not start, until it ends. Each "Repeat word" or "Use in a sentence" pauses the timer, keeps what he has typed, and disables the controls while the clip plays. A button turns grey once its limit is reached, and for the sentence when the word has none. The server allows the word clip, `timeout`, and half a second for the network, and adds a clip's length for each replay it accepts. It refuses a replay past the limit. An answer after that time is a timeout. When he passes or gives up, any words he missed in the attempt are listed in three columns until he presses "Continue" or Enter.
+
+Audio is served from `<task URL>/audio/<token>.<ext>` and `<token>.sentence.<ext>`, so the rule that lets the task page load lets the audio through. The token is 32 characters whatever the word, and only the server can read the word back from it.
+
+The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`. Each run also records `current_total`, `current_required`, `revision_required`, its `words`, and its `queue`. Each question has its `run`, entry `key` (such as `read.1`), the `word`, the `pool`, whether a `sentence` clip was available, `word_replays`, `sentence_plays`, his `answer`, the `outcome`, whether a missed word was `requeued`, `timeout_ms`, `allowed_ms` including audio, `received_ms` from issue, and the household-local `issued` time. Resume and expiry work as for arithmetic.
+
 ### Sound sets
 
 Each outcome plays one sound, chosen at random from that outcome's directory in the policy image: `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`. Every audio file in the directory is equally likely. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`. Any other file, such as an attribution note, is never played. Adding or removing a sound is a file change in that directory. It takes effect when the policy image is rebuilt and the service restarts. A set with no audio plays nothing for that outcome, and the service logs a warning naming that set when it starts. The files are served at `/static/sounds/<set>/<file>` on the task host. A rule that allows the task page, or redirects to `revision_task`, allows them too. A new sound stops the one before it. The page has no mute control.
