@@ -284,6 +284,49 @@ def test_bad_configuration_fails_the_load_and_keeps_the_previous_policy(
     assert good.task("words").document() == {}
 
 
+def test_a_load_without_task_data_skips_the_pools_but_still_checks_the_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAYWARDEN_DATA_DIR", str(tmp_path / "not-mounted"))
+    body = {"timeout": "30s", "revision_required": 10}
+    path = _write(tmp_path / "policy", _house(body))
+    with pytest.raises(ConfigError, match="body.revision_dir"):
+        load(path)
+    loaded = load(path, task_data=False)
+    assert loaded is not None
+    assert loaded.task("words").document() == body
+    bad = _write(tmp_path / "bad", _house({"colour": "blue"}))
+    with pytest.raises(ConfigError, match="body.colour"):
+        load(bad, task_data=False)
+
+
+def test_the_observations_service_loads_a_spelling_policy_without_the_data_directory(tmp_path, monkeypatch):
+    from policy import observations
+
+    monkeypatch.setenv("DAYWARDEN_DATA_DIR", str(tmp_path / "not-mounted"))
+    path = _write(tmp_path / "policy", _house({"revision_required": 10}))
+    monkeypatch.setenv("POLICY_FILE", str(path))
+    with PolicyStore(":memory:") as store:
+        policy, usage = observations._hierarchical(store)
+    assert policy is not None and usage is not None
+    assert policy.task("words").document() == {"revision_required": 10}
+
+
+def test_pool_problems_lists_every_problem_in_a_directory_and_scan_pool_raises_the_first(data, any_length):
+    folder = data / "spelling/current"
+    _files(data, "spelling/current", "cat.wav", "rope.opus", "rope.mp3", "dog.sentence.wav", "rope1.wav", "notes.txt")
+    problems = spelling.pool_problems(folder, "words")
+    assert problems == [
+        "words: rope.mp3 and rope.opus are both the word clip for rope",
+        "words: rope1.wav: a word may only have the letters a to z, - and '",
+        "words: dog.sentence.wav has no word clip beside it",
+    ]
+    with pytest.raises(ValueError) as raised:
+        spelling.scan_pool(folder, "words")
+    assert str(raised.value) == problems[0]
+    for name in ("rope.mp3", "rope1.wav", "dog.sentence.wav"):
+        (folder / name).unlink()
+    assert spelling.pool_problems(folder, "words") == []
+
+
 def test_unchanged_recordings_are_not_read_again_and_changed_ones_are(data, monkeypatch):
     _words(data, "spelling/current", "rope", "cat")
     real = spelling.read_audio_ms

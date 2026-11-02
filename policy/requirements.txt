@@ -5,3 +5,5 @@ PyYAML==6.0.3
 argon2-cffi==25.1.0
 cryptography==49.0.0
 mutagen==1.48.1
+pydub==0.25.1
+audioop-lts==0.2.2

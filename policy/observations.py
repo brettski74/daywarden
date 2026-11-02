@@ -214,7 +214,7 @@ def _hierarchical(store: PolicyStore) -> tuple[Policy | None, UsageStore | None]
         print(f"{path} not found; observations are not recorded", flush=True)
         return None, usage
     print(f"loading {path}", flush=True)
-    return load_hierarchy(path), usage
+    return load_hierarchy(path, task_data=False), usage
 
 
 def _clock_for(policy: Policy) -> HouseholdClock:

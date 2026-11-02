@@ -90,7 +90,7 @@ site_groups:
 time_windows:
   bedtime:
     periods:
-      - start: "04:00"
+      - start: "05:00"
         end: "07:00"
         days: monday-thursday
       # Starting suggestion: weekend bedtime runs an hour later.
@@ -99,8 +99,8 @@ time_windows:
         days: friday-sunday
   school_hours:
     periods:
-      - start: "07:00"
-        end: "15:00"
+      - start: "02:00"
+        end: "16:00"
         days: monday-thursday
       # Starting suggestion: a short weekend revision block, then the evening opens.
       - start: "08:00"
@@ -109,7 +109,7 @@ time_windows:
   evening:
     periods:
       - start: "15:00"
-        end: "19:00"
+        end: "09:00"
         days: monday-thursday
       # Starting suggestion: wider evening, noon until 21:00.
       - start: "12:00"
@@ -220,3 +220,11 @@ tasks:
     type: skip_counting
     group: younger
     pass_cooldown: 1
+  spelling:
+    type: spelling
+    group: younger
+    pass_cooldown: 1
+    body:
+      timeout: 30s
+      revision_required: 10
+
