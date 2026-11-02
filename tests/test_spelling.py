@@ -27,6 +27,7 @@ from policy.sounds import load_sounds  # noqa: E402
 from policy.spelling import (  # noqa: E402
     CURRENT,
     PADDING_BYTES,
+    PLAY_ALLOWANCE_MS,
     REVISION,
     Session,
     check_body,
@@ -568,19 +569,42 @@ def test_the_attempt_never_runs_out_of_words_before_it_passes(data):
 # Server timing and replays
 
 
-def test_the_server_allows_the_word_clip_and_the_timeout_plus_the_network_allowance(data):
+def test_the_server_allows_the_word_clip_its_play_allowance_and_the_timeout_plus_the_network_allowance(data):
     _words(data, "spelling/current", "rope", "cat")
     session = _session()
     question = session.issue(START)
-    assert question["allowed_ms"] == WORD_MS + TIMEOUT_MS
-    edge = START + timedelta(milliseconds=WORD_MS + TIMEOUT_MS + NETWORK_ALLOWANCE_MS)
+    assert question["allowed_ms"] == WORD_MS + PLAY_ALLOWANCE_MS + TIMEOUT_MS
+    edge = START + timedelta(milliseconds=WORD_MS + PLAY_ALLOWANCE_MS + TIMEOUT_MS + NETWORK_ALLOWANCE_MS)
     assert _answer_pending(session, edge, right=True).outcome == "correct"
     later = edge + timedelta(seconds=5)
     session.issue(later)
-    late = later + timedelta(milliseconds=WORD_MS + TIMEOUT_MS + NETWORK_ALLOWANCE_MS + 1)
+    late = later + timedelta(milliseconds=WORD_MS + PLAY_ALLOWANCE_MS + TIMEOUT_MS + NETWORK_ALLOWANCE_MS + 1)
     judged = _answer_pending(session, late, right=True)
     assert judged.outcome == "timeout"
     assert judged.question["answer"] is not None
+
+
+def test_a_right_spelling_sent_when_the_timer_runs_out_counts_despite_the_wait_for_the_word_to_play(data):
+    """Fetching and starting the clip, and both requests, put the browser's timer about 1.3 s behind the server."""
+    _words(data, "spelling/current", "rope", "cat")
+    session = _session()
+    session.issue(START)
+    sent = START + timedelta(milliseconds=WORD_MS + TIMEOUT_MS + 1_300)
+    assert _answer_pending(session, sent, right=True, expired=True).outcome == "correct"
+
+
+def test_each_replay_brings_its_own_play_allowance(data):
+    _words(data, "spelling/current", "rope", sentences={"rope"})
+    session = _session({"maximum_replays": 2, "maximum_sentence_plays": 1})
+    session.issue(START)
+    number = len(session.questions) - 1
+    lag = timedelta(milliseconds=1_300)
+    at = START + timedelta(milliseconds=WORD_MS) + lag + timedelta(seconds=5)
+    for clip, length in (("word", WORD_MS), ("word", WORD_MS), ("sentence", SENTENCE_MS)):
+        session.replay(at, number, clip)
+        at += timedelta(milliseconds=length) + lag + timedelta(seconds=5)
+    sent = at + timedelta(milliseconds=TIMEOUT_MS - 4 * 5_000)
+    assert _answer_pending(session, sent, right=True, expired=True).outcome == "correct"
 
 
 def test_each_replay_extends_the_deadline_by_that_clip_up_to_its_limit(data):
@@ -597,7 +621,7 @@ def test_each_replay_extends_the_deadline_by_that_clip_up_to_its_limit(data):
         session.replay(START + timedelta(seconds=7), number, "sentence")
     pending = session.pending
     assert (pending["word_replays"], pending["sentence_plays"]) == (2, 1)
-    assert pending["allowed_ms"] == WORD_MS * 3 + SENTENCE_MS + TIMEOUT_MS
+    assert pending["allowed_ms"] == WORD_MS * 3 + SENTENCE_MS + 4 * PLAY_ALLOWANCE_MS + TIMEOUT_MS
     in_time = START + timedelta(milliseconds=pending["allowed_ms"] + NETWORK_ALLOWANCE_MS)
     assert _answer_pending(session, in_time, right=True).outcome == "correct"
 
@@ -617,7 +641,7 @@ def test_a_replay_that_is_not_allowed_is_refused_without_more_time(data, body, s
     session.issue(START)
     with pytest.raises(ValueError, match=message):
         session.replay(START + timedelta(seconds=1), 0, clip)
-    assert session.pending["allowed_ms"] == WORD_MS + TIMEOUT_MS
+    assert session.pending["allowed_ms"] == WORD_MS + PLAY_ALLOWANCE_MS + TIMEOUT_MS
 
 
 def test_a_replay_after_the_time_is_up_is_refused(data):
@@ -788,7 +812,7 @@ def test_replays_through_the_page_extend_the_time_and_stop_at_the_limit(tmp_path
     assert (status, payload) == (200, {"word_replays": 1, "sentence_plays": 0})
     status, payload = quiz.post(START + timedelta(seconds=3), "replay", {"id": question["id"], "clip": "word"})
     assert status == 400
-    assert quiz.question()["allowed_ms"] == WORD_MS * 2 + TIMEOUT_MS
+    assert quiz.question()["allowed_ms"] == WORD_MS * 2 + 2 * PLAY_ALLOWANCE_MS + TIMEOUT_MS
     status, _payload = quiz.post(START + timedelta(seconds=4), "replay", {"id": question["id"] + 5, "clip": "word"})
     assert status == 409
 
@@ -931,7 +955,7 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path,
         "outcome": "correct",
         "requeued": False,
         "timeout_ms": TIMEOUT_MS,
-        "allowed_ms": WORD_MS + SENTENCE_MS + TIMEOUT_MS,
+        "allowed_ms": WORD_MS + SENTENCE_MS + 2 * PLAY_ALLOWANCE_MS + TIMEOUT_MS,
         "received_ms": 4_250,
         "issued": "2026-11-02T16:00:00.000-05:00",
     }
@@ -1036,6 +1060,35 @@ def test_the_page_never_holds_a_word(tmp_path, data):
     _words(data, "spelling/current", "quokka")
     quiz = Quiz(tmp_path)
     assert "quokka" not in quiz.open(START).body
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+@pytest.mark.parametrize("outcome", ["correct", "incorrect", "timeout"])
+def test_the_next_word_waits_four_seconds_after_the_feedback_sound(tmp_path, data, outcome):
+    """The feedback sound can run for several seconds, so the next word must not start over it."""
+    _words(data, "spelling/current", "rope", "cat", "dog")
+    quiz = Quiz(tmp_path, {"current_required": 3})
+    page = quiz.open(START).body
+    _status, visit = quiz.post(START, "visit", {})
+    first = quiz.ask(START)
+    right = outcome == "correct"
+    result = quiz.answer(START + timedelta(seconds=2), first["id"], quiz.expected() if right else "zzz", expired=outcome == "timeout")
+    assert result["outcome"] == outcome and result["sound"] and not result["finished"]
+    second = quiz.ask(START + timedelta(seconds=6))
+    replies = {"visit": [visit], "question": [first, second], "answer": [result]}
+    run = subprocess.run(
+        ["node", str(ROOT / "tests" / "page_harness.js")],
+        input=json.dumps({"html": page, "replies": replies, "clip_ms": WORD_MS, "run_ms": 10_000}),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    events = json.loads(run.stdout)
+    plays = [event for event in events if event["kind"] == "play"]
+    sound = next(event["at"] for event in plays if event["what"] == result["sound"])
+    word = next(event["at"] for event in plays if event["what"] == second["word_url"])
+    assert word - sound >= 4000
+    assert [event["what"] for event in events if event["kind"] == "post"] == ["visit", "question", "answer", "question"]
 
 
 def _call(app, method, path, *, query=b"", body=b""):
