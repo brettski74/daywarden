@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Cut one recording into named spelling clips, on the machine running Compose.
+#   cut-clips take.m4a --out ~/daywarden/spelling/alphabet   name each clip
+#   cut-clips take.m4a --list                                show the clips found
+#   cut-clips --help                                         every option
+# Runs `python -m policy.clips` here, not in a container, with the repository
+# on the module path. Set PYTHON to use another interpreter, such as a venv's.
+# Works from any directory, including through a symlink in ~/bin.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+repo=$(dirname -- "$(dirname -- "$script")")
+export PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}"
+exec "${PYTHON:-python3}" -m policy.clips "$@"

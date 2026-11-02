@@ -214,43 +214,60 @@ def load_pools(settings: Settings, root: Path | None = None) -> Pools:
 
 def scan_pool(directory: Path, field: str) -> tuple[Word, ...]:
     """Read one pool directory. Hidden files and files that are not audio are skipped."""
+    words, problems = _scan_pool(directory, field)
+    if problems:
+        raise ValueError(problems[0])
+    return words
+
+
+def pool_problems(directory: Path, field: str) -> list[str]:
+    """Return every reason a pool directory would fail to load, in the order ``scan_pool`` meets them."""
+    return _scan_pool(directory, field)[1]
+
+
+def _scan_pool(directory: Path, field: str) -> tuple[tuple[Word, ...], list[str]]:
     clips: dict[str, tuple[str, str, Clip]] = {}
     sentences: dict[str, Clip] = {}
+    problems: list[str] = []
     with os.scandir(directory) as listing:
         children = sorted(listing, key=lambda child: child.name)
     for child in children:
         if child.name.startswith(".") or not child.is_file():
             continue
-        parsed = parse_clip_name(child.name, field)
-        if parsed is None:
+        try:
+            parsed = parse_clip_name(child.name, field)
+            if parsed is None:
+                continue
+            key, word, sentence = parsed
+            clip = Clip(child.name, audio_ms(Path(child.path), child.stat(), field))
+        except ValueError as exc:
+            problems.append(str(exc))
             continue
-        key, word, sentence = parsed
         folded = key.lower()
-        clip = Clip(child.name, audio_ms(Path(child.path), child.stat(), field))
         if sentence:
             if folded in sentences:
-                raise ValueError(
-                    f"{field}: {sentences[folded].name} and {child.name} are both the sentence clip for {key}"
-                )
+                problems.append(f"{field}: {sentences[folded].name} and {child.name} are both the sentence clip for {key}")
+                continue
             sentences[folded] = clip
         else:
             if folded in clips:
-                raise ValueError(f"{field}: {clips[folded][2].name} and {child.name} are both the word clip for {key}")
+                problems.append(f"{field}: {clips[folded][2].name} and {child.name} are both the word clip for {key}")
+                continue
             clips[folded] = (key, word, clip)
     for folded, sentence in sentences.items():
         if folded not in clips:
-            raise ValueError(f"{field}: {sentence.name} has no word clip beside it")
-    return tuple(
-        Word(key, word, clip, sentences.get(folded)) for folded, (key, word, clip) in sorted(clips.items())
-    )
+            problems.append(f"{field}: {sentence.name} has no word clip beside it")
+    words = tuple(Word(key, word, clip, sentences.get(folded)) for folded, (key, word, clip) in sorted(clips.items()))
+    return words, problems
 
 
-def parse_clip_name(name: str, field: str) -> tuple[str, str, bool] | None:
+def parse_clip_name(name: str, field: str | None) -> tuple[str, str, bool] | None:
     """Return the entry key, the spelling, and whether a file is a sentence clip.
 
     A file without an audio extension is None. A badly formed audio file name
-    raises ``ValueError``.
+    raises ``ValueError``, whose message starts with ``field`` when one is given.
     """
+    prefix = f"{field}: " if field else ""
     stem, dot, extension = name.rpartition(".")
     if not dot or "." + extension.lower() not in MEDIA_TYPES:
         return None
@@ -264,13 +281,13 @@ def parse_clip_name(name: str, field: str) -> tuple[str, str, bool] | None:
         word = key = parts[0]
     else:
         raise ValueError(
-            f"{field}: {name} is not <word>.<ext>, <word>.<n>.<ext>, <word>.sentence.<ext>, "
+            f"{prefix}{name} is not <word>.<ext>, <word>.<n>.<ext>, <word>.sentence.<ext>, "
             "or <word>.<n>.sentence.<ext>"
         )
     if not _WORD.fullmatch(word):
-        raise ValueError(f"{field}: {name}: a word may only have the letters a to z, - and '")
+        raise ValueError(f"{prefix}{name}: a word may only have the letters a to z, - and '")
     if len(key) > LONGEST_KEY:
-        raise ValueError(f"{field}: {name}: {key} is longer than {LONGEST_KEY} characters")
+        raise ValueError(f"{prefix}{name}: {key} is longer than {LONGEST_KEY} characters")
     return key, word, sentence
 
 

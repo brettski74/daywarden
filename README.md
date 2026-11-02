@@ -73,7 +73,7 @@ A task with `type: arithmetic` is a timed quiz on that page: one large question,
 
 A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with blank boxes to fill in. He gets three tries per question, worth 1, 0.5, and 0.25 points. With `maximum_questions` set, an attempt that runs out of questions without enough points is a failure. Every field has a default, so `body: {}` is a working task. Each difference may set its own `minimum_value` and `maximum_value`. The defaults keep counting by 2 under 100. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#skip-counting-tasks) for the fields, the configuration checks, and the scoring.
 
-A task with `type: spelling` plays recordings of words, and he types each one. The recordings live on the host in `DAYWARDEN_DATA_DIR` (`$HOME/daywarden` by default, set in `.env`), in `spelling/current` for this week's words and `spelling/revision` for older ones. Name each file after the word, such as `rope.opus`, and add `rope.sentence.opus` for a sentence that uses it. New or replaced files are used from the next quiz run without a restart. `make up` creates the directory if it is missing. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#spelling-tasks) for the file names, the fields, and the rules.
+A task with `type: spelling` plays recordings of words, and he types each one. The recordings live on the host in `DAYWARDEN_DATA_DIR` (`$HOME/daywarden` by default, set in `.env`), in `spelling/current` for this week's words and `spelling/revision` for older ones. Name each file after the word, such as `rope.opus`, and add `rope.sentence.opus` for a sentence that uses it. New or replaced files are used from the next quiz run without a restart. `make up` creates the directory if it is missing. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#spelling-tasks) for the file names, the fields, and the rules. [Recording spelling clips](#recording-spelling-clips) shows how to record a whole list in one take and cut it into files.
 
 ## Decision and observation logs
 
@@ -148,6 +148,54 @@ rm-attempts --type arithmetic --newer-than 2h --yes
 ```
 
 A removed attempt is gone from `/attempts`. A removed pass no longer counts toward today's `tasks_required` and no longer starts a cooldown. A removed failure or abandonment is no longer a skip day. The change takes effect on the next request, with no restart.
+
+## Recording spelling clips
+
+`bin/cut-clips` cuts one recording of several letters, words, or sentences into separate clips at the pauses, and asks you to name each one. It runs on the machine running Compose, not in a container. It needs `ffmpeg` built with `libopus` (`ffplay`, which comes with it, for `--play`) and the Python packages in `policy/requirements.txt`, which include `pydub` and `audioop-lts`:
+
+```sh
+sudo pacman -S ffmpeg
+pip install -r policy/requirements.txt
+ln -s "$PWD"/bin/cut-clips ~/bin/
+```
+
+It runs `python3`. Set `PYTHON` to use another interpreter, such as `PYTHON=~/venvs/daywarden/bin/python cut-clips ...`.
+
+Record a take in any format ffmpeg reads, such as `.wav`, `.mp3`, `.m4a`, `.ogg`, `.opus`, `.flac`, or `.webm`. Say each item clearly, then pause for a second or more before the next one. A shorter pause, such as the gaps between the words of a sentence, stays inside one clip. Keep the room quiet, and keep coughs and bumps away from the items.
+
+Check what the tool finds before naming anything. `--list` prints each clip's number, start time, and length, and how many short sounds it ignored, and writes nothing:
+
+```sh
+cut-clips alphabet.m4a --list
+```
+
+If the count is wrong, tune the detection and list again:
+
+- Two items run together: pause longer when recording, or lower `--min-silence` (default `700` ms, at least `200`).
+- One item is split in two, such as a sentence at a breath: raise `--min-silence`.
+- A soft ending such as the "s" in "ess" is cut short, or a quiet item is missing: raise `--threshold` (default `35`, in decibels below the loudest point). Background noise counted as a clip: lower it.
+- A real item is ignored as a short sound: lower `--min-speech` (default `150` ms).
+
+Then cut the take into a pool directory and name each clip as it is offered:
+
+```sh
+cut-clips alphabet.m4a --out ~/daywarden/spelling/alphabet --play
+```
+
+The tool prints how many clips it found, then asks for each name in order: `Clip 3 of 28 at 0:05.20 (0.48 s):`. With `--play` it plays each clip first, and `?` plays it again. Each name writes `<name>.opus`. An empty name skips the clip. `--bitrate` sets the Opus bitrate (default `32k`). Each clip keeps 100 ms of the recording either side of the speech, faded in and out so clips join without clicks.
+
+Names follow the spelling pool rules, and a name the policy would refuse is explained and asked for again:
+
+| Recording | Name | File |
+| --- | --- | --- |
+| A letter of the alphabet (S005.2) | `a` to `z`, `dash` for `-`, `apostrophe` for `'` | `a.opus`, `dash.opus` |
+| A word | the spelling | `rope.opus`, `don't.opus` |
+| One of two words spelled the same | the spelling and a number | `read.1.opus`, `read.2.opus` |
+| A sentence that uses a word | the word's name and `.sentence` | `rope.sentence.opus`, `read.2.sentence.opus` |
+
+Leave off the extension. If `rope.opus` is already there, the tool asks before replacing it. If another file is already the clip for `rope`, such as `rope.mp3` or `Rope.opus`, it asks before replacing that, and removes the old file once the new one is written. Answering no asks for the name again.
+
+Clips are written to a hidden file and renamed into place, so a quiz starting at the same moment never sees half a clip. Ctrl-C or end of input stops the tool and keeps the clips already written. At the end it prints how many clips it wrote and skipped, and warns about anything in the directory that would stop the policy loading, such as `rope.sentence.opus` with no `rope.opus`.
 
 ## Tests
 

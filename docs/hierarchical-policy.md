@@ -292,7 +292,7 @@ The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`.
 
 ### Spelling tasks
 
-A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden/data`. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
+A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden/data`. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
 
 | Field | Default | Value |
 | --- | --- | --- |
@@ -305,7 +305,7 @@ A task with `type: spelling` plays a recorded word, and he types it into a large
 | `current_required` | Every word in `current_dir` | Current words he must spell right. 0 up to the number of current words. |
 | `revision_required` | 5, or every revision word when there are fewer | Revision words he must spell right. 0 up to the number of revision words. |
 
-Each word is one recording named `<word>.<ext>`, spoken clearly on its own, with an optional `<word>.sentence.<ext>` of a sentence that uses it. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`, and the two files of a word may use different formats. The file name is the spelling: letters, `-`, and `'`, up to 22 characters. Homographs add a number, such as `read.1.opus` and `read.2.opus`, each with its own sentence clip. Both are spelled `read`. Names are matched without regard to case, and the word clip's casing is the one shown. Hidden files and other files, such as notes, are ignored.
+Each word is one recording named `<word>.<ext>`, spoken clearly on its own, with an optional `<word>.sentence.<ext>` of a sentence that uses it. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`, and the two files of a word may use different formats. The file name is the spelling: letters, `-`, and `'`, up to 22 characters. Homographs add a number, such as `read.1.opus` and `read.2.opus`, each with its own sentence clip. Both are spelled `read`. Names are matched without regard to case, and the word clip's casing is the one shown. Hidden files and other files, such as notes, are ignored. `bin/cut-clips` cuts one recording of a whole list into files named this way. See [Recording spelling clips](../README.md#recording-spelling-clips).
 
 ```yaml
 tasks:

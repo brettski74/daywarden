@@ -294,6 +294,7 @@ class _Build:
     task_where: dict[str, str] = field(default_factory=dict)
     rule_sets: dict[str, tuple[Rule, ...]] = field(default_factory=dict)
     ruleset_where: dict[str, str] = field(default_factory=dict)
+    task_data: bool = True
 
 
 class _Loader(yaml.SafeLoader):
@@ -326,6 +327,7 @@ def load(
     previous: Policy | None = None,
     lookup: Lookup = socket.getaddrinfo,
     warn: Callable[[str], None] = lambda message: print(message, flush=True),
+    task_data: bool = True,
 ) -> Policy | None:
     """Load ``path`` into a new policy.
 
@@ -334,11 +336,15 @@ def load(
     ``previous`` is only read, so a failed load leaves it as it was. Pass the
     last successful policy so a DNS name that fails this time can keep the
     addresses that name resolved to then.
+
+    With ``task_data`` false, task bodies are checked without reading the
+    household data directory, such as the spelling word pools. A service that
+    does not mount that directory loads this way.
     """
     root = Path(path)
     if not root.is_file():
         return previous
-    build = _Build()
+    build = _Build(task_data=task_data)
     seen: set[Path] = set()
     _load_file(root, root.resolve(), seen, build)
     return _finish(build, previous, lookup, warn)
@@ -498,7 +504,7 @@ def _take_quotas(node: yaml.Node, build: _Build) -> None:
 
 def _take_tasks(node: yaml.Node, build: _Build) -> None:
     for name, body, where in _entities(node, "task"):
-        task = _task(name, body, where)
+        task = _task(name, body, where, build.task_data)
         _claim(build.tasks, build.task_where, name, task, where, "task")
 
 
@@ -508,8 +514,13 @@ _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
     spelling.SPELLING: spelling.check_body,
 }
 
+_QUIZ_FIELDS: dict[str, Callable[[Mapping], object]] = {
+    **_QUIZ_BODIES,
+    spelling.SPELLING: spelling.parse_settings,
+}
 
-def _task(name: str, node: yaml.Node, where: str) -> Task:
+
+def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Task:
     pairs = _pairs(node)
     _reject_unknown(set(pairs), _TASK_KEYS, where)
     if "type" not in pairs:
@@ -541,7 +552,7 @@ def _task(name: str, node: yaml.Node, where: str) -> Task:
     if not isinstance(document, dict):
         raise ConfigError(f"{where}: body must be a mapping")
     kind = _text(pairs["type"], f"{where}: type")
-    parse = _QUIZ_BODIES.get(kind)
+    parse = (_QUIZ_BODIES if task_data else _QUIZ_FIELDS).get(kind)
     if parse is not None:
         try:
             parse(document)
