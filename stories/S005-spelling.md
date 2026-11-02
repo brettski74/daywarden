@@ -2,7 +2,7 @@ Ticket: S005
 Title: Spelling quiz
 Status: Refined
 Story Points: 13
-Last Updated: 2026-11-01 21:40:00
+Last Updated: 2026-11-02 03:45:00
 ---
 
 # User Voice
@@ -34,6 +34,8 @@ As a parent, I want him to spell this week's words, plus a few older ones, from 
 | S005.1 | Spelling quiz | 8 |
 | S005.2 | Spelling practice mode | 5 |
 | S005.3 | Spelling audio processor | 5 |
+| S005.4 | Spelling feedback pause | 1 |
+| S005.5 | Spelling play allowance | 2 |
 
 # Notes
 

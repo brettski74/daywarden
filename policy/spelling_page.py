@@ -50,8 +50,7 @@ from policy.tasks import ABANDONED, Attempt, AttemptStore, Task
 __all__ = ["REPLAY", "give_up_page", "media", "reload", "respond_api", "settle", "show"]
 
 REPLAY = "replay"
-CORRECT_PAUSE_MS = 1000
-WRONG_PAUSE_MS = 2500
+FEEDBACK_PAUSE_MS = 4000
 AUDIO_GRACE_MS = 5000
 MISSED_COLUMNS = 3
 
@@ -88,8 +87,7 @@ def show(
     config = {
         "action": path,
         **session.progress(),
-        "correctPause": CORRECT_PAUSE_MS,
-        "wrongPause": WRONG_PAUSE_MS,
+        "feedbackPause": FEEDBACK_PAUSE_MS,
         "audioGrace": AUDIO_GRACE_MS,
         "ended": ended,
     }
@@ -546,8 +544,7 @@ _SCRIPT = """\
       feedback.textContent = result.outcome === "timeout" ? "Time ran out" : "Not quite";
       if (result.word) reveal.textContent = result.word;
     }
-    const pause = result.outcome === "correct" ? config.correctPause : config.wrongPause;
-    setTimeout(() => (result.finished ? end(result) : ask()), pause);
+    setTimeout(() => (result.finished ? end(result) : ask()), config.feedbackPause);
   }
 
   box.addEventListener("keydown", (event) => {

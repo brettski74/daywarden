@@ -54,6 +54,9 @@ LONGEST_ANSWER = 40
 TOKEN_BYTES = 24
 TOKEN_LENGTH = 32
 DEFAULT_REVISION_REQUIRED = 5
+# The browser's timer only runs once a clip has been fetched, started, and
+# heard to the end, so each play costs more than its length.
+PLAY_ALLOWANCE_MS = 1500
 
 _DIRECTORIES = {
     "current_dir": "spelling/current",
@@ -537,7 +540,7 @@ class Session(QuizRecord):
             "outcome": None,
             "requeued": None,
             "timeout_ms": timeout,
-            "allowed_ms": word["clip_ms"] + timeout,
+            "allowed_ms": word["clip_ms"] + PLAY_ALLOWANCE_MS + timeout,
             "received_ms": None,
             "issued": stamp(now),
         }
@@ -546,7 +549,7 @@ class Session(QuizRecord):
         return question
 
     def replay(self, now: datetime, number: object, clip: object) -> dict:
-        """Record a replay of the word or sentence and give the question that clip's length again.
+        """Record a replay of the word or sentence and give the question that clip's length and its play allowance.
 
         A replay past the configured maximum, of a sentence the word does not
         have, or after the question's time is up is refused.
@@ -570,7 +573,7 @@ class Session(QuizRecord):
         if pending[field] >= limit:
             raise ValueError(f"no more {clip} plays are allowed on this question")
         pending[field] += 1
-        pending["allowed_ms"] += length
+        pending["allowed_ms"] += length + PLAY_ALLOWANCE_MS
         self.touch(now)
         return dict(pending)
 
