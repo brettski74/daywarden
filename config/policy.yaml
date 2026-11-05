@@ -227,4 +227,25 @@ tasks:
     body:
       timeout: 30s
       revision_required: 10
+  parts_of_speech:
+    type: parts_of_speech
+    group: younger
+    pass_cooldown: 1
+    body:
+      sentences:
+        - sentence: "The quick, brown fox jumps over the lazy dog."
+          parts: 
+            noun: ["fox", "dog"]
+            verb: ["jumps"]
+            adjective: ["quick", "brown", "lazy"]
+        - sentence: "Dry the dishes with a dry towel."
+          parts:
+            noun: ["dishes", "towel"]
+            verb: ["dry"]
+            adjective: ["dry[2]"]
+        - sentence: "The cat sat on the mat."
+          parts:
+            noun: ["cat", "mat"]
+            verb: ["sat"]
+            adjective: []
 

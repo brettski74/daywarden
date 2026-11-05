@@ -6,6 +6,7 @@ otherwise leaves the attempt in progress and says this task has to be
 finished. ``parent_check`` is not a page the child can open, and nothing
 on these pages records a pass except a quiz that reaches its target.
 An ``arithmetic`` task is the quiz in ``policy.arithmetic_page``, a
+``parts_of_speech`` task is the one in ``policy.parts_of_speech_page``, a
 ``skip_counting`` task is the one in ``policy.skip_counting_page``, and a
 ``spelling`` task is the one in ``policy.spelling_page``. A quiz's page
 load, questions, and answers are posts to the task's own URL with ``?do=``.
@@ -20,10 +21,11 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-from policy import arithmetic_page, skip_counting_page, spelling_page
+from policy import arithmetic_page, parts_of_speech_page, skip_counting_page, spelling_page
 from policy.arithmetic import ARITHMETIC
 from policy.engine import classify_client
 from policy.hierarchy import Policy
+from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.quiz_page import reload
 from policy.report import PageResponse, _document, _e, _response
 from policy.selection import (
@@ -45,7 +47,12 @@ NOTHING_ELSE = "There is nothing else available right now."
 MUST_FINISH = "This task has to be finished before another one."
 VISIT_COOKIE = "task_visit"
 
-_QUIZZES = {ARITHMETIC: arithmetic_page, SKIP_COUNTING: skip_counting_page, SPELLING: spelling_page}
+_QUIZZES = {
+    ARITHMETIC: arithmetic_page,
+    PARTS_OF_SPEECH: parts_of_speech_page,
+    SKIP_COUNTING: skip_counting_page,
+    SPELLING: spelling_page,
+}
 
 
 def respond_task(

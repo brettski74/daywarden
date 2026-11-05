@@ -128,11 +128,11 @@ def test_a_never_passed_task_is_chosen_over_one_passed_last_week(tmp_path):
         _house(
             """\
   zeta:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
   alpha:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
 """,
@@ -157,11 +157,11 @@ def test_equal_candidates_rotate_in_name_order(tmp_path):
         _house(
             """\
   beta:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
   alpha:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
 """,
@@ -188,11 +188,11 @@ def test_a_required_task_is_chosen_over_an_optional_one(tmp_path):
         _house(
             """\
   optional:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
   due:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
     due_date: 2026-10-31
@@ -263,11 +263,11 @@ def test_an_optional_url_does_not_start_while_a_required_task_is_eligible(tmp_pa
         _house(
             """\
   optional:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
   due:
-    type: parts_of_speech
+    type: worksheet
     group: younger
     pass_cooldown: 0
     due_date: 2026-10-31
