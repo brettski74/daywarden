@@ -1,9 +1,10 @@
-"""S005.3: cutting a spoken recording into named, faded spelling clips."""
+"""S005.3, S005.7, S005.8: normalizing a spoken recording and cutting it into named, faded spelling clips."""
 
 import io
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,8 @@ from policy.clips import (  # noqa: E402
     find_clips,
     load_recording,
     main,
+    measure_loudness,
+    normalize,
     write_clip,
 )
 
@@ -64,6 +67,10 @@ def _samples(audio: AudioSegment) -> array:
 
 def _rms(values) -> float:
     return math.sqrt(sum(value * value for value in values) / len(values))
+
+
+def _db(louder, quieter) -> float:
+    return 20 * math.log10(_rms(louder) / _rms(quieter))
 
 
 def _write_wav(path: Path, audio: AudioSegment) -> Path:
@@ -143,27 +150,94 @@ def test_a_silent_recording_has_no_clips():
     assert find_clips(audio).spans == ()
 
 
+# Loudness
+
+
+@needs_ffmpeg
+def test_quiet_and_loud_takes_are_brought_to_the_same_perceived_loudness():
+    for scale in (0.02, 0.3, 1.0):
+        audio, _ = _audio(*THREE, scale=scale)
+        normalized = normalize(audio)
+        assert abs(normalized.after.integrated + 18) <= 0.5
+        assert normalized.gain == pytest.approx(-18 - normalized.before.integrated)
+        assert not normalized.limited
+    louder = normalize(_audio(*THREE)[0], -12)
+    assert abs(louder.after.integrated + 12) <= 0.5
+
+
+@needs_ffmpeg
+def test_one_gain_covers_the_whole_recording_so_items_keep_their_relative_loudness_and_the_same_clips():
+    audio = _audio(500, 600, 900)[0] + _audio(0, 600, 500, scale=0.25)[0]
+    normalized = normalize(audio)
+    loud, quiet = _samples(audio[500:1100]), _samples(audio[2000:2600])
+    new_loud, new_quiet = _samples(normalized.audio[500:1100]), _samples(normalized.audio[2000:2600])
+    assert abs(_db(new_loud, new_quiet) - _db(loud, quiet)) <= 0.1
+    assert abs(_db(new_loud, loud) - normalized.gain) <= 0.1
+    assert len(normalized.audio) == len(audio)
+    assert find_clips(normalized.audio) == find_clips(audio)
+
+
+@needs_ffmpeg
+def test_a_peak_the_gain_would_clip_is_limited_rather_than_the_loudness_lowered():
+    samples = _samples(_audio(500, 2000, 500, scale=0.05)[0])
+    samples[RATE] = 30000
+    audio = AudioSegment(data=samples.tobytes(), sample_width=2, frame_rate=RATE, channels=1)
+    normalized = normalize(audio)
+    assert normalized.limited
+    assert normalized.before.peak > -1.5
+    assert normalized.gain > 10
+    assert abs(normalized.after.integrated + 18) <= 0.5
+    assert normalized.audio.max <= 32767 * 10 ** (-1 / 20) + 2
+    tone = slice(RATE * 2, RATE * 2 + RATE // 2)
+    assert abs(_db(_samples(normalized.audio)[tone], samples[tone]) - normalized.gain) <= 0.1
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    "audio",
+    [
+        AudioSegment(data=b"\0" * RATE * 4, sample_width=2, frame_rate=RATE, channels=1),
+        _audio(0, 300)[0],
+    ],
+    ids=["silent", "shorter-than-400-ms"],
+)
+def test_a_recording_too_quiet_or_short_to_measure_is_left_as_it_is(audio):
+    assert not measure_loudness(audio).measured
+    normalized = normalize(audio)
+    assert not normalized.before.measured
+    assert normalized.gain == 0
+    assert normalized.audio.raw_data == audio.raw_data
+
+
+@pytest.mark.parametrize("target", [-41, -9, -3])
+def test_a_target_loudness_out_of_range_is_refused(target):
+    with pytest.raises(ValueError, match="from -40 to -10 LUFS"):
+        normalize(_audio(500, 400, 500)[0], target)
+
+
 # Cutting clips
 
 
+@pytest.mark.parametrize("guard", [10, 50, 100, 250])
 @pytest.mark.parametrize("parts", [THREE, (30, 400, 900, 400, 40), (0, 400, 900, 400, 0)])
-def test_each_clip_is_a_guard_the_speech_and_a_guard_even_at_the_edges(parts):
+def test_each_clip_is_a_guard_the_speech_and_a_guard_even_at_the_edges(parts, guard):
     audio, tones = _audio(*parts)
     found = find_clips(audio)
     assert len(found.spans) == len(tones)
     for span in found.spans:
-        clip = cut_clip(audio, span)
-        assert abs(len(clip) - (span.ms + 200)) <= 1
+        clip = cut_clip(audio, span, guard)
+        assert abs(len(clip) - (span.ms + 2 * guard)) <= 1
         samples = _samples(clip)
         assert samples[0] == 0 and samples[-1] == 0
 
 
+@pytest.mark.parametrize("guard_ms", [10, 50, 100, 250])
 @pytest.mark.parametrize("span", [Span(500, 1500), Span(40, 1500), Span(500, 1980)])
-def test_the_guards_fade_from_and_to_zero_and_the_speech_is_untouched(span):
+def test_the_guards_fade_from_and_to_zero_over_their_whole_length_and_the_speech_is_untouched(span, guard_ms):
     audio, _ = _audio(0, 2000, frequency=1000)
-    clip = cut_clip(audio, span)
+    clip = cut_clip(audio, span, guard_ms)
     samples = _samples(clip)
-    guard = RATE // 10
+    guard = RATE * guard_ms // 1000
     speech = _samples(audio[span.start : span.end])
     assert len(samples) == guard * 2 + len(speech)
     assert samples[0] == 0 and samples[-1] == 0
@@ -172,16 +246,28 @@ def test_the_guards_fade_from_and_to_zero_and_the_speech_is_untouched(span):
     quarter = guard // 4
     lead_levels = [_rms(lead[n * quarter : (n + 1) * quarter]) for n in range(4)]
     tail_levels = [_rms(tail[n * quarter : (n + 1) * quarter]) for n in range(4)]
-    padded_lead = span.start < 100
-    padded_tail = len(audio) - span.end < 100
+    padded_lead = span.start < guard_ms
+    padded_tail = len(audio) - span.end < guard_ms
     if not padded_lead:
         assert lead_levels == sorted(lead_levels) and lead_levels[0] < lead_levels[-1]
     if not padded_tail:
         assert tail_levels == sorted(tail_levels, reverse=True) and tail_levels[0] > tail_levels[-1]
     if padded_lead:
-        assert set(lead[: (100 - span.start) * RATE // 1000]) == {0}
+        assert set(lead[: (guard_ms - span.start) * RATE // 1000]) == {0}
     if padded_tail:
         assert set(tail[(len(audio) - span.end) * RATE // 1000 :]) == {0}
+
+
+def test_the_default_guard_is_100_ms():
+    audio, _ = _audio(0, 2000)
+    assert len(cut_clip(audio, Span(500, 1500))) == 1200
+
+
+@pytest.mark.parametrize("guard", [9, 0, -5])
+def test_a_guard_shorter_than_10_ms_is_refused(guard):
+    audio, _ = _audio(0, 2000)
+    with pytest.raises(ValueError, match="at least 10 ms"):
+        cut_clip(audio, Span(500, 1500), guard)
 
 
 @needs_ffmpeg
@@ -334,7 +420,8 @@ def test_the_tool_counts_the_clips_then_asks_for_each_name_in_order(take, tmp_pa
     status, out, err = _run(str(take), "--out", str(out_dir), answers="a\n\ndash\n")
     assert status == 0, err
     lines = out.splitlines()
-    assert lines[0] == f"Found 3 clips in {take}."
+    assert lines[0].startswith("Loudness ")
+    assert lines[1] == f"Found 3 clips in {take}."
     assert [line for line in lines if line.startswith("Clip")] == [
         "Clip 1 of 3 at 0:00.50 (0.40 s): ",
         "Clip 2 of 3 at 0:01.80 (0.65 s): ",
@@ -343,6 +430,84 @@ def test_the_tool_counts_the_clips_then_asks_for_each_name_in_order(take, tmp_pa
     assert "Wrote 2 clips, skipped 1." in lines
     assert sorted(path.name for path in out_dir.iterdir()) == ["a.opus", "dash.opus"]
     assert err == ""
+    assert "Recording 1" not in out and "Altogether" not in out
+
+
+@pytest.fixture
+def pair(take) -> Path:
+    """A second recording, of two tones, beside ``take``."""
+    return _write_wav(take.parent / "two.wav", _audio(500, 400, 900, 400, 500)[0])
+
+
+@needs_ffmpeg
+def test_each_recording_is_cut_in_turn_with_the_same_settings(take, pair, tmp_path):
+    words = tmp_path / "words"
+    status, out, err = _run(str(take), str(pair), "--out", str(words), "--guard", "30", answers="a\nb\n\nc\nd\n")
+    assert status == 0, err
+    lines = out.splitlines()
+    first, second = lines.index(f"Recording 1 of 2: {take}"), lines.index(f"Recording 2 of 2: {pair}")
+    assert first == 0 and lines[second - 1] == ""
+    assert lines[first + 2] == f"Found 3 clips in {take}."
+    assert lines[second + 2] == f"Found 2 clips in {pair}."
+    assert lines[-1] == "Altogether: wrote 4 clips from 2 recordings, skipped 1."
+    assert sorted(path.name for path in words.iterdir()) == ["a.opus", "b.opus", "c.opus", "d.opus"]
+    span = find_clips(load_recording(pair)).spans[1]
+    assert abs(len(load_recording(words / "d.opus")) - (span.ms + 60)) <= 10
+
+
+@needs_ffmpeg
+def test_list_lists_each_recording_under_its_own_heading_and_writes_nothing(take, pair, tmp_path):
+    out_dir = tmp_path / "out"
+    status, out, _ = _run(str(take), str(pair), "--out", str(out_dir), "--list")
+    assert status == 0
+    lines = out.splitlines()
+    assert [line for line in lines if line.startswith("Recording")] == [f"Recording 1 of 2: {take}", f"Recording 2 of 2: {pair}"]
+    assert [line for line in lines if line.endswith("ignored")] == ["3 clips found, 0 short sounds ignored", "2 clips found, 0 short sounds ignored"]
+    assert "Altogether" not in out
+    assert not out_dir.exists()
+
+
+@needs_ffmpeg
+def test_a_missing_recording_stops_the_tool_before_anything_is_cut(take, tmp_path):
+    status, out, err = _run(str(take), str(tmp_path / "missing.wav"), str(tmp_path / "gone.m4a"), "--out", str(tmp_path / "out"))
+    assert status == 1
+    assert err.splitlines() == [f"cut-clips: {tmp_path / 'missing.wav'}: no such file", f"cut-clips: {tmp_path / 'gone.m4a'}: no such file"]
+    assert out == ""
+    assert not (tmp_path / "out").exists()
+
+
+@needs_ffmpeg
+def test_a_recording_that_cannot_be_read_is_reported_and_the_others_are_still_cut(take, pair, tmp_path):
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not audio", encoding="utf-8")
+    words = tmp_path / "words"
+    status, out, err = _run(str(take), str(notes), str(pair), "--out", str(words), answers="a\n\n\nb\n\n")
+    assert status == 1
+    assert f"cut-clips: {notes}: ffmpeg failed" in err
+    assert f"Recording 3 of 3: {pair}" in out
+    assert "Altogether: wrote 2 clips from 3 recordings, skipped 3." in out
+    assert sorted(path.name for path in words.iterdir()) == ["a.opus", "b.opus"]
+
+
+@needs_ffmpeg
+def test_end_of_input_stops_the_whole_run_and_says_how_many_recordings_were_not_cut(take, pair, tmp_path):
+    words = tmp_path / "words"
+    status, out, _ = _run(str(take), str(pair), str(take), "--out", str(words), answers="a\n")
+    assert status == 1
+    assert "Wrote 1 clip, skipped 0, 2 not named." in out
+    assert "2 recordings not cut." in out
+    assert "Recording 2 of 3" not in out
+    assert [path.name for path in words.iterdir()] == ["a.opus"]
+
+
+@needs_ffmpeg
+def test_pool_warnings_wait_until_the_last_recording_is_cut(take, pair, tmp_path):
+    words = tmp_path / "words"
+    status, _, err = _run(str(take), str(pair), "--out", str(words), answers="rope.sentence\n\n\nrope\n\n")
+    assert status == 0
+    assert err == ""
+    _, _, err = _run(str(take), str(pair), "--out", str(tmp_path / "other"), answers="cat.sentence\n\n\ndog\n\n")
+    assert err.count("cat.sentence.opus has no word clip beside it") == 1
 
 
 @needs_ffmpeg
@@ -361,7 +526,7 @@ def test_an_existing_clip_is_replaced_only_after_asking(take, tmp_path):
     before = (tmp_path / "rope.opus").read_bytes()
     status, out, _ = _run(str(take), "--out", str(tmp_path), answers="rope\nn\n\nrope\ny\n\n")
     assert status == 0
-    assert out.count("Replace rope.opus? [y/N]") == 2
+    assert out.count("Replace rope.opus? [y]es/[N]o/[a]lways/ne[v]er ") == 2
     assert out.count("Clip 1 of 3") == 2
     assert "Wrote 1 clip, skipped 2." in out
     assert (tmp_path / "rope.opus").read_bytes() != before
@@ -373,8 +538,50 @@ def test_a_clip_for_the_same_entry_in_another_format_is_replaced_only_after_aski
     write_wav(words / "Rope.wav")
     status, out, _ = _run(str(take), "--out", str(words), answers="rope\nn\nrope\nyes\n\n\n")
     assert status == 0
-    assert out.count("Rope.wav is already the clip for rope. Replace it? [y/N]") == 2
+    assert out.count("Rope.wav is already the clip for rope. Replace it? [y]es/[N]o/[a]lways/ne[v]er ") == 2
     assert sorted(path.name for path in words.iterdir()) == ["rope.opus"]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("always", ["a", "always", "A"])
+def test_always_replaces_every_later_clip_without_asking(take, tmp_path, always):
+    for name in ("a", "b", "c"):
+        write_wav(tmp_path / f"{name}.opus")
+    before = (tmp_path / "a.opus").read_bytes()
+    status, out, _ = _run(str(take), "--out", str(tmp_path), answers=f"a\n{always}\nb\nc\n")
+    assert status == 0
+    assert out.count(clips.REPLACE_CHOICES) == 1
+    assert "  Replacing b.opus." in out and "  Replacing c.opus." in out
+    assert "Wrote 3 clips, skipped 0." in out
+    assert all((tmp_path / f"{name}.opus").read_bytes() != before for name in ("a", "b", "c"))
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("never", ["v", "never", "NEVER"])
+def test_never_keeps_every_later_existing_clip_and_asks_for_another_name(take, tmp_path, never):
+    for name in ("a", "b"):
+        write_wav(tmp_path / f"{name}.opus")
+    before = (tmp_path / "a.opus").read_bytes()
+    status, out, _ = _run(str(take), "--out", str(tmp_path), answers=f"a\n{never}\n\nb\n\nc\n")
+    assert status == 0
+    assert out.count(clips.REPLACE_CHOICES) == 1
+    assert "  Keeping b.opus." in out
+    assert out.count("Clip 2 of 3") == 2
+    assert "Wrote 1 clip, skipped 2." in out
+    assert (tmp_path / "a.opus").read_bytes() == before and (tmp_path / "b.opus").read_bytes() == before
+    assert (tmp_path / "c.opus").exists()
+
+
+@needs_ffmpeg
+def test_always_lasts_into_later_recordings_and_covers_clips_in_other_formats(take, pair, tmp_path):
+    words = tmp_path / "words"
+    write_wav(words / "Rope.wav")
+    write_wav(words / "dash.mp3")
+    status, out, _ = _run(str(take), str(pair), "--out", str(words), answers="rope\nalways\n\n\ndash\n\n")
+    assert status == 0
+    assert out.count(clips.REPLACE_CHOICES) == 1
+    assert "  Replacing dash.mp3." in out
+    assert sorted(path.name for path in words.iterdir()) == ["dash.opus", "rope.opus"]
 
 
 @needs_ffmpeg
@@ -416,7 +623,7 @@ def test_list_shows_the_clips_and_short_sounds_and_writes_nothing(tmp_path):
     out_dir = tmp_path / "out"
     status, out, _ = _run(str(recording), "--out", str(out_dir), "--list")
     assert status == 0
-    assert out.splitlines() == [
+    assert out.splitlines()[1:] == [
         "  1  at 0:00.50  (0.40 s)",
         "  2  at 0:02.75  (0.40 s)",
         "2 clips found, 1 short sound ignored",
@@ -478,7 +685,57 @@ def test_without_pydub_the_tool_names_the_requirements_file(tmp_path, monkeypatc
     assert "pip install -r policy/requirements.txt" in err
 
 
-@pytest.mark.parametrize("option", [["--min-silence", "150"], ["--threshold", "-3"], ["--bitrate", "fast"]])
+@needs_ffmpeg
+@pytest.mark.parametrize(("option", "guard"), [([], 100), (["--guard", "30"], 30), (["--guard", "10"], 10)])
+def test_guard_sets_the_guard_and_fade_either_side_of_each_written_clip(take, tmp_path, option, guard):
+    status, _, err = _run(str(take), "--out", str(tmp_path), *option, answers="\nrope\n\n")
+    assert status == 0, err
+    audio = load_recording(take)
+    span = find_clips(audio).spans[1]
+    decoded = load_recording(tmp_path / "rope.opus")
+    assert abs(len(decoded) - (span.ms + 2 * guard)) <= 10
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(("option", "target"), [([], -18), (["--loudness", "-24"], -24), (["--no-normalize"], None)])
+def test_written_clips_carry_the_gain_that_normalized_the_whole_recording(take, tmp_path, option, target):
+    status, out, err = _run(str(take), "--out", str(tmp_path), *option, answers="\nrope\n\n")
+    assert status == 0, err
+    audio = load_recording(take)
+    gain = 0.0 if target is None else normalize(audio, target).gain
+    assert out.startswith("Loudness ") == (target is not None)
+    span = find_clips(audio).spans[1]
+    decoded = _samples(load_recording(tmp_path / "rope.opus"))
+    middle = RATE * (clips.GUARD_MS + 100) // 1000
+    source = _samples(audio[span.start + 100 : span.end - 100])
+    assert abs(_db(decoded[middle:-middle], source) - gain) <= 0.5
+
+
+@needs_ffmpeg
+def test_the_loudness_line_reports_the_measured_loudness_the_gain_and_any_limiting(tmp_path):
+    quiet = _write_wav(tmp_path / "quiet.wav", _audio(*THREE, scale=0.1)[0])
+    _, out, _ = _run(str(quiet), "--list")
+    assert re.fullmatch(r"Loudness -29\.\d LUFS, raised 1[01]\.\d dB to -1[78]\.\d LUFS\.", out.splitlines()[0])
+    loud = _write_wav(tmp_path / "loud.wav", _audio(*THREE)[0])
+    _, out, _ = _run(str(loud), "--list", "--loudness", "-10")
+    assert re.fullmatch(r"Loudness -9\.\d LUFS, lowered 0\.\d dB to -(9|10)\.\d LUFS\.", out.splitlines()[0])
+    samples = _samples(_audio(500, 2000, 500, scale=0.05)[0])
+    samples[RATE] = 30000
+    spiky = _write_wav(tmp_path / "spiky.wav", AudioSegment(data=samples.tobytes(), sample_width=2, frame_rate=RATE, channels=1))
+    _, out, _ = _run(str(spiky), "--list")
+    assert out.splitlines()[0].endswith(", with peaks limited to -1 dBFS.")
+    silent = _write_wav(tmp_path / "silent.wav", AudioSegment(data=b"\0" * RATE * 2, sample_width=2, frame_rate=RATE, channels=1))
+    _, out, _ = _run(str(silent), "--list")
+    assert out.splitlines()[0] == "Loudness could not be measured (silent, or shorter than 0.4 s), so the recording is left as it is."
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        ["--min-silence", "150"], ["--threshold", "-3"], ["--bitrate", "fast"], ["--guard", "9"], ["--guard", "fifty"],
+        ["--loudness", "-41"], ["--loudness", "-9"], ["--loudness", "loud"],
+    ],
+)
 def test_out_of_range_options_are_refused(option, capsys):
     with pytest.raises(SystemExit):
         main(["take.wav", *option])

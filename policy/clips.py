@@ -1,14 +1,17 @@
-"""Cut one spoken recording into separately named spelling clips.
+"""Cut spoken recordings into separately named spelling clips.
 
-The library half loads a recording, finds the stretches of speech in it,
-cuts each one with faded guards, checks a clip name with the S005.1 rules,
-and writes Ogg Opus clips. It never prompts, prints, or reads the terminal,
-so a web page can drive it with the same defaults.
+The library half loads a recording, normalizes its loudness, finds the
+stretches of speech in it, cuts each one with faded guards, checks a clip
+name with the S005.1 rules, and writes Ogg Opus clips. It never prompts,
+prints, or reads the terminal, so a web page can drive it with the same
+defaults.
 
-The command line half runs on the machine running Compose and asks for each
+The command line half runs on the machine running Compose. It cuts each
+recording given to it in turn, with the same settings, and asks for each
 clip's name:
 
     bin/cut-clips take.m4a --out ~/daywarden/spelling/alphabet
+    bin/cut-clips words-1.m4a words-2.m4a --out ~/daywarden/spelling/current
 
 It needs ffmpeg built with libopus, and pydub with audioop-lts from
 ``policy/requirements.txt``. The policy service does not import this module.
@@ -18,6 +21,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
+import math
 import os
 import re
 import secrets
@@ -46,12 +51,18 @@ RATE = 48_000
 WIDTH = 2
 FRAME_MS = 10
 GUARD_MS = 100
+SHORTEST_GUARD_MS = 10
 MIN_SILENCE_MS = 700
 SHORTEST_SILENCE_MS = 200
 THRESHOLD_DB = 35.0
 MIN_SPEECH_MS = 150
+LOUDNESS_LUFS = -18.0
+QUIETEST_LUFS = -40.0
+LOUDEST_LUFS = -10.0
+PEAK_DB = -1.0
 BITRATE = "32k"
 EXTENSION = ".opus"
+REPLACE_CHOICES = "[y]es/[N]o/[a]lways/ne[v]er"
 INSTALL = "pip install -r policy/requirements.txt"
 
 _DEMUXERS = {
@@ -96,6 +107,33 @@ class Found:
     ignored: int
 
 
+@dataclass(frozen=True)
+class Loudness:
+    """EBU R128 integrated loudness in LUFS and true peak in dBTP.
+
+    Both are ``-inf`` for silence. ``integrated`` is also ``-inf`` for audio
+    shorter than the 400 ms that one loudness measurement needs.
+    """
+
+    integrated: float
+    peak: float
+
+    @property
+    def measured(self) -> bool:
+        return math.isfinite(self.integrated)
+
+
+@dataclass(frozen=True)
+class Normalized:
+    """A recording after loudness normalization, with its loudness before and after."""
+
+    audio: AudioSegment
+    before: Loudness
+    after: Loudness
+    gain: float
+    limited: bool
+
+
 def require_tools() -> None:
     """Raise ``MissingTool`` unless pydub and an ffmpeg that can encode libopus are installed."""
     if AudioSegment is None:
@@ -130,6 +168,60 @@ def load_recording(source: str | os.PathLike | bytes, format: str | None = None)
     if not path.is_file():
         raise ClipError(f"{path}: no such file")
     return _decode(path, format, str(path))
+
+
+def measure_loudness(audio: AudioSegment) -> Loudness:
+    """Return the perceived loudness of a recording, measured as EBU R128 by ffmpeg.
+
+    A mono recording is measured as dual mono, as it sounds when played
+    through both speakers, so it matches a stereo recording at the same level.
+    """
+    report = _ffmpeg(
+        [
+            "-nostdin", "-nostats", "-f", "s16le", "-ar", str(RATE), "-ac", "1", "-i", "pipe:0",
+            "-af", "loudnorm=print_format=json:dual_mono=true", "-f", "null", "-",
+        ],
+        "the loudness measurement",
+        stdin=_normal(audio).raw_data,
+        log=True,
+    ).decode(errors="replace")
+    try:
+        values = json.loads(report[report.rindex("{") : report.rindex("}") + 1])
+        return Loudness(float(values["input_i"]), float(values["input_tp"]))
+    except (ValueError, KeyError) as exc:
+        raise ClipError(f"the loudness measurement: ffmpeg did not report it: {exc}") from exc
+
+
+def normalize(audio: AudioSegment, target: float = LOUDNESS_LUFS, *, peak: float = PEAK_DB) -> Normalized:
+    """Bring a whole recording to a perceived loudness of ``target`` LUFS.
+
+    One gain is applied to the whole recording, so items keep their loudness
+    relative to each other and the pauses stay as quiet relative to the
+    speech. Where that gain would take a peak above ``peak`` dBFS, a limiter
+    holds back just those peaks rather than lowering the gain. A recording
+    too quiet or too short to measure is returned unchanged.
+    """
+    if not QUIETEST_LUFS <= target <= LOUDEST_LUFS:
+        raise ValueError(f"target must be from {QUIETEST_LUFS:g} to {LOUDEST_LUFS:g} LUFS")
+    audio = _normal(audio)
+    before = measure_loudness(audio)
+    if not before.measured:
+        return Normalized(audio, before, before, 0.0, False)
+    gain = target - before.integrated
+    limited = before.peak + gain > peak
+    chain = f"volume={gain:.4f}dB"
+    if limited:
+        chain += f",alimiter=limit={10 ** (peak / 20):.6f}:level=false:latency=true"
+    raw = _ffmpeg(
+        [
+            "-nostdin", "-f", "s16le", "-ar", str(RATE), "-ac", "1", "-i", "pipe:0", "-af", chain,
+            "-ac", "1", "-ar", str(RATE), "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1",
+        ],
+        "the loudness normalization",
+        stdin=audio.raw_data,
+    )
+    louder = _segment(raw[: len(audio.raw_data)])
+    return Normalized(louder, before, measure_loudness(louder), gain, limited)
 
 
 def find_clips(
@@ -172,7 +264,10 @@ def cut_clip(audio: AudioSegment, span: Span, guard: int = GUARD_MS) -> AudioSeg
 
     The guards come from the recording either side of the speech, padded with
     digital silence where the recording runs out, so each is ``guard`` ms long.
+    Each fade lasts the whole guard and never reaches into the speech.
     """
+    if guard < SHORTEST_GUARD_MS:
+        raise ValueError(f"guard must be at least {SHORTEST_GUARD_MS} ms")
     audio = _normal(audio)
     before = max(0, span.start - guard)
     after = min(len(audio), span.end + guard)
@@ -280,8 +375,9 @@ def _demuxer(hint: str) -> str:
     return _DEMUXERS.get(text, text)
 
 
-def _ffmpeg(arguments: Sequence[str], label: str, *, stdin: bytes | None = None) -> bytes:
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", *arguments]
+def _ffmpeg(arguments: Sequence[str], label: str, *, stdin: bytes | None = None, log: bool = False) -> bytes:
+    """Run ffmpeg and return what it writes to stdout or, with ``log``, its informational log."""
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "info" if log else "error", *arguments]
     try:
         done = subprocess.run(command, input=stdin, capture_output=True)
     except OSError as exc:
@@ -289,7 +385,7 @@ def _ffmpeg(arguments: Sequence[str], label: str, *, stdin: bytes | None = None)
     if done.returncode != 0:
         lines = done.stderr.decode(errors="replace").strip().splitlines()
         raise ClipError(f"{label}: ffmpeg failed: {lines[-1] if lines else f'exit status {done.returncode}'}")
-    return done.stdout
+    return done.stderr if log else done.stdout
 
 
 def _pydub() -> type:
@@ -334,7 +430,7 @@ def main(
     out: TextIO | None = None,
     err: TextIO | None = None,
 ) -> int:
-    """Cut a recording and ask for each clip's name. Return the exit status."""
+    """Cut each recording in turn and ask for each clip's name. Return the exit status."""
     args = _parser().parse_args(list(sys.argv[1:] if argv is None else argv))
     stdin, out, err = stdin or sys.stdin, out or sys.stdout, err or sys.stderr
     try:
@@ -344,30 +440,74 @@ def main(
     except MissingTool as exc:
         print(f"cut-clips: {exc}", file=err)
         return 1
+    missing = [path for path in args.recordings if not Path(path).is_file()]
+    for path in missing:
+        print(f"cut-clips: {path}: no such file", file=err)
+    if missing:
+        return 1
+    args.replacing = None
+    count = len(args.recordings)
+    written = skipped = status = 0
+    for number, recording in enumerate(args.recordings, 1):
+        if count > 1:
+            if number > 1:
+                print(file=out)
+            print(f"Recording {number} of {count}: {recording}", file=out)
+        tally = _cut(recording, args, stdin, out, err)
+        written, skipped, status = written + tally.written, skipped + tally.skipped, max(status, tally.status)
+        if tally.stopped:
+            if number < count:
+                print(f"{_count(count - number, 'recording')} not cut.", file=out)
+            break
+    if args.list:
+        return status
+    if count > 1:
+        print(f"\nAltogether: wrote {_count(written, 'clip')} from {_count(count, 'recording')}, skipped {skipped}.", file=out)
+    _warn(args.out, err)
+    return status
+
+
+@dataclass(frozen=True)
+class _Tally:
+    written: int = 0
+    skipped: int = 0
+    status: int = 0
+    stopped: bool = False
+
+
+def _cut(recording: str, args: argparse.Namespace, stdin: TextIO, out: TextIO, err: TextIO) -> _Tally:
+    """Normalize, find, and list or name the clips of one recording."""
     try:
-        audio = load_recording(args.recording)
+        audio = load_recording(recording)
+        if not args.no_normalize:
+            normalized = normalize(audio, args.loudness)
+            print(_loudness_line(normalized), file=out)
+            audio = normalized.audio
         found = find_clips(audio, min_silence=args.min_silence, threshold=args.threshold, min_speech=args.min_speech)
     except ClipError as exc:
         print(f"cut-clips: {exc}", file=err)
-        return 1
+        return _Tally(status=1)
     except KeyboardInterrupt:
-        print("\nStopped. Nothing was written.", file=out)
-        return 130
+        print(f"\nStopped before any clip of {recording} was written.", file=out)
+        return _Tally(status=130, stopped=True)
     if args.list:
         _list(found, out)
-        return 0
-    return _name_clips(audio, found, args, stdin, out, err)
+        return _Tally()
+    return _name_clips(recording, audio, found, args, stdin, out, err)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cut-clips",
         description=(
-            "Cut one recording into spelling clips at the pauses between items, and ask for each clip's "
-            "name. Each name writes <name>.opus. An empty name skips the clip. With --play, ? plays it again."
+            "Bring each recording to an even loudness, cut it into spelling clips at the pauses between items, "
+            "and ask for each clip's name. Recordings are cut one after another with the same settings. "
+            "Each name writes <name>.opus. An empty name skips the clip. With --play, ? plays it again."
         ),
     )
-    parser.add_argument("recording", help="the recording to cut, in any format ffmpeg reads")
+    parser.add_argument(
+        "recordings", nargs="+", metavar="recording", help="a recording to cut, in any format ffmpeg reads"
+    )
     parser.add_argument("--out", type=Path, default=Path("."), metavar="DIR", help="where clips are written")
     parser.add_argument(
         "--min-silence",
@@ -390,6 +530,27 @@ def _parser() -> argparse.ArgumentParser:
         metavar="MS",
         help=f"shorter sounds are ignored as noise (default {MIN_SPEECH_MS})",
     )
+    parser.add_argument(
+        "--guard",
+        type=_at_least(SHORTEST_GUARD_MS),
+        default=GUARD_MS,
+        metavar="MS",
+        help=(
+            "recording kept either side of each clip's speech, faded in before it and out after it "
+            f"(default {GUARD_MS}, at least {SHORTEST_GUARD_MS})"
+        ),
+    )
+    parser.add_argument(
+        "--loudness",
+        type=_lufs,
+        default=LOUDNESS_LUFS,
+        metavar="LUFS",
+        help=(
+            "perceived loudness the whole recording is brought to before it is cut, with peaks above "
+            f"{PEAK_DB:g} dBFS limited (default {LOUDNESS_LUFS:g}, from {QUIETEST_LUFS:g} to {LOUDEST_LUFS:g})"
+        ),
+    )
+    parser.add_argument("--no-normalize", action="store_true", help="cut the recording at the loudness it was recorded")
     parser.add_argument("--bitrate", type=_bitrate, default=BITRATE, metavar="RATE", help=f"Opus bitrate (default {BITRATE})")
     parser.add_argument("--play", action="store_true", help="play each clip with ffplay before asking for its name")
     parser.add_argument("--list", action="store_true", help="list the clips found and write nothing")
@@ -419,10 +580,31 @@ def _decibels(text: str) -> float:
     return value
 
 
+def _lufs(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        value = math.nan
+    if not QUIETEST_LUFS <= value <= LOUDEST_LUFS:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a loudness from {QUIETEST_LUFS:g} to {LOUDEST_LUFS:g} LUFS")
+    return value
+
+
 def _bitrate(text: str) -> str:
     if not _BITRATE.fullmatch(text):
         raise argparse.ArgumentTypeError(f"{text!r} is not a bitrate such as 32k")
     return text
+
+
+def _loudness_line(normalized: Normalized) -> str:
+    if not normalized.before.measured:
+        return "Loudness could not be measured (silent, or shorter than 0.4 s), so the recording is left as it is."
+    verb = "raised" if normalized.gain >= 0 else "lowered"
+    line = (
+        f"Loudness {normalized.before.integrated:.1f} LUFS, {verb} {abs(normalized.gain):.1f} dB "
+        f"to {normalized.after.integrated:.1f} LUFS"
+    )
+    return line + (f", with peaks limited to {PEAK_DB:g} dBFS." if normalized.limited else ".")
 
 
 def _list(found: Found, out: TextIO) -> None:
@@ -431,18 +613,21 @@ def _list(found: Found, out: TextIO) -> None:
     print(f"{_count(len(found.spans), 'clip')} found, {_count(found.ignored, 'short sound')} ignored", file=out)
 
 
-def _name_clips(audio: AudioSegment, found: Found, args: argparse.Namespace, stdin: TextIO, out: TextIO, err: TextIO) -> int:
+def _name_clips(
+    recording: str, audio: AudioSegment, found: Found, args: argparse.Namespace, stdin: TextIO, out: TextIO, err: TextIO
+) -> _Tally:
     total = len(found.spans)
     ignored = f" ({_count(found.ignored, 'short sound')} ignored)" if found.ignored else ""
-    print(f"Found {_count(total, 'clip')} in {args.recording}{ignored}.", file=out)
+    print(f"Found {_count(total, 'clip')} in {recording}{ignored}.", file=out)
     if not total:
         print("Try a smaller --threshold or --min-speech, and check them with --list.", file=out)
-        return 0
+        return _Tally()
     written = skipped = 0
     status = 0
+    stopped = False
     try:
         for number, span in enumerate(found.spans, 1):
-            clip = cut_clip(audio, span)
+            clip = cut_clip(audio, span, args.guard)
             if args.play:
                 _play(clip, err)
             if _name_one(clip, f"Clip {number} of {total} at {_clock(span.start)} ({_seconds(span.ms)}): ", args, stdin, out, err):
@@ -451,18 +636,17 @@ def _name_clips(audio: AudioSegment, found: Found, args: argparse.Namespace, std
                 skipped += 1
     except KeyboardInterrupt:
         print("\nStopped.", file=out)
-        status = 130
+        status, stopped = 130, True
     except EOFError:
         print("\nStopped at the end of the input.", file=out)
-        status = 1
+        status, stopped = 1, True
     except (ClipError, OSError) as exc:
         print(f"cut-clips: {exc}", file=err)
         status = 1
     left = total - written - skipped
     summary = f"Wrote {_count(written, 'clip')}, skipped {skipped}"
     print(summary + (f", {left} not named." if left else "."), file=out)
-    _warn(args.out, err)
-    return status
+    return _Tally(written, skipped, status, stopped)
 
 
 def _name_one(clip: AudioSegment, prompt: str, args: argparse.Namespace, stdin: TextIO, out: TextIO, err: TextIO) -> bool:
@@ -480,17 +664,26 @@ def _name_one(clip: AudioSegment, prompt: str, args: argparse.Namespace, stdin: 
             print(f"  {exc}", file=out)
             continue
         existing = existing_clips(args.out, name)
-        if all(_replace(path, name, stdin, out) for path in existing):
+        if all(_replace(path, name, args, stdin, out) for path in existing):
             write_clip(clip, args.out, name, bitrate=args.bitrate, replace=existing)
             return True
 
 
-def _replace(path: Path, name: str, stdin: TextIO, out: TextIO) -> bool:
+def _replace(path: Path, name: str, args: argparse.Namespace, stdin: TextIO, out: TextIO) -> bool:
+    """Ask whether to replace an existing clip, unless always or never was answered earlier in the run."""
+    if args.replacing is not None:
+        print(f"  {'Replacing' if args.replacing else 'Keeping'} {path.name}.", file=out)
+        return args.replacing
     if path.name == name + EXTENSION:
-        question = f"Replace {path.name}? [y/N] "
+        question = f"Replace {path.name}?"
     else:
-        question = f"{path.name} is already the clip for {name}. Replace it? [y/N] "
-    return _ask(question, stdin, out).strip().lower() in ("y", "yes")
+        question = f"{path.name} is already the clip for {name}. Replace it?"
+    answer = _ask(f"{question} {REPLACE_CHOICES} ", stdin, out).strip().lower()
+    if answer in ("a", "always"):
+        args.replacing = True
+    elif answer in ("v", "never"):
+        args.replacing = False
+    return answer in ("y", "yes", "a", "always")
 
 
 def _ask(prompt: str, stdin: TextIO, out: TextIO) -> str:

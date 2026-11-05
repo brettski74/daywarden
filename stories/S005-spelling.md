@@ -36,6 +36,11 @@ As a parent, I want him to spell this week's words, plus a few older ones, from 
 | S005.3 | Spelling audio processor | 5 |
 | S005.4 | Spelling feedback pause | 1 |
 | S005.5 | Spelling play allowance | 2 |
+| S005.6 | Spelling practice pauses | 1 |
+| S005.7 | Configurable clip guard | 1 |
+| S005.8 | Clip loudness normalization | 2 |
+| S005.9 | Cut several recordings in one run | 2 |
+| S005.10 | Always or never replace clips | 1 |
 
 # Notes
 

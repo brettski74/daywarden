@@ -1,11 +1,15 @@
 "use strict";
 // Runs a quiz page's script on a fake clock, with a stub DOM, audio, and fetch.
 //
-// Reads {html, replies, clip_ms, run_ms} as JSON on stdin. `replies` maps each
-// ?do= action to the list of JSON replies it gets, in order. Every clip with an
-// `onended` handler ends `clip_ms` after it starts. The run presses Start, waits
-// for the word to finish, types an answer and presses Enter, then lets `run_ms`
-// pass. Prints the posts and plays it saw, each with the fake time it happened.
+// Reads {html, replies, clip_ms, run_ms, steps} as JSON on stdin. `replies` maps
+// each ?do= action to the list of JSON replies it gets, in order. Every clip with
+// an `onended` handler ends `clip_ms` after it starts. Without `steps`, the run
+// presses Start, waits for the word to finish, types an answer and presses
+// Enter, then lets `run_ms` pass. `steps` replaces that with a list of
+// {click: id}, {wait: ms}, {type: [id, text]}, {key: [id, key]}, and
+// {snap: [id, ...], label}. A snap records whether each element is hidden,
+// disabled, and focused, and its text. Prints the posts, plays, and snaps it
+// saw, each with the fake time it happened.
 
 const fs = require("fs");
 const vm = require("vm");
@@ -68,9 +72,10 @@ class Element {
     const event = { type, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...fields };
     event.preventDefault = () => {};
     for (const fn of this.listeners[type] || []) fn(event);
+    if (type === "keydown") for (const fn of documentListeners[type] || []) fn(event);
   }
   click() {
-    this.dispatch("click");
+    if (!this.disabled) this.dispatch("click");
   }
   focus() {
     document.activeElement = this;
@@ -88,19 +93,27 @@ class Element {
 }
 
 const elements = new Map();
+const documentListeners = {};
 const document = {
   activeElement: null,
   getElementById(id) {
     if (!elements.has(id)) {
       const element = new Element(id, id === "answer" ? "INPUT" : "DIV");
       if (id === "quiz-config") element.textContent = config;
+      const tag = input.html.match(new RegExp('<[a-z]+[^>]*\\sid="' + id + '"[^>]*>'));
+      if (tag) {
+        element.hidden = /\shidden[\s>]/.test(tag[0]);
+        element.disabled = /\sdisabled[\s>]/.test(tag[0]);
+      }
       elements.set(id, element);
     }
     return elements.get(id);
   },
   querySelectorAll: () => [],
   createElement: (tag) => new Element(null, tag.toUpperCase()),
-  addEventListener() {},
+  addEventListener(type, fn) {
+    (documentListeners[type] = documentListeners[type] || []).push(fn);
+  },
 };
 
 class Audio {
@@ -147,15 +160,37 @@ vm.runInNewContext(code, {
   console,
 });
 
+const steps = input.steps || [
+  { click: "start-button" },
+  { wait: input.clip_ms },
+  { type: ["answer", "answer"] },
+  { key: ["answer", "Enter"] },
+  { wait: input.run_ms },
+];
+
+function snap(ids) {
+  const found = {};
+  for (const id of ids) {
+    const element = document.getElementById(id);
+    found[id] = {
+      hidden: element.hidden,
+      disabled: element.disabled,
+      focused: document.activeElement === element,
+      text: element.textContent,
+    };
+  }
+  return found;
+}
+
 (async () => {
   await settle();
-  document.getElementById("start-button").click();
-  await settle();
-  await advance(input.clip_ms);
-  const box = document.getElementById("answer");
-  box.value = "answer";
-  box.dispatch("keydown", { key: "Enter" });
-  await settle();
-  await advance(input.run_ms);
+  for (const step of steps) {
+    if (step.click) document.getElementById(step.click).click();
+    if (step.type) document.getElementById(step.type[0]).value = step.type[1];
+    if (step.key) document.getElementById(step.key[0]).dispatch("keydown", { key: step.key[1] });
+    if (step.snap) events.push({ at: now, kind: "snap", what: step.label || "", elements: snap(step.snap) });
+    await settle();
+    if (step.wait) await advance(step.wait);
+  }
   process.stdout.write(JSON.stringify(events));
 })();

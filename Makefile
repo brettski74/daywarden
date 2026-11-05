@@ -7,7 +7,10 @@
 
 load_env = set -a; while IFS= read -r line || [ -n "$$line" ]; do case "$$line" in ""|[\#]*) continue ;; esac; key=$${line%%=*}; if [ -z "$${!key+x}" ]; then eval "export $$key=\"$${line\#*=}\""; fi; done < .env; set +a
 
-.PHONY: up down show-env
+VENV := .venv
+VENV_PYTHON := $(VENV)/bin/python
+
+.PHONY: up down show-env venv test
 
 up:
 	$(load_env); mkdir -p "$$CA_VOLUME_PATH" "$${DAYWARDEN_DATA_DIR:-$$HOME/daywarden}" && docker compose up -d --wait
@@ -17,3 +20,15 @@ down:
 
 show-env:
 	@$(load_env); printf '%s\n' "$$PARENT_NAMES" "$$CA_VOLUME_PATH" "$$DAYWARDEN_DATA_DIR"
+
+# The venv is built once and rebuilt only when a requirements file changes.
+venv: $(VENV)/.installed
+
+$(VENV)/.installed: requirements-dev.txt policy/requirements.txt
+	python3 -m venv $(VENV)
+	$(VENV_PYTHON) -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
+	touch $@
+
+# make test ARGS="tests/test_clips.py -q"
+test: venv
+	$(VENV_PYTHON) -m pytest $(ARGS)

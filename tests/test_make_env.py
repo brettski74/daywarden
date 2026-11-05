@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _show(env: dict[str, str]) -> tuple[str, str, str]:
     completed = subprocess.run(
-        ["make", "show-env"],
+        ["make", "--no-print-directory", "show-env"],
         cwd=ROOT,
         env=env,
         text=True,
