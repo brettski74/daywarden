@@ -1,8 +1,8 @@
 Ticket: S003
 Title: Revision task platform
-Status: Draft
+Status: Done
 Story Points: 13
-Last Updated: 2026-10-31 20:36:35
+Last Updated: 2026-11-04 20:00:00
 ---
 
 # User Voice
@@ -20,10 +20,10 @@ As a parent, I want a refused entertainment site to become a revision task chose
 
 # Acceptance Criteria
 
-- [ ] S003.1, S003.2, and S003.3 are done.
-- [ ] The rule engine's `revision_task` token resolves to a real task URL for the classified client group, replacing the placeholder from S001.3.
-- [ ] A pass changes the result of `tasks_required` without any hand-written count.
-- [ ] For a real quiz, that pass is recorded only when the quiz's own completion rule is met from answers the child submitted. A request whose only purpose is to mark the attempt passed does not record a pass.
+- [x] S003.1, S003.2, and S003.3 are done.
+- [x] The rule engine's `revision_task` token resolves to a real task URL for the classified client group, replacing the placeholder from S001.3.
+- [x] A pass changes the result of `tasks_required` without any hand-written count.
+- [x] For a real quiz, that pass is recorded only when the quiz's own completion rule is met from answers the child submitted. A request whose only purpose is to mark the attempt passed does not record a pass.
 
 # Child stories
 

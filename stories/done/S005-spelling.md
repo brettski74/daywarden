@@ -1,8 +1,8 @@
 Ticket: S005
 Title: Spelling quiz
-Status: Refined
+Status: Done
 Story Points: 13
-Last Updated: 2026-11-02 03:45:00
+Last Updated: 2026-11-04 20:09:00
 ---
 
 # User Voice
@@ -22,10 +22,10 @@ As a parent, I want him to spell this week's words, plus a few older ones, from 
 
 # Acceptance Criteria
 
-- [ ] S005.1 and S005.2 are done.
-- [ ] Adding, updating, or moving word audio files in the host directories takes effect on the next quiz run without rebuilding the container image or restarting the container.
-- [ ] The quiz is not complete until every word in `current` has been asked at least once and both correct-count targets are met. A pass mark of 7 when `current` has 10 words still asks the remaining 3 words.
-- [ ] Completing a spelling quiz attempt increments today's revision pass count from S003.1; practice mode does not.
+- [x] S005.1 and S005.2 are done.
+- [x] Adding, updating, or moving word audio files in the host directories takes effect on the next quiz run without rebuilding the container image or restarting the container.
+- [x] The quiz is not complete until every word in `current` has been asked at least once and both correct-count targets are met. A pass mark of 7 when `current` has 10 words still asks the remaining 3 words.
+- [x] Completing a spelling quiz attempt increments today's revision pass count from S003.1; practice mode does not.
 
 # Child stories
 
