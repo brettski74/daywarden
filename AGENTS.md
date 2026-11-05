@@ -73,3 +73,16 @@ After implementing a story, append an Implementation section (L1 heading) to the
 3. Sort the acceptance test cases with the most important or impactful test cases listed first.
 4. Cover all all exposed areas with functionality exposed via configuration files or UI.
 5. Be provided in the AI chat response.
+
+# Stories
+
+Stories are documented in markdown files in the stories directory. Stories should follow the template found in stories/Sxxx-story-template.md.
+Story point values should be estimated based on:
+
+1. Story point values for epics with 1 or more children should be equal to the sum of the story point values of all children.
+2. Story point values for stories with no child stories should be sized so that:
+2.1 They are consistent with previously implemented stories that are believed to be a similar amount of effort to implement and test.
+2.2 They use a fibonacci numbers (1, 2, 3, 5, 8, 13, 21, etc)
+2.3 A story valued at (m+n) story points is roughly equivalent in implementation and testing effort to implementing and testing a story valued at m story point plus another story valued at n story points.
+3. Reasonable relative consistency of level of effort estimation is the goal, not extreme precision.
+
