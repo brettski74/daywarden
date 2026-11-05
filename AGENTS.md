@@ -86,3 +86,25 @@ Story point values should be estimated based on:
 2.3 A story valued at (m+n) story points is roughly equivalent in implementation and testing effort to implementing and testing a story valued at m story point plus another story valued at n story points.
 3. Reasonable relative consistency of level of effort estimation is the goal, not extreme precision.
 
+## Acceptance through external interfaces
+
+Code review is rare. The reviewer accepts a story through the interfaces a user can see: the policy file and other configuration, files in the data directory, the web pages (the child's quiz pages, the parent pages, and what the proxy allows, blocks, or redirects), and the command-line tools such as `bin/daywarden` and `bin/cut-clips`. Write acceptance criteria and suggested acceptance test cases as checks through those interfaces: what to put in the configuration, what to do in the browser or on the command line, and what should be seen. Do not write them as SQL queries, scripts, or calls to internal APIs. Database changes and internal behaviour are accepted through the features that use them. The automated tests cover the internals.
+
+## When to make a story an epic
+
+Split a story into an epic with child stories when any of these is true:
+
+1. Parts of it can be accepted separately. Each child has its own acceptance tests through the external interfaces above.
+2. One part carries a risk the rest does not, and that risk is worth seeing working before the rest is built. Examples are a change to what the proxy allows or redirects, or an upgrade of stored household data.
+3. Its acceptance test list would go beyond about 15 to 20 cases.
+4. It is larger than 13 points. A 21-point estimate is always an epic.
+5. One implementation session would struggle to hold it. As a guide, finish a story within about half of the model's context window. Tool output, test runs, browser snapshots, and re-reading edited files use far more context than reading the code once. Split when the code and tests to read and change go beyond about 150k tokens, or when the work needs more than two or three separate rounds of browser checking.
+
+Do not split, even when the story is large, when:
+
+- Most of a child's deliverables would have no consequence that can be seen through the external interfaces. A database change, an internal refactor, or a server API with no page to use it is accepted through the feature that uses it, so it belongs in the same story as that feature.
+- The children would rewrite the same code or tests in turn, such as each updating the same test fixtures.
+- A child could not be accepted until the next child is done.
+
+Prefer to split along features a user can see, such as a working quiz first and its extra feedback screens second, rather than along layers such as configuration, server, and page.
+
