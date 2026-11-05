@@ -73,7 +73,7 @@ A task with `type: arithmetic` is a timed quiz on that page: one large question,
 
 A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with blank boxes to fill in. He gets three tries per question, worth 1, 0.5, and 0.25 points. With `maximum_questions` set, an attempt that runs out of questions without enough points is a failure. Every field has a default, so `body: {}` is a working task. Each difference may set its own `minimum_value` and `maximum_value`. The defaults keep counting by 2 under 100. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#skip-counting-tasks) for the fields, the configuration checks, and the scoring.
 
-A task with `type: spelling` plays recordings of words, and he types each one. The recordings live on the host in `DAYWARDEN_DATA_DIR` (`$HOME/daywarden` by default, set in `.env`), in `spelling/current` for this week's words and `spelling/revision` for older ones. Name each file after the word, such as `rope.opus`, and add `rope.sentence.opus` for a sentence that uses it. New or replaced files are used from the next quiz run without a restart. `make up` creates the directory if it is missing. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#spelling-tasks) for the file names, the fields, and the rules. [Recording spelling clips](#recording-spelling-clips) shows how to record a whole list in one take and cut it into files.
+A task with `type: spelling` plays recordings of words, and he types each one. The recordings live on the host in `DAYWARDEN_DATA_DIR` (`$HOME/daywarden` by default, set in `.env`), in `spelling/current` for this week's words and `spelling/revision` for older ones. Name each file after the word, such as `rope.opus`, and add `rope.sentence.opus` for a sentence that uses it. `spelling/alphabet` needs one recording of each letter, `a.opus` to `z.opus`, plus `dash.opus` and `apostrophe.opus` when a word uses `-` or `'`. Practice mode uses them to spell each word out loud. New or replaced files are used from the next quiz run without a restart. `make up` creates the directory if it is missing. See [docs/hierarchical-policy.md](docs/hierarchical-policy.md#spelling-tasks) for the file names, the fields, and the rules. [Recording spelling clips](#recording-spelling-clips) shows how to record a whole list in one take and cut it into files.
 
 ## Decision and observation logs
 
@@ -151,15 +151,15 @@ A removed attempt is gone from `/attempts`. A removed pass no longer counts towa
 
 ## Recording spelling clips
 
-`bin/cut-clips` cuts one recording of several letters, words, or sentences into separate clips at the pauses, and asks you to name each one. It runs on the machine running Compose, not in a container. It needs `ffmpeg` built with `libopus` (`ffplay`, which comes with it, for `--play`) and the Python packages in `policy/requirements.txt`, which include `pydub` and `audioop-lts`:
+`bin/cut-clips` cuts a recording of several letters, words, or sentences into separate clips at the pauses, and asks you to name each one. It runs on the machine running Compose, not in a container. It needs `ffmpeg` built with `libopus` (`ffplay`, which comes with it, for `--play`) and the Python packages in `policy/requirements.txt`, which include `pydub` and `audioop-lts`:
 
 ```sh
 sudo pacman -S ffmpeg
-pip install -r policy/requirements.txt
+make venv
 ln -s "$PWD"/bin/cut-clips ~/bin/
 ```
 
-It runs `python3`. Set `PYTHON` to use another interpreter, such as `PYTHON=~/venvs/daywarden/bin/python cut-clips ...`.
+`make venv` installs the packages into `.venv` in the repository, once (see [Tests](#tests)). The tool uses `.venv` when it is there, otherwise `python3`. Set `PYTHON` to use another interpreter, such as `PYTHON=~/venvs/daywarden/bin/python cut-clips ...`.
 
 Record a take in any format ffmpeg reads, such as `.wav`, `.mp3`, `.m4a`, `.ogg`, `.opus`, `.flac`, or `.webm`. Say each item clearly, then pause for a second or more before the next one. A shorter pause, such as the gaps between the words of a sentence, stays inside one clip. Keep the room quiet, and keep coughs and bumps away from the items.
 
@@ -168,6 +168,8 @@ Check what the tool finds before naming anything. `--list` prints each clip's nu
 ```sh
 cut-clips alphabet.m4a --list
 ```
+
+Before it looks for clips, the tool brings the whole recording to an even perceived loudness, so clips from different takes, rooms, or microphones play at the same volume. It measures the loudness of the whole take (EBU R128, in LUFS) and applies one gain to all of it, so a quiet item stays as much quieter than its neighbours as you said it. The first line it prints shows the loudness it measured, the gain, and the loudness it reached, such as `Loudness -29.4 LUFS, raised 11.4 dB to -18.0 LUFS.` `--loudness` sets the target (default `-18`, from `-40` to `-10`). If the gain would push a peak, such as a plosive "p", above -1 dBFS, a limiter holds back just that peak instead of turning the whole take down, and the line ends `with peaks limited to -1 dBFS`. A take that is silent or shorter than 0.4 s cannot be measured and is left as it is. `--no-normalize` cuts the take at the loudness it was recorded.
 
 If the count is wrong, tune the detection and list again:
 
@@ -182,25 +184,36 @@ Then cut the take into a pool directory and name each clip as it is offered:
 cut-clips alphabet.m4a --out ~/daywarden/spelling/alphabet --play
 ```
 
-The tool prints how many clips it found, then asks for each name in order: `Clip 3 of 28 at 0:05.20 (0.48 s):`. With `--play` it plays each clip first, and `?` plays it again. Each name writes `<name>.opus`. An empty name skips the clip. `--bitrate` sets the Opus bitrate (default `32k`). Each clip keeps 100 ms of the recording either side of the speech, faded in and out so clips join without clicks.
+The tool prints how many clips it found, then asks for each name in order: `Clip 3 of 28 at 0:05.20 (0.48 s):`. With `--play` it plays each clip first, and `?` plays it again. Each name writes `<name>.opus`. An empty name skips the clip. `--bitrate` sets the Opus bitrate (default `32k`). Each clip keeps a guard of the recording either side of the speech, faded in over the leading guard and out over the trailing one so clips join without clicks. `--guard` sets its length (default `100` ms, at least `10`). The fade always lasts the whole guard and never touches the speech, so a shorter guard gives tighter joins and a quicker fade. A guard longer than the pause between items can pick up the faded edge of the next item.
 
 Names follow the spelling pool rules, and a name the policy would refuse is explained and asked for again:
 
 | Recording | Name | File |
 | --- | --- | --- |
-| A letter of the alphabet (S005.2) | `a` to `z`, `dash` for `-`, `apostrophe` for `'` | `a.opus`, `dash.opus` |
+| A letter of the alphabet, for practice mode | `a` to `z`, `dash` for `-`, `apostrophe` for `'` | `a.opus`, `dash.opus` |
 | A word | the spelling | `rope.opus`, `don't.opus` |
 | One of two words spelled the same | the spelling and a number | `read.1.opus`, `read.2.opus` |
 | A sentence that uses a word | the word's name and `.sentence` | `rope.sentence.opus`, `read.2.sentence.opus` |
 
-Leave off the extension. If `rope.opus` is already there, the tool asks before replacing it. If another file is already the clip for `rope`, such as `rope.mp3` or `Rope.opus`, it asks before replacing that, and removes the old file once the new one is written. Answering no asks for the name again.
+Leave off the extension. If `rope.opus` is already there, the tool asks before replacing it. If another file is already the clip for `rope`, such as `rope.mp3` or `Rope.opus`, it asks before replacing that, and removes the old file once the new one is written. Answering no asks for the name again. The question is `[y]es/[N]o/[a]lways/ne[v]er`, and pressing Enter means no. Answer `a` (always) or `v` (never) to give the same answer to every later replace question in the run, including in later recordings. The tool then prints `Replacing b.opus.` or `Keeping b.opus.` instead of asking. After never, it asks for another name, and an empty name skips the clip.
 
 Clips are written to a hidden file and renamed into place, so a quiz starting at the same moment never sees half a clip. Ctrl-C or end of input stops the tool and keeps the clips already written. At the end it prints how many clips it wrote and skipped, and warns about anything in the directory that would stop the policy loading, such as `rope.sentence.opus` with no `rope.opus`.
+
+To cut several recordings, such as a week's words recorded in two takes, give them all at once. Each is cut in turn, in the order given, with the same options:
+
+```sh
+cut-clips words-1.m4a words-2.m4a sentences.m4a --out ~/daywarden/spelling/current
+```
+
+Each recording starts with `Recording 2 of 3: words-2.m4a` and its own loudness line, clip count, and summary. The last line totals the clips written from all of them. With `--list`, each recording is listed under its own heading. If any recording does not exist, the tool stops before cutting anything, so a typo does not cost you a session of naming. A file ffmpeg cannot read is reported and skipped, and the rest are still cut, with an exit status of 1. Ctrl-C or end of input stops the whole run and says how many recordings were not cut. The pool warnings are checked once, after the last recording, so a `rope.sentence` from the first recording is not reported when `rope` comes in a later one.
 
 ## Tests
 
 ```sh
-python -m pytest
+make test
+make test ARGS="tests/test_clips.py -q"
 ```
 
-Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. The policy unit tests import the service code. Install `policy/requirements.txt` first. Parent sign-in hashes passwords with Argon2id.
+The tests run in a virtual environment at `.venv`, which is not committed. The first `make test` (or `make venv`) creates it and installs `requirements-dev.txt`: the policy service's `policy/requirements.txt`, including `argon2-cffi` for parent sign-in, plus `pytest`. After that, runs start straight away. The venv is reinstalled only when a requirements file changes. If it breaks after a system Python upgrade, run `rm -rf .venv && make venv`. To run something else with the same packages, use `.venv/bin/python`, such as `.venv/bin/python -m pytest -x`.
+
+Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. Tests that need `ffmpeg` or `node` are skipped when those are not installed.

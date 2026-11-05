@@ -190,15 +190,15 @@ class QuizRecord:
         return True
 
 
-def duration(value: object, field: str) -> int:
-    """Return a duration such as ``10s`` or ``7500ms`` in milliseconds."""
+def duration(value: object, field: str, *, zero: bool = False) -> int:
+    """Return a duration such as ``10s`` or ``7500ms`` in milliseconds. ``zero`` allows ``0ms``."""
     if not isinstance(value, str):
         raise ValueError(f"{field}: must be a duration such as 10s or 7500ms, not a bare number")
     match = _DURATION.fullmatch(value.strip())
     if match is None:
         raise ValueError(f"{field}: must be a duration such as 10s or 7500ms")
     milliseconds = int(match.group(1)) * _DURATION_SCALE[match.group(2)]
-    if milliseconds <= 0:
+    if milliseconds <= 0 and not zero:
         raise ValueError(f"{field}: must be longer than zero")
     return milliseconds
 

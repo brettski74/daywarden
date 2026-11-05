@@ -11,6 +11,10 @@ queue on the attempt, so files changed during a run do not disturb it.
 The browser never sees a word or its length. Audio URLs carry a fixed-length
 token holding the scrambled entry key, which only the server reads back.
 Runs, expiry, and resume are ``policy.quiz``'s.
+
+Practice mode starts a new run on the same attempt and walks the current
+words, plus the revision words he missed in the attempt, playing each word
+and spelling it out from the letter recordings in ``alphabet_dir``.
 """
 
 from __future__ import annotations
@@ -57,6 +61,10 @@ DEFAULT_REVISION_REQUIRED = 5
 # The browser's timer only runs once a clip has been fetched, started, and
 # heard to the end, so each play costs more than its length.
 PLAY_ALLOWANCE_MS = 1500
+LETTERS = "abcdefghijklmnopqrstuvwxyz"
+SYMBOL_NAMES = {"-": "dash", "'": "apostrophe"}
+ALPHABET_MEDIA = "alphabet."
+SPELLINGS = 3
 
 _DIRECTORIES = {
     "current_dir": "spelling/current",
@@ -65,7 +73,15 @@ _DIRECTORIES = {
 }
 _POOL_FIELDS = {CURRENT: "current_dir", REVISION: "revision_dir"}
 _REQUIRED_FIELDS = {CURRENT: "current_required", REVISION: "revision_required"}
-_BODY_KEYS = {*_DIRECTORIES, "timeout", "maximum_replays", "maximum_sentence_plays", *_REQUIRED_FIELDS.values()}
+_PAUSES = {"letter_pause": "0ms", "word_pause": "300ms"}
+_BODY_KEYS = {
+    *_DIRECTORIES,
+    "timeout",
+    "maximum_replays",
+    "maximum_sentence_plays",
+    *_REQUIRED_FIELDS.values(),
+    *_PAUSES,
+}
 _WORD = re.compile(r"^[A-Za-z'-]+$")
 _KEY = re.compile(r"^[A-Za-z'-]+(?:\.[1-9][0-9]*)?$")
 _HOMOGRAPH = re.compile(r"^[1-9][0-9]*$")
@@ -81,7 +97,9 @@ class Settings:
 
     The directories are relative to ``DAYWARDEN_DATA_DIR``. A required count
     of None is the default worked out from the pool. ``explicit`` names the
-    directory fields the body wrote.
+    directory fields the body wrote. Practice waits ``letter_pause`` between
+    the letters of a spelling and ``word_pause`` between the word and its
+    spelling, both milliseconds.
     """
 
     current_dir: str
@@ -93,6 +111,8 @@ class Settings:
     current_required: int | None
     revision_required: int | None
     explicit: frozenset[str] = frozenset()
+    letter_pause: int = 0
+    word_pause: int = 300
 
     def directory(self, pool: str) -> str:
         return self.current_dir if pool == CURRENT else self.revision_dir
@@ -132,12 +152,17 @@ class Word:
 
 @dataclass(frozen=True)
 class Pools:
-    """The words in both pools and how many of each must be spelled right."""
+    """The words in both pools, how many of each must be spelled right, and the letter clips.
+
+    ``alphabet`` maps each character name (``a`` to ``z``, ``dash``,
+    ``apostrophe``) to its clip.
+    """
 
     current: tuple[Word, ...]
     revision: tuple[Word, ...]
     current_required: int
     revision_required: int
+    alphabet: Mapping[str, Clip]
 
 
 def data_root() -> Path:
@@ -166,6 +191,7 @@ def parse_settings(body: Mapping) -> Settings:
         if "revision_required" not in body
         else _count(body["revision_required"], "revision_required"),
         explicit=frozenset(field for field in _DIRECTORIES if field in body),
+        **{field: duration(body.get(field, default), field, zero=True) for field, default in _PAUSES.items()},
     )
 
 
@@ -212,7 +238,57 @@ def load_pools(settings: Settings, root: Path | None = None) -> Pools:
         )
     if m == 0 and x == 0:
         raise ValueError("current_dir: has no words and revision_required is 0, so there is nothing to ask")
-    return Pools(current, revision, n, x)
+    words = [word.word for word in (*current, *revision)]
+    needed = [*LETTERS] + [name for symbol, name in SYMBOL_NAMES.items() if any(symbol in word for word in words)]
+    return Pools(current, revision, n, x, load_alphabet(root / settings.alphabet_dir, needed))
+
+
+def character_name(character: str) -> str:
+    """Return the name of the letter clip that speaks one character of a word."""
+    return SYMBOL_NAMES.get(character, character.lower())
+
+
+def load_alphabet(directory: Path, needed: list[str], field: str = "alphabet_dir") -> dict[str, Clip]:
+    """Read the letter clips and check every character in ``needed`` has exactly one.
+
+    Hidden files, files that are not audio, and recordings not named for a
+    character are skipped.
+    """
+    if not directory.is_dir():
+        raise ValueError(f"{field}: {directory} is not a directory")
+    names = {*LETTERS, *SYMBOL_NAMES.values()}
+    found: dict[str, Clip] = {}
+    with os.scandir(directory) as listing:
+        children = sorted(listing, key=lambda child: child.name)
+    for child in children:
+        if child.name.startswith(".") or not child.is_file():
+            continue
+        stem, dot, extension = child.name.rpartition(".")
+        name = stem.lower()
+        if not dot or "." + extension.lower() not in MEDIA_TYPES or name not in names:
+            continue
+        if name in found:
+            raise ValueError(f"{field}: {found[name].name} and {child.name} are both the clip for {name}")
+        found[name] = Clip(child.name, audio_ms(Path(child.path), child.stat(), field))
+    missing = [name for name in needed if name not in found]
+    if missing:
+        raise ValueError(f"{field}: {directory} has no clip for {', '.join(missing)}")
+    return found
+
+
+def practice_plan(word: str, letter_pause: int, word_pause: int) -> list[tuple[str, int]]:
+    """Return each clip practice plays for a word and the pause before it, in milliseconds.
+
+    The clip is ``word`` for the word's own recording, or a character name.
+    The word is said before and after each of the spellings, ``word_pause``
+    either side of it, with ``letter_pause`` between letters.
+    """
+    letters = [character_name(character) for character in word]
+    plan = [(WORD_CLIP, 0)]
+    for _ in range(SPELLINGS):
+        plan += [(letter, word_pause if index == 0 else letter_pause) for index, letter in enumerate(letters)]
+        plan.append((WORD_CLIP, word_pause))
+    return plan
 
 
 def scan_pool(directory: Path, field: str) -> tuple[Word, ...]:
@@ -417,9 +493,30 @@ def read_media_name(name: str) -> tuple[str, str, bool, str] | None:
 def find_clip(settings: Settings, pool: str, key: str, *, sentence: bool, extension: str, root: Path | None = None) -> Path | None:
     """Return the audio file in the pool's directory for that entry, or None."""
     root = data_root() if root is None else root
-    wanted = (f"{key}.{SENTENCE_CLIP}.{extension}" if sentence else f"{key}.{extension}").lower()
+    wanted = f"{key}.{SENTENCE_CLIP}.{extension}" if sentence else f"{key}.{extension}"
+    return _find_file(root / settings.directory(pool), wanted)
+
+
+def alphabet_media_name(clip: Clip) -> str:
+    """Return the file name a letter clip's URL ends with: ``alphabet.<file>``."""
+    return ALPHABET_MEDIA + clip.name
+
+
+def find_alphabet_clip(settings: Settings, name: str, root: Path | None = None) -> Path | None:
+    """Return the letter clip an ``alphabet.<character>.<ext>`` file name names, or None."""
+    stem, dot, extension = name.removeprefix(ALPHABET_MEDIA).rpartition(".")
+    if not name.startswith(ALPHABET_MEDIA) or not dot or "." + extension.lower() not in MEDIA_TYPES:
+        return None
+    if stem.lower() not in {*LETTERS, *SYMBOL_NAMES.values()}:
+        return None
+    root = data_root() if root is None else root
+    return _find_file(root / settings.alphabet_dir, f"{stem}.{extension}")
+
+
+def _find_file(directory: Path, name: str) -> Path | None:
+    wanted = name.lower()
     try:
-        with os.scandir(root / settings.directory(pool)) as listing:
+        with os.scandir(directory) as listing:
             for child in listing:
                 if child.name.lower() == wanted and not child.name.startswith(".") and child.is_file():
                     return Path(child.path)
@@ -461,6 +558,9 @@ class Session(QuizRecord):
         self._close(question, None, TIMEOUT, None)
 
     def _start_run(self, now: datetime) -> None:
+        self._begin_run(now)
+
+    def _begin_run(self, now: datetime) -> Pools:
         super()._start_run(now)
         pools = current_pools(self.settings, self.root)
         chosen = self.rng.sample(pools.revision, pools.revision_required)
@@ -476,6 +576,31 @@ class Session(QuizRecord):
             },
             queue=queue,
         )
+        return pools
+
+    def practice(self, now: datetime) -> tuple[list[list[str]], Mapping[str, Clip]]:
+        """Start practice mode: close a question left showing, then start a new run on this attempt.
+
+        Return the words to practise, as ``[pool, key]`` in random order, and
+        the letter clips. They are every current word and each revision word
+        missed anywhere in the attempt, once. Closing the question is never
+        what passes the attempt, because the new run starts from zero.
+        """
+        if self.detail["runs"]:
+            self.close_pending()
+        pools = self._begin_run(now)
+        run = self.current_run
+        revision = {word["key"] for word in run["words"][REVISION]}
+        missed: list[str] = []
+        for item in self.questions:
+            key = item.get("key")
+            if item.get("pool") == REVISION and item.get("outcome") in (INCORRECT, TIMEOUT) and key in revision:
+                if key not in missed:
+                    missed.append(key)
+        chosen = [[CURRENT, word["key"]] for word in run["words"][CURRENT]] + [[REVISION, key] for key in missed]
+        self.rng.shuffle(chosen)
+        run["practice"] = chosen
+        return chosen, pools.alphabet
 
     @property
     def current_run(self) -> dict:

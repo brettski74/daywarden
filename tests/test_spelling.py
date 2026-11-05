@@ -1,4 +1,4 @@
-"""S005.1: the spelling quiz, its word pools, audio tokens, queue, and timing."""
+"""S005.1 and S005.2: the spelling quiz, its word pools, audio tokens, queue, timing, and practice mode."""
 
 import asyncio
 import json
@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from conftest import write_wav  # noqa: E402
+from conftest import write_alphabet, write_wav  # noqa: E402
 
 from policy import spelling  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
@@ -33,6 +33,7 @@ from policy.spelling import (  # noqa: E402
     check_body,
     descramble,
     parse_settings,
+    practice_plan,
     read_media_name,
     scramble,
     token,
@@ -47,14 +48,15 @@ YOUNGER = "192.0.2.40"
 START = datetime(2026, 11, 2, 16, 0, tzinfo=ZONE)
 WORD_MS = 800
 SENTENCE_MS = 2000
+LETTER_MS = 300
 TIMEOUT_MS = 30_000
 
 
 @pytest.fixture
 def data(tmp_path, monkeypatch) -> Path:
-    """An empty data directory that the service reads words from."""
+    """A data directory with the alphabet and no words, that the service reads words from."""
     root = tmp_path / "daywarden"
-    root.mkdir()
+    write_alphabet(root / "spelling/alphabet", LETTER_MS)
     monkeypatch.setenv("DAYWARDEN_DATA_DIR", str(root))
     return root
 
@@ -147,6 +149,7 @@ def test_a_body_with_no_fields_uses_the_defaults(data):
     )
     assert settings.timeout == TIMEOUT_MS
     assert (settings.maximum_replays, settings.maximum_sentence_plays) == (3, 2)
+    assert (settings.letter_pause, settings.word_pause) == (0, 300)
     pools = check_body({})
     assert len(pools.current) == 3
     assert pools.current_required == 3
@@ -263,6 +266,9 @@ def test_directories_can_be_set_per_task(data):
         ({"current_required": 0, "revision_required": 0}, [], ["cat.wav"], ["body.current_dir", "nothing to ask"]),
         ({"timeout": 30}, ["rope.wav"], [], ["body.timeout"]),
         ({"timeout": "0s"}, ["rope.wav"], [], ["body.timeout"]),
+        ({"letter_pause": 0}, ["rope.wav"], [], ["body.letter_pause", "bare number"]),
+        ({"word_pause": "-1ms"}, ["rope.wav"], [], ["body.word_pause"]),
+        ({"word_pause": "soon"}, ["rope.wav"], [], ["body.word_pause"]),
         ({"colour": "blue"}, ["rope.wav"], [], ["body.colour"]),
     ],
 )
@@ -334,7 +340,8 @@ def test_unchanged_recordings_are_not_read_again_and_changed_ones_are(data, monk
     reads = []
 
     def counting(path, field):
-        reads.append(path.name)
+        if path.parent.name == "current":
+            reads.append(path.name)
         return real(path, field)
 
     monkeypatch.setattr(spelling, "read_audio_ms", counting)
@@ -1076,19 +1083,299 @@ def test_the_next_word_waits_four_seconds_after_the_feedback_sound(tmp_path, dat
     assert result["outcome"] == outcome and result["sound"] and not result["finished"]
     second = quiz.ask(START + timedelta(seconds=6))
     replies = {"visit": [visit], "question": [first, second], "answer": [result]}
-    run = subprocess.run(
-        ["node", str(ROOT / "tests" / "page_harness.js")],
-        input=json.dumps({"html": page, "replies": replies, "clip_ms": WORD_MS, "run_ms": 10_000}),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    events = json.loads(run.stdout)
+    events = _harness(page, replies, clip_ms=WORD_MS, run_ms=10_000)
     plays = [event for event in events if event["kind"] == "play"]
     sound = next(event["at"] for event in plays if event["what"] == result["sound"])
     word = next(event["at"] for event in plays if event["what"] == second["word_url"])
     assert word - sound >= 4000
     assert [event["what"] for event in events if event["kind"] == "post"] == ["visit", "question", "answer", "question"]
+
+
+def _harness(page: str, replies: dict, **options) -> list[dict]:
+    """Run the page's script in ``tests/page_harness.js`` and return what it saw."""
+    run = subprocess.run(
+        ["node", str(ROOT / "tests" / "page_harness.js")],
+        input=json.dumps({"html": page, "replies": replies, **options}),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(run.stdout)
+
+
+# Practice mode (S005.2)
+
+
+@pytest.mark.parametrize(
+    ("current", "revision", "remove", "add", "expected"),
+    [
+        (["rope"], [], ["q.wav"], [], ["no clip for q"]),
+        (["rope"], [], ["b.wav", "x.wav"], [], ["no clip for b, x"]),
+        (["well-known"], [], ["dash.wav"], [], ["no clip for dash"]),
+        (["rope"], ["don't"], ["apostrophe.wav"], [], ["no clip for apostrophe"]),
+        (["rope"], [], [], ["A.mp3"], ["a.wav", "A.mp3", "both the clip for a"]),
+        (["rope"], [], [], ["dash.ogg"], ["dash.ogg", "dash.wav"]),
+        (["rope"], [], ["*"], [], ["not a directory"]),
+    ],
+)
+def test_the_alphabet_is_checked_when_the_policy_loads(tmp_path, data, any_length, current, revision, remove, add, expected):
+    _words(data, "spelling/current", *current)
+    _words(data, "spelling/revision", *revision)
+    good = _policy(tmp_path / "good", {})
+    alphabet = data / "spelling/alphabet"
+    if remove == ["*"]:
+        shutil.rmtree(alphabet)
+    for name in remove if remove != ["*"] else []:
+        (alphabet / name).unlink()
+    if add:
+        _files(data, "spelling/alphabet", *add)
+    with pytest.raises(ConfigError) as raised:
+        load(_write(tmp_path / "bad", _house({})), previous=good)
+    message = str(raised.value)
+    assert "'words'" in message and "body.alphabet_dir" in message
+    for fragment in expected:
+        assert fragment in message
+
+
+def test_dash_and_apostrophe_clips_are_needed_only_when_a_word_uses_them(tmp_path, data):
+    _words(data, "spelling/current", "rope")
+    _words(data, "spelling/revision", "cat")
+    alphabet = data / "spelling/alphabet"
+    (alphabet / "dash.wav").unlink()
+    (alphabet / "apostrophe.wav").unlink()
+    (alphabet / "a.wav").rename(alphabet / "A.WAV")
+    write_wav(alphabet / "hello.wav")
+    (alphabet / "notes.txt").write_text("letters", encoding="utf-8")
+    assert sorted(check_body({}).alphabet) == list("abcdefghijklmnopqrstuvwxyz")
+
+
+def test_the_alphabet_directory_can_be_set_per_task(data):
+    _words(data, "spelling/current", "rope")
+    shutil.move(data / "spelling/alphabet", data / "letters")
+    with pytest.raises(ValueError, match="alphabet_dir"):
+        check_body({})
+    assert check_body({"alphabet_dir": "letters"}).alphabet["r"].name == "r.wav"
+
+
+def test_practice_says_the_word_before_and_after_each_of_three_spellings():
+    word, letter = 500, 250
+    spelled = [("w", word), ("o", letter), ("r", letter), ("d", letter), ("word", word)]
+    assert practice_plan("word", letter, word) == [("word", 0), *spelled, *spelled, *spelled]
+    plan = practice_plan("Don't-go", 0, 300)
+    assert [clip for clip, _pause in plan[1:9]] == ["d", "o", "n", "apostrophe", "t", "dash", "g", "o"]
+    assert [clip for clip, _pause in plan].count("word") == 4
+    assert len(plan) == 1 + 3 * (len("Don't-go") + 1)
+
+
+def test_practice_starts_a_new_run_on_the_attempt_and_keeps_the_earlier_answers(data):
+    _words(data, "spelling/current", "rope", "cat", "dog")
+    session = _session({"current_required": 2})
+    session.issue(START)
+    _answer_pending(session, START + timedelta(seconds=2), right=True)
+    session.issue(START + timedelta(seconds=5))
+    _answer_pending(session, START + timedelta(seconds=7), right=False)
+    session.issue(START + timedelta(seconds=10))
+    earlier = [dict(item) for item in session.questions[:2]]
+    session.practice(START + timedelta(seconds=12))
+    assert session.questions[:2] == earlier
+    assert session.questions[2]["outcome"] == "timeout"
+    assert len(session.detail["runs"]) == 2
+    assert session.progress() == {"current": 0, "current_required": 2, "revision": 0, "revision_required": 0}
+    assert sorted(key for _pool, key in session.current_run["queue"]) == ["cat", "dog", "rope"]
+    assert session.verdict() is None
+
+
+def test_practice_walks_every_current_word_and_each_missed_revision_word_once(data):
+    _words(data, "spelling/current", "rope", "cat", "dog")
+    _words(data, "spelling/revision", "ant", "bee", "cow", "eel", "fox")
+    orders = set()
+    for seed in range(12):
+        session = _session({"current_required": 0, "revision_required": 3}, seed)
+        session.current_run["queue"] = [[REVISION, key] for key in ("ant", "ant", "bee", "cow")]
+        now = START
+        for right in (False, False, True):
+            session.issue(now)
+            now += timedelta(seconds=2)
+            _answer_pending(session, now, right=right)
+        session.issue(now)
+        chosen, _alphabet = session.practice(now + timedelta(seconds=2))
+        assert sorted(map(tuple, chosen)) == sorted(
+            [(CURRENT, "cat"), (CURRENT, "dog"), (CURRENT, "rope"), (REVISION, "ant"), (REVISION, "cow")]
+        )
+        assert session.current_run["practice"] == chosen
+        orders.add(tuple(map(tuple, chosen)))
+    assert len(orders) > 6
+
+
+@pytest.mark.parametrize(
+    ("body", "letter", "word"),
+    [({}, 0, 300), ({"letter_pause": "150ms", "word_pause": "1s"}, 150, 1000), ({"word_pause": "0s"}, 0, 0)],
+)
+def test_practice_through_the_page_plays_the_word_and_its_letters_with_the_task_pauses(tmp_path, data, body, letter, word):
+    _words(data, "spelling/current", "don't")
+    quiz = Quiz(tmp_path, body)
+    quiz.open(START)
+    status, reply = quiz.post(START, "practice", {})
+    assert status == 200
+    assert (reply["current"], reply["revision"], reply["finished"]) == (0, 0, False)
+    [practised] = reply["practice"]
+    assert practised["word"] == "don't"
+    plan = practice_plan("don't", letter, word)
+    pauses = [step["pause"] for step in practised["steps"]]
+    assert pauses == [pause for _clip, pause in plan]
+    assert pauses[1:3] == [word, letter]
+    for step, (clip, _pause) in zip(practised["steps"], plan):
+        if clip == "word":
+            assert read_media_name(step["url"].rsplit("/", 1)[1]) == (CURRENT, "don't", False, "wav")
+            assert step["ms"] == WORD_MS
+        else:
+            assert step["url"] == f"/tasks/words/audio/alphabet.{clip}.wav"
+            assert step["ms"] == LETTER_MS
+
+
+def test_practice_is_allowed_on_a_required_task_and_keeps_the_attempt_in_progress(tmp_path, data):
+    _words(data, "spelling/current", "rope", "cat")
+    quiz = Quiz(tmp_path, due="2026-11-01")
+    quiz.open(START)
+    quiz.spell(True)
+    quiz.spell(False)
+    quiz.ask(quiz.now)
+    status, reply = quiz.post(quiz.now + timedelta(seconds=2), "practice", {})
+    assert status == 200
+    assert (reply["current"], reply["current_required"]) == (0, 2)
+    [attempt] = quiz.store.attempts("younger", "words")
+    assert attempt.outcome == "in_progress"
+    assert [item["outcome"] for item in attempt.detail["questions"]] == ["correct", "incorrect", "timeout"]
+    assert len(attempt.detail["runs"]) == 2
+    page = quiz.open(quiz.now + timedelta(minutes=1))
+    assert "Current: 0 / 2" in page.body
+    assert quiz.attempt().id == attempt.id
+
+
+def test_closing_a_question_for_practice_never_passes_and_the_new_run_can(tmp_path, data):
+    _words(data, "spelling/current", "rope", "cat")
+    quiz = Quiz(tmp_path, {"current_required": 1})
+    quiz.open(START)
+    quiz.spell(True)
+    quiz.ask(quiz.now)
+    quiz.post(quiz.now + timedelta(seconds=2), "practice", {})
+    assert quiz.attempt().outcome == "in_progress"
+    assert quiz.store.passes_on("younger", START.date()) == 0
+    quiz.now += timedelta(seconds=30)
+    results = [quiz.spell(True), quiz.spell(True)]
+    assert [result["finished"] for result in results] == [False, True]
+    assert quiz.attempt().outcome == "pass"
+    assert quiz.store.passes_on("younger", START.date()) == 1
+
+
+def test_practice_with_no_attempt_in_progress_asks_the_page_to_reload(tmp_path, data):
+    _words(data, "spelling/current", "rope")
+    quiz = Quiz(tmp_path)
+    quiz.open(START)
+    quiz.spell(True)
+    status, payload = quiz.post(quiz.now, "practice", {})
+    assert (status, payload) == (409, {"reload": True})
+
+
+def test_the_service_serves_letter_clips_for_practice(tmp_path, data, monkeypatch):
+    pytest.importorskip("fastapi")
+    from policy.app import create_app
+
+    _words(data, "spelling/current", "rope")
+    write_wav(data / "spelling/alphabet/R.wav", 400)
+    (data / "spelling/alphabet/r.wav").unlink()
+    policy_file = _write(tmp_path, _house({}))
+    monkeypatch.setenv("POLICY_FILE", str(policy_file))
+    monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
+    monkeypatch.delenv("DECISION_STUB", raising=False)
+    app = create_app()
+
+    assert _call(app, "GET", "/tasks/words")[0] == 200
+    status, _headers, body = _call(app, "POST", "/tasks/words", query=b"do=practice", body=b"{}")
+    assert status == 200
+    steps = json.loads(body)["practice"][0]["steps"]
+    assert steps[1]["url"] == "/tasks/words/audio/alphabet.R.wav"
+    for step in steps:
+        status, headers, _body = _call(app, "GET", step["url"])
+        assert status == 200
+        assert headers["content-type"].startswith("audio/wav")
+    assert _call(app, "GET", "/tasks/words/audio/alphabet.r.wav")[2] == (data / "spelling/alphabet/R.wav").read_bytes()
+    for name in ("alphabet.zz.wav", "alphabet.a.txt", "alphabet.wav", "alphabet..wav", "alphabet.hello.wav"):
+        assert _call(app, "GET", f"/tasks/words/audio/{name}")[0] == 404, name
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+def test_the_practice_screen_shows_each_word_and_waits_for_its_sequence(tmp_path, data):
+    _words(data, "spelling/current", "ox", "cat")
+    quiz = Quiz(tmp_path)
+    page = quiz.open(START).body
+    _status, visit = quiz.post(START, "visit", {})
+    first = quiz.ask(START)
+    _status, practice = quiz.post(START + timedelta(seconds=3), "practice", {})
+    after = quiz.ask(START + timedelta(minutes=1))
+    words = practice["practice"]
+    clip = 100
+    durations = [sum(step["pause"] for step in word["steps"]) + clip * len(word["steps"]) for word in words]
+    watched = ["practise", "practice-word", "practice-prompt", "practice-next", "practice-confirm", "progress", "ask"]
+    steps = [
+        {"click": "start-button", "wait": clip},
+        {"key": ["answer", "Enter"]},
+        {"snap": watched, "label": "asking"},
+        {"click": "practice-ask"},
+        {"snap": watched, "label": "confirming"},
+        {"click": "practice-yes"},
+        {"snap": watched, "label": "first word", "wait": durations[0] - 1},
+        {"key": ["practice-next", "Enter"]},
+        {"snap": watched, "label": "still playing", "wait": 1},
+        {"snap": watched, "label": "first word done"},
+        {"key": ["practice-next", "Enter"]},
+        {"snap": watched, "label": "second word", "wait": durations[1]},
+        {"snap": watched, "label": "second word done"},
+        {"click": "practice-next"},
+        {"snap": watched, "label": "quiz"},
+    ]
+    replies = {"visit": [visit], "question": [first, after], "practice": [practice]}
+    events = _harness(page, replies, clip_ms=clip, steps=steps)
+    snaps = {event["what"]: event["elements"] for event in events if event["kind"] == "snap"}
+    posts = [event["what"] for event in events if event["kind"] == "post"]
+    assert posts == ["visit", "question", "practice", "question"]
+
+    assert snaps["asking"]["practice-confirm"]["hidden"] is True
+    assert snaps["asking"]["practise"]["hidden"] is True
+    assert snaps["confirming"]["practice-confirm"]["hidden"] is False
+    first_word = snaps["first word"]
+    assert first_word["practise"]["hidden"] is False and first_word["ask"]["hidden"] is True
+    assert first_word["practice-confirm"]["hidden"] is True
+    assert first_word["practice-word"]["text"] == words[0]["word"]
+    assert first_word["progress"]["text"] == "Practice: 1 of 2"
+    assert first_word["practice-next"]["text"] == "Next"
+    for label in ("first word", "still playing"):
+        assert snaps[label]["practice-next"]["disabled"] is True
+        assert snaps[label]["practice-prompt"]["hidden"] is True
+        assert snaps[label]["practice-word"]["text"] == words[0]["word"]
+    done = snaps["first word done"]
+    assert done["practice-word"]["text"] == words[0]["word"]
+    assert done["practice-next"]["disabled"] is False and done["practice-next"]["focused"] is True
+    assert done["practice-prompt"]["hidden"] is False
+
+    second = snaps["second word"]
+    assert second["practice-word"]["text"] == words[1]["word"]
+    assert second["progress"]["text"] == "Practice: 2 of 2"
+    assert second["practice-next"]["text"] == "Start quiz"
+    assert second["practice-next"]["disabled"] is True
+    assert snaps["second word done"]["practice-next"]["disabled"] is False
+    assert snaps["quiz"]["practise"]["hidden"] is True and snaps["quiz"]["ask"]["hidden"] is False
+
+    plays = [event for event in events if event["kind"] == "play"]
+    practised = plays[1 : 1 + len(words[0]["steps"]) + len(words[1]["steps"])]
+    expected = words[0]["steps"] + words[1]["steps"]
+    assert [play["what"] for play in practised] == [step["url"] for step in expected]
+    gaps = [later["at"] - earlier["at"] - clip for earlier, later in zip(practised, practised[1:])]
+    assert gaps[: len(words[0]["steps"]) - 1] == [step["pause"] for step in words[0]["steps"][1:]]
+    assert gaps[len(words[0]["steps"]) :] == [step["pause"] for step in words[1]["steps"][1:]]
+    assert plays[-1]["what"] == after["word_url"]
 
 
 def _call(app, method, path, *, query=b"", body=b""):

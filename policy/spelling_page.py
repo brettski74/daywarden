@@ -3,10 +3,12 @@
 The page is the quiz shell from ``policy.quiz_page`` with two audio buttons
 and one large text box. Its script reports a page load with
 ``POST ?do=visit``, asks for each word with ``POST ?do=question``, reports
-each "Repeat word" or "Use in a sentence" with ``POST ?do=replay``, and
-sends each spelling with ``POST ?do=answer``. The word audio is served from
+each "Repeat word" or "Use in a sentence" with ``POST ?do=replay``, sends
+each spelling with ``POST ?do=answer``, and starts practice mode with
+``POST ?do=practice``. The word audio is served from
 ``<task URL>/audio/<token>.<ext>``, so the rule that lets the page load also
-lets the audio through, and the URL says nothing about the word.
+lets the audio through, and the URL says nothing about the word. Letter
+clips for practice are ``<task URL>/audio/alphabet.<file>``.
 
 Closing a question left showing finishes it, so a reload or a give-up can
 be what passes the attempt. Every request that closes one checks.
@@ -36,20 +38,27 @@ from policy.report import PageResponse, _e, _response
 from policy.selection import task_media_path
 from policy.sounds import SoundSets
 from policy.spelling import (
+    ALPHABET_MEDIA,
     LABEL,
+    WORD_CLIP,
     Clip,
     Session,
+    alphabet_media_name,
+    character_name,
+    find_alphabet_clip,
     find_clip,
     media_name,
     missed_words,
     parse_settings,
+    practice_plan,
     read_media_name,
 )
 from policy.tasks import ABANDONED, Attempt, AttemptStore, Task
 
-__all__ = ["REPLAY", "give_up_page", "media", "reload", "respond_api", "settle", "show"]
+__all__ = ["PRACTICE", "REPLAY", "give_up_page", "media", "reload", "respond_api", "settle", "show"]
 
 REPLAY = "replay"
+PRACTICE = "practice"
 FEEDBACK_PAUSE_MS = 4000
 AUDIO_GRACE_MS = 5000
 MISSED_COLUMNS = 3
@@ -136,6 +145,11 @@ def respond_api(
         question = session.issue(now)
         store.save(attempt.id, session.detail)
         return json_response(200, {**_question(session, task, question, rng), "finished": False})
+    if action == PRACTICE:
+        chosen, alphabet = session.practice(now)
+        store.save(attempt.id, session.detail)
+        words = [_practice_word(session, task, pool, key, alphabet, rng) for pool, key in chosen]
+        return json_response(200, {"practice": words, **session.progress(), "finished": False})
     if action not in (ANSWER, REPLAY):
         return json_response(404, {"error": "unknown request"})
     try:
@@ -181,15 +195,17 @@ def respond_api(
 
 
 def media(task: Task, name: str) -> Path | None:
-    """Return the audio file an ``audio/<token>...`` URL of this task names, or None."""
-    found = read_media_name(name)
-    if found is None:
-        return None
-    pool, key, sentence, extension = found
+    """Return the audio file an ``audio/<token>...`` or ``audio/alphabet.<file>`` URL of this task names, or None."""
     try:
         settings = parse_settings(task.document())
     except ValueError:
         return None
+    if name.startswith(ALPHABET_MEDIA):
+        return find_alphabet_clip(settings, name)
+    found = read_media_name(name)
+    if found is None:
+        return None
+    pool, key, sentence, extension = found
     return find_clip(settings, pool, key, sentence=sentence, extension=extension)
 
 
@@ -284,6 +300,23 @@ def _question(session: Session, task: Task, question: Mapping, rng: random.Rando
     }
 
 
+def _practice_word(
+    session: Session, task: Task, pool: str, key: str, alphabet: Mapping[str, Clip], rng: random.Random
+) -> dict:
+    """Return one practice word and each clip to play for it, with the pause before each in milliseconds."""
+    word = session.word(pool, key)
+    base = task_media_path(task.name)
+    spoken = base + media_name(key, pool, Clip(word["clip"], word["clip_ms"]), sentence=False, rng=rng)
+    clips = {WORD_CLIP: (spoken, word["clip_ms"])}
+    for character in word["word"]:
+        letter = alphabet[character_name(character)]
+        clips[character_name(character)] = (base + alphabet_media_name(letter), letter.ms)
+    settings = session.settings
+    plan = practice_plan(word["word"], settings.letter_pause, settings.word_pause)
+    steps = [{"url": clips[clip][0], "ms": clips[clip][1], "pause": pause} for clip, pause in plan]
+    return {"word": word["word"], "steps": steps}
+
+
 def _conclude(policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime) -> dict:
     store.finish(attempt.id, verdict, now, detail=session.detail)
     following = None if policy is None else next_task_url(policy, store, attempt.client_group, now)
@@ -306,7 +339,8 @@ def _document(session: Session, config: Mapping, note: str) -> str:
         start=(
             f"<h1>{_e(LABEL)}</h1>\n"
             f'{note_html(note)}<p id="start-progress">{shown}</p>\n'
-            '<button type="button" id="start-button" class="big" autofocus>Start</button>'
+            '<button type="button" id="start-button" class="big" autofocus>Start</button>\n'
+            '<button type="button" id="practice-start" class="practice">Practice</button>'
         ),
         ask=(
             '<div class="clips">\n'
@@ -319,14 +353,25 @@ def _document(session: Session, config: Mapping, note: str) -> str:
             'spellcheck="false" maxlength="40" disabled>\n'
             '<div id="reveal" aria-live="polite"></div>\n'
             '<div id="feedback" aria-live="polite"></div>\n'
-            "</div>"
+            "</div>\n"
+            '<button type="button" id="practice-ask" class="practice">Practice</button>'
         ),
         ends=(
+            '<section id="practise" hidden>\n'
+            '<div id="practice-word"></div>\n'
+            '<div class="prompt-line"><p id="practice-prompt" hidden>Say and spell the word until you know it.</p></div>\n'
+            '<button type="button" id="practice-next" class="clip" disabled>Next</button>\n'
+            "</section>\n"
             '<section id="missed" class="screen end" hidden>\n'
             "<h1>Words to practise</h1>\n"
             '<ul id="missed-words"></ul>\n'
             '<button type="button" id="missed-continue" class="big">Continue</button>\n'
             "</section>\n"
+            '<div id="practice-confirm" role="dialog" aria-label="Practice" hidden>\n'
+            "<div>Start practice mode? Your current quiz progress will be reset.</div>\n"
+            '<button type="button" id="practice-yes">Yes, practice</button>\n'
+            '<button type="button" id="practice-no">No, keep going</button>\n'
+            "</div>\n"
         ),
         style=_STYLE,
         script=_SCRIPT,
@@ -351,6 +396,17 @@ _STYLE = (
   padding: 0.2em 0.4em; text-align: center; border: 3px solid #888; border-radius: 10px; background: #fff; color: #222; }
 #answer:disabled { background: #f1f1ea; }
 #reveal { min-height: 3.6rem; font-size: 3rem; font-weight: bold; color: #1a7f37; margin-top: 1.2rem; }
+.practice { position: fixed; right: 1rem; bottom: 2.8rem; font-size: 1.1rem; padding: 0.35rem 1rem; background: #fff;
+  border: 1px solid #aaa; border-radius: 6px; color: #444; cursor: pointer; }
+.practice:disabled { color: #aaa; cursor: default; }
+#practice-confirm { position: fixed; right: 1rem; bottom: 5.6rem; max-width: 22rem; background: #fff; border: 1px solid #aaa;
+  border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); text-align: left; }
+#practice-confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
+#practise:not([hidden]) { display: flex; flex-direction: column; align-items: center; }
+#practice-word { font-size: min(9rem, 9vw); font-weight: bold; line-height: 1.2; overflow-wrap: anywhere; }
+.prompt-line { min-height: 4rem; margin: 1.5rem 0; }
+#practice-prompt { font-size: 2rem; margin: 0; }
+#practice-next { font-size: 2.2rem; min-width: 8em; }
 """
     + _MISSED_STYLE
 )
@@ -358,6 +414,9 @@ _STYLE = (
 _SCRIPT = """\
   const box = $("answer"), repeatButton = $("repeat"), sentenceButton = $("say-sentence"), reveal = $("reveal");
   const missedScreen = $("missed"), missedList = $("missed-words"), missedContinue = $("missed-continue");
+  const practiceScreen = $("practise"), practiceWord = $("practice-word"), practicePrompt = $("practice-prompt");
+  const practiceNext = $("practice-next"), practiceBox = $("practice-confirm");
+  const practiceButtons = [$("practice-start"), $("practice-ask")];
   const voice = new Audio();
   let current = null;
   let plays = { word: 0, sentence: 0 };
@@ -366,6 +425,13 @@ _SCRIPT = """\
   let expiry = null;
   let listening = 0;
   let afterMissed = null;
+  let inflight = Promise.resolve();
+  let attemptOver = false;
+  let entering = false;
+  let nextTimer = null;
+  let practiceWords = [];
+  let practiceAt = 0;
+  let sequenceTurn = 0;
 
   function progressText(now) {
     return "Current: " + now.current + " / " + now.current_required +
@@ -445,6 +511,8 @@ _SCRIPT = """\
   }
 
   function end(result) {
+    attemptOver = true;
+    practiceBox.hidden = true;
     const missed = result.missed || [];
     if (!missed.length) {
       finish(result.next);
@@ -482,11 +550,14 @@ _SCRIPT = """\
         counts(now);
         return now;
       });
+  inflight = visited;
 
   async function ask() {
     state = "waiting";
+    practiceNext.disabled = true;
     if (!(await visited)) return;
-    const next = await post("question");
+    inflight = post("question");
+    const next = await inflight;
     if (!next) return;
     if (next.finished) {
       end(next);
@@ -496,6 +567,7 @@ _SCRIPT = """\
     plays = { word: 0, sentence: 0 };
     counts(next);
     startScreen.hidden = true;
+    practiceScreen.hidden = true;
     askScreen.hidden = false;
     progress.hidden = false;
     timer.hidden = false;
@@ -517,7 +589,7 @@ _SCRIPT = """\
     pauseTimer();
     state = "listening";
     controls(false);
-    post("replay", { id: current.id, clip: kind });
+    inflight = post("replay", { id: current.id, clip: kind });
     if (kind === "word") listen(current.word_url, current.word_ms, resume);
     else listen(current.sentence_url, current.sentence_ms, resume);
   }
@@ -532,9 +604,15 @@ _SCRIPT = """\
     pauseTimer();
     controls(false);
     if (expired) bar.style.width = "0%";
-    const result = await post("answer", { id: current.id, answer: box.value, expired: expired });
+    inflight = post("answer", { id: current.id, answer: box.value, expired: expired });
+    const result = await inflight;
     if (!result) return;
     state = "feedback";
+    if (result.finished) {
+      attemptOver = true;
+      practiceBox.hidden = true;
+      for (const button of practiceButtons) button.disabled = true;
+    }
     play(result.sound);
     counts(result);
     feedback.className = result.outcome;
@@ -544,7 +622,80 @@ _SCRIPT = """\
       feedback.textContent = result.outcome === "timeout" ? "Time ran out" : "Not quite";
       if (result.word) reveal.textContent = result.word;
     }
-    setTimeout(() => (result.finished ? end(result) : ask()), config.feedbackPause);
+    nextTimer = setTimeout(() => (result.finished ? end(result) : ask()), config.feedbackPause);
+  }
+
+  function sequence(steps, done) {
+    const turn = ++sequenceTurn;
+    let index = 0;
+    const step = () => {
+      if (turn !== sequenceTurn) return;
+      if (index >= steps.length) {
+        done();
+        return;
+      }
+      const clip = steps[index++];
+      setTimeout(() => {
+        if (turn === sequenceTurn) listen(clip.url, clip.ms, step);
+      }, clip.pause);
+    };
+    step();
+  }
+
+  function showPracticeWord() {
+    const item = practiceWords[practiceAt];
+    state = "practice";
+    progress.textContent = "Practice: " + (practiceAt + 1) + " of " + practiceWords.length;
+    practiceWord.textContent = item.word;
+    practicePrompt.hidden = true;
+    practiceNext.textContent = practiceAt === practiceWords.length - 1 ? "Start quiz" : "Next";
+    practiceNext.disabled = true;
+    sequence(item.steps, () => {
+      state = "practised";
+      practicePrompt.hidden = false;
+      practiceNext.disabled = false;
+      practiceNext.focus();
+    });
+  }
+
+  async function enterPractice() {
+    practiceBox.hidden = true;
+    if (entering || state === "practice" || state === "practised") return;
+    entering = true;
+    await inflight;
+    if (attemptOver) return;
+    clearTimeout(nextTimer);
+    pauseTimer();
+    listening += 1;
+    voice.pause();
+    controls(false);
+    state = "practice";
+    const reply = await post("practice");
+    entering = false;
+    if (!reply) return;
+    current = null;
+    practiceWords = reply.practice;
+    practiceAt = 0;
+    startScreen.hidden = true;
+    askScreen.hidden = true;
+    timer.hidden = true;
+    feedback.className = "";
+    feedback.textContent = "";
+    reveal.textContent = "";
+    if (!practiceWords.length) {
+      ask();
+      return;
+    }
+    practiceScreen.hidden = false;
+    progress.hidden = false;
+    showPracticeWord();
+  }
+
+  function advance() {
+    if (state !== "practised") return;
+    practiceAt += 1;
+    if (practiceAt < practiceWords.length) showPracticeWord();
+    else ask();
   }
 
   box.addEventListener("keydown", (event) => {
@@ -563,10 +714,34 @@ _SCRIPT = """\
   repeatButton.addEventListener("click", () => replay("word"));
   sentenceButton.addEventListener("click", () => replay("sentence"));
   missedContinue.addEventListener("click", onward);
+  for (const button of [...practiceButtons, $("practice-yes"), $("practice-no")]) {
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") event.preventDefault();
+    });
+  }
+  for (const button of practiceButtons) {
+    button.addEventListener("click", () => {
+      if (attemptOver) return;
+      confirmBox.hidden = true;
+      practiceBox.hidden = false;
+    });
+  }
+  giveUp.addEventListener("click", () => {
+    practiceBox.hidden = true;
+  });
+  $("practice-yes").addEventListener("click", enterPractice);
+  $("practice-no").addEventListener("click", () => {
+    practiceBox.hidden = true;
+    refocus();
+  });
+  practiceNext.addEventListener("click", advance);
   document.addEventListener("keydown", (event) => {
-    if (state !== "missed" || event.key !== "Enter") return;
+    if (event.key !== "Enter" || (state !== "missed" && state !== "practice" && state !== "practised")) return;
     event.preventDefault();
-    if (!event.repeat) onward();
+    if (event.repeat) return;
+    if (state === "missed") onward();
+    else advance();
   });
   startButton.addEventListener("click", () => {
     if (state === "start") ask();

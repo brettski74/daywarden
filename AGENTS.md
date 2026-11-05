@@ -20,6 +20,29 @@ They may include additional headings as needed, but those should always be there
 
 Use Fibonnaci numbers when estimating story points and measure story point estimates relative to other similar stories that have been implemented in the past or that we believe are a similar level of effort.
 
+# Python Environment
+
+Run all Python in this repository, including the tests, with the workspace virtual environment at `.venv`. Never use
+the system `python3`, `pytest`, or `pip` directly. The system Python is missing packages the code imports, such as
+`argon2`, which shows up as `ModuleNotFoundError: No module named 'argon2'` when tests are collected, and Arch refuses
+`pip install` into the system Python.
+
+- `make venv` creates `.venv` and installs `requirements-dev.txt`, which includes `policy/requirements.txt` and
+  `pytest`. It does nothing when `.venv` is already up to date, and reinstalls by itself when either requirements file
+  changes, so it is always safe to run first. The first run needs network access to PyPI.
+- `make test` runs the whole suite, building the venv first if needed. Pass pytest arguments with `ARGS`, such as
+  `make test ARGS="tests/test_clips.py -q"`. `.venv/bin/python -m pytest tests/test_clips.py` works too.
+- Run one-off scripts and modules from the repository root with `.venv/bin/python`, such as
+  `.venv/bin/python -m policy.clips --help`. `bin/cut-clips` uses `.venv` automatically when it exists.
+- A package the policy service needs at runtime goes in `policy/requirements.txt`, which the container image also
+  installs. A package only the tests or host tools need goes in `requirements-dev.txt`. Pin exact versions in both.
+- If `.venv` stops working, for example after a system Python upgrade, rebuild it with `rm -rf .venv && make venv`.
+- Do not create throwaway venvs elsewhere, such as in `/tmp`, and do not use `--system-site-packages`.
+
+Many tests start Docker Compose, so the full suite needs access to Docker. Agents running in a sandbox should run the
+full suite outside it. It takes several minutes, so run it in the background. Tests that need `ffmpeg` or `node` are
+skipped when those tools are not installed.
+
 # Testing
 
 Any new feature or bugfix must implement or update at least one automated test. Implement as many tests are are required
