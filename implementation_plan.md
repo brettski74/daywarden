@@ -225,7 +225,7 @@ Each story is implementable on its own once the stories it depends on are done. 
 | 5 | S003.1, S003.2, S003.3 | Redirects land on a real task picker. A parent can record that the gate works, using a temporary "mark this practice item done" task if the quizzes are not built yet. |
 | 6 | S004.1 through S004.5 | Arithmetic earns a real completion. |
 | 7 | S005.1, S005.2, S005.3 | Spelling earns a completion, using recordings the parent supplies. Practice mode is in this slice. |
-| 8 | S006.1, S006.2 | Parts of speech, including a real failure. |
+| 8 | S006.1 through S006.4 | Parts of speech, including a real failure. |
 | Later | S005.4, S007.2, S007.3 | Generated spelling audio and browser editors for rules and quizzes. None of these are required to run the house. S002.3's volume condition is in; the sample policy does not turn it on. |
 
 S004, S005, and S006 depend on S003 and not on each other. They can be built in any order. Arithmetic is first because it has no audio assets and no drag-and-drop.
@@ -269,9 +269,11 @@ Stories marked Later are kept so the work is not forgotten. They are not part of
 | [S005.2](stories/S005.2-spelling-quiz.md) | Spelling quiz flow | 8 | Initial |
 | [S005.3](stories/S005.3-spelling-practice.md) | Spelling practice mode | 5 | Initial |
 | [S005.4](stories/S005.4-spelling-speech.md) | Generate spelling audio | 5 | Later |
-| [S006](stories/S006-parts-of-speech.md) | Parts of speech quiz | 13 | Initial |
-| [S006.1](stories/S006.1-parts-of-speech-scoring.md) | Sentence bank and scoring | 5 | Initial |
-| [S006.2](stories/S006.2-parts-of-speech-ui.md) | Drag-and-drop answering | 8 | Initial |
+| [S006](stories/S006-parts-of-speech.md) | Parts of speech quiz | 17 | Initial |
+| [S006.1](stories/S006.1-parts-of-speech-sentences.md) | Parts of speech sentences and configuration | 3 | Initial |
+| [S006.2](stories/S006.2-parts-of-speech-quiz.md) | Parts of speech quiz | 8 | Initial |
+| [S006.3](stories/S006.3-parts-of-speech-feedback.md) | Parts of speech red marks and answer | 3 | Initial |
+| [S006.4](stories/S006.4-parts-of-speech-review.md) | Parts of speech attempt review | 3 | Initial |
 | [S007](stories/S007-parent-administration.md) | Parent administration | 21 | Sign-in only |
 | [S007.1](stories/S007.1-parent-sign-in.md) | Parent sign-in | 5 | Initial |
 | [S007.2](stories/S007.2-edit-policy.md) | Edit clients, groups, and rules | 8 | Later |
@@ -312,7 +314,7 @@ These were not in the questions above. They stand until a story changes them.
 - Only a pass counts toward the daily revision number. A failed parts-of-speech quiz does not. Giving up does not.
 - Cooldown is a whole number of local days. Zero means the task may be used again immediately.
 - A pass is attributed to the local day on which the server records it.
-- Parts-of-speech points are per sentence, and the sentence scores 1, 0.5, or 0. See S006.1. Words are tracked by their position in the sentence, so a repeated word can be placed twice.
+- Parts-of-speech points are per sentence. A sentence scores 1, 0.5, or 0.25 when it is right on the first, second, or third try, and 0 otherwise. See S006.2. Words are tracked by their position in the sentence, so a repeated word can be placed twice.
 - When an arithmetic task requires only one correct answer, the timeout is the configured maximum.
 - Arithmetic timeouts shrink geometrically. After `k` correct answers, with `N` required and `N > 1`, the timeout is `Tmax * (Tmin / Tmax) ^ (k / (N - 1))`. It is `Tmax` before the first correct answer and `Tmin` when one more correct answer finishes the task.
 - Subtraction and division draw weighted `m` and `n` the same way as addition and multiplication, then display `x − m` or `x ÷ m` where `x` is the sum or product.
