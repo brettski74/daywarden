@@ -107,7 +107,8 @@ def pass_count(connection: sqlite3.Connection, client_group: str, day: date) -> 
 class Task:
     """One named task.
 
-    ``body`` is a canonical JSON object. Quiz stories define its fields.
+    ``body`` is a JSON object with its keys in the order the policy file
+    wrote them. Quiz stories define its fields.
     This layer does not read them. ``groups`` is the client groups that share
     one attempt history. ``failure_cooldown`` is None when the file left it
     out, which means a failure does not make the task wait.
@@ -570,7 +571,7 @@ def _payload(detail: Mapping | None) -> str:
     if not isinstance(detail, Mapping):
         raise ValueError("attempt detail is a JSON object")
     try:
-        return json.dumps(dict(detail), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return json.dumps(dict(detail), ensure_ascii=False, separators=(",", ":"))
     except TypeError as exc:
         raise ValueError("attempt detail is a JSON object") from exc
 

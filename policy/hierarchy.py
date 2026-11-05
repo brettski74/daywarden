@@ -6,9 +6,12 @@ into subdirectories. A file already loaded is skipped, so an include cycle is
 not an error. Names are unique inside each of the six namespaces. The same
 spelling may be used in two namespaces. Tasks are the sixth. Their bodies
 are opaque here, except that an ``arithmetic`` body is checked by
-``policy.arithmetic``, a ``skip_counting`` body by ``policy.skip_counting``,
-and a ``spelling`` body and its word directories by ``policy.spelling``, so
-a bad quiz body fails the load. S003.1 is the catalogue that reads them.
+``policy.arithmetic``, a ``parts_of_speech`` body by
+``policy.parts_of_speech``, a ``skip_counting`` body by
+``policy.skip_counting``, and a ``spelling`` body and its word directories by
+``policy.spelling``, so a bad quiz body fails the load. A body keeps its keys
+in the order written, so a parts of speech table keeps its rows in order.
+S003.1 is the catalogue that reads them.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
@@ -32,7 +35,7 @@ from pathlib import Path
 
 import yaml
 
-from policy import arithmetic, skip_counting, spelling
+from policy import arithmetic, parts_of_speech, skip_counting, spelling
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
@@ -510,6 +513,7 @@ def _take_tasks(node: yaml.Node, build: _Build) -> None:
 
 _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
     arithmetic.ARITHMETIC: arithmetic.parse_settings,
+    parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.parse_settings,
     skip_counting.SKIP_COUNTING: skip_counting.parse_settings,
     spelling.SPELLING: spelling.check_body,
 }
@@ -563,7 +567,7 @@ def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Tas
         kind,
         groups,
         _whole(pairs["pass_cooldown"], f"{where}: pass_cooldown", minimum=0),
-        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        json.dumps(document, ensure_ascii=False, separators=(",", ":")),
         failure,
         available,
         due,

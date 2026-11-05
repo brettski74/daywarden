@@ -290,6 +290,94 @@ The attempt passes when his points reach `correct_answers_required` and at least
 
 The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`. Each question has its `run`, `difference`, `start`, the full `sequence`, the `filled` positions, every try in `tries` (his `entries` in the blank boxes left to right, the number `wrong`, whether it was `expired`, and `received_ms` from issue), the `outcome`, the `correct_try`, the `points`, `allowed_ms`, and the household-local `issued` time. Resume and expiry work as for arithmetic.
 
+### Parts of speech tasks
+
+A task with `type: parts_of_speech` lists sentences, and for each one says which of its words are nouns, verbs, adjectives, or any other part of speech the parent wants him to practise. Its `body` is checked when the file is loaded. On the task page he drags the words of each sentence into a table with one row per part of speech.
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `sentences` | Required | A list of one or more sentences. There is no upper limit. |
+| `timeout` | `90s` | The time for each sentence that does not set its own. A duration greater than zero, as for arithmetic. |
+| `correct_answers_required` | 70% of the number of sentences, rounded up | The points needed to pass. A whole number from 1 to the number of sentences. Each sentence is worth up to 1 point. |
+
+Each sentence has these fields.
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `sentence` | Required | The sentence text, with at least one word in it. |
+| `parts` | Required | A mapping from part of speech name to a list of words from the sentence. At least one part. |
+| `timeout` | The body's `timeout` | The time for this sentence only, so a long sentence can be given longer. |
+
+```yaml
+tasks:
+  parts-of-speech-1:
+    type: parts_of_speech
+    group: younger
+    pass_cooldown: 21
+    failure_cooldown: 1
+    body:
+      sentences:
+        - sentence: "The quick, brown fox jumped over the lazy dog."
+          parts:
+            noun: [fox, dog]
+            verb: [jumped]
+            adjective: [quick, brown, lazy]
+        - sentence: "Dry the dishes with a dry towel."
+          timeout: 2m
+          parts:
+            verb: ["dry[1]"]
+            noun: [dishes, towel]
+            adjective: ["dry[2]"]
+```
+
+The fox sentence gets the default 90 seconds and the dry sentence 2 minutes. With two sentences and no `correct_answers_required`, he needs 2 points to pass. The default is worked out in whole numbers: 10 sentences need 7 points, 5 need 4, 3 need 3, and 1 needs 1.
+
+Part names are the parent's choice, such as `noun`, `proper noun`, or `Doing words`. Each is a row of his table, shown as written and in the order written. A name is at most 20 characters, and two names in one sentence may not differ only in case, such as `Noun` and `noun`. Each sentence lists only the parts it asks about, so one sentence can ask for nouns and verbs and the next for adjectives and adverbs. Words left out of the table belong in no row, and he should leave them out too. A part may be `[]`, which shows a row where nothing belongs. A sentence must still list at least one word somewhere.
+
+A word is a run of letters and digits. An apostrophe (`'` or `’`) or a hyphen with a letter or digit on both sides joins the runs either side into one word, so `don't`, `o'clock`, `well-known`, and `café` are each one word. Spaces, commas, full stops, quotation marks, dashes, and an apostrophe at the start or end of a word, as in `the dogs' bowls`, are punctuation. Punctuation is shown in the sentence as written but is never sorted. Words are compared without regard to case, and `’` is the same as `'`, so `Dry` at the start of a sentence and `dry` later on are two occurrences of the same word, and `don't` in the table matches `don’t` in the sentence.
+
+An entry in a part's list is one word from the sentence, optionally followed by occurrence numbers in square brackets. Occurrences count from 1 in sentence order. `dry` is the same as `dry[1]`. `dry[2]` is the second `dry`, and `the[1,2]` puts both occurrences of `the` in one part. Spaces around the word, the brackets, and the numbers are ignored. Each occurrence may be listed once in the whole table, so a word that appears twice can be listed at most twice. Phrases such as `ice cream` cannot be one entry. List the words separately or leave them out.
+
+In YAML, quote an entry with brackets or a comma inside `[...]`, as in `["dry[1]"]` or `["the[1,2]"]`. A block list needs no quotes:
+
+```yaml
+          parts:
+            verb:
+              - dry[1]
+```
+
+YAML reads an unquoted `yes`, `no`, `on`, `off`, or number as something other than text, so write `["yes"]` or `["3"]` for those words. A part with nothing after it, such as `adverb:` on its own, is not a list. Write `adverb: []`.
+
+The load fails, and the previous policy stays in force, for any of these. The error names the task, the sentence number, and the part and entry where there is one, such as `task 'parts-of-speech-1': body.sentences entry 2: parts.adjective: "dry[3]": the sentence has only 2 of "dry"`.
+
+- A missing or empty `sentences`, a sentence without `sentence` or `parts`, an empty `parts`, a sentence with no words in it, or a sentence whose parts are all empty.
+- An unknown field on the body or on a sentence, or a field of the wrong type, including a part that is not a list.
+- An entry that is not text, that is not a single word, or whose word is not in the sentence.
+- An occurrence number that is zero, not a whole number, larger than the number of times the word appears, or repeated in one entry, such as `dry[1,1]`.
+- Malformed brackets, such as `dry[]`, `dry[1-2]`, `dry[1`, `dry]1[`, or `[1]` with no word.
+- One occurrence listed twice, in one part or in two, including `dry` and `dry[1]` together. The error names every part that lists it.
+- A part name that is empty, longer than 20 characters, or the same as another in that sentence apart from case.
+- A `timeout` of zero or a bare number, on the body or on a sentence.
+- A `correct_answers_required` that is not a whole number from 1 to the number of sentences.
+
+A run asks every sentence once, in an order shuffled when the run starts. The start screen shows his points out of the number of sentences, the pass mark, and the sentence number, such as "0 / 10 points", "7 points to pass", and "Sentence 1 of 10". The question screen says "Sort the words into the table" above the sentence in large text, with the table, a feedback line, a large Submit button, and a timer bar under it. The table's rows are the sentence's parts, in the order written.
+
+He sorts with the mouse. An unsorted word turns light grey under the pointer. Pressing on it and moving starts a drag: a copy follows the pointer, the word stays shaded in the sentence, and the row under the pointer, label included, turns light blue. Dropping on a row adds the word to the end of that row's comma-separated list. Dropping anywhere else flies the copy back to its word in about 0.6 seconds. A sorted word does not highlight in the sentence and can only be moved from its cell: to another row, back to its own row (nothing changes), or out of the table, which unsorts it. Two occurrences of a word, such as the two `dry`s, are separate words. There is no keyboard way to sort a word.
+
+Submit or Enter, with the focus anywhere, sends the table. Neither does anything while the table is empty, while it is the same as his last wrong try, during a drag or a flight, while a try is waiting for the server, while "Correct!" or "Next Question" is showing, or while the "Try a different task" confirmation is open. The server refuses those same submissions without using a try, and also refuses a word that is not in the sentence, a part that is not in its table, a word in two parts, and a try for a sentence that is not open.
+
+A wrong word is one he sorted into a different part from the one the task lists, including a word the task lists under no part. A missed word is one the task lists that he has not sorted. A try with neither is correct and scores 1 point on the first try, 0.5 on the second, and 0.25 on the third. It shows "Correct!", plays a `correct/` sound, and moves on after about a second. A wrong first or second try plays an `incorrect/` sound and says how many words are in the wrong row and how many he missed, such as "2 words are in the wrong row. You missed 1 word. Try again." After the first try it does not say which. After a wrong second try, every wrong word turns red where he can pick it up: a word in the wrong row in its cell, and a missed word in the sentence. Words he sorted correctly stay black and can still be moved. A red word stays red while dragged, turns royal blue when dropped anywhere other than where it was on the second try (a row, or back in the sentence), and is red again if put back there. A black word stays black wherever it goes. A reload brings the red words back. A wrong third try scores 0, plays an `incorrect/` sound, and shows "Not quite. Here is the answer."
+
+When a sentence finishes wrong, on a wrong third try or a timeout, the table shows the answer: each row lists the words that belong in it, in sentence order, in black text on pale green for a word he had in that row, pale red for a word he had in another row, and pale orange for a word he did not sort. A word he sorted that belongs in no row, such as `the` under `noun`, is struck through on pale red at the end of the row he put it in. The sentence goes back to plain black.
+
+Each sentence's deadline is fixed when the server issues it: its `timeout` plus the half-second network allowance. Tries and reloads do not move it. When the timer bar empties, the page sends the table as it stands, even when it is empty or unchanged, and a word being dragged goes back where it came from. A correct table then scores the points for the try he is on. Anything else is a timeout: 0 points, a `timeout/` sound, "Time ran out. Here is the answer.", and the answer in the table. A try the server receives after the deadline is a timeout whatever it holds, and is still recorded. After "Not quite." or a timeout, nothing can be dragged, the timer bar is hidden, and "Next Question" replaces Submit. It is greyed out for 3 seconds, then the button or Enter moves on. Left alone, the next sentence comes after 15 seconds.
+
+A page load does not close the open sentence. After a reload before its deadline, Start brings back the same sentence with the time left, the tries used, his last submitted table, and the message from his last wrong try. Sorting he had not submitted is lost. Coming back after the deadline closes it as a timeout, and the next sentence follows. Coming back more than an hour after his last activity starts a new run on the same attempt, as for arithmetic, with a new order. A give-up that S003.2 allows closes the open sentence as a timeout and is always an abandonment, whatever his points and on whichever sentence. A give-up S003.2 refuses leaves the open sentence open with its deadline still running.
+
+The run ends after the last sentence, even when a pass is out of reach. Points at or above `correct_answers_required` are a pass, which counts toward today's revision and shows "Well done". Anything less is a failure: the failure cooldown and a skip day apply, and the page says "The sentences are finished" with his points and the pass mark, such as "6.25 / 10 points. You needed 7 to pass."
+
+The page is told the sentence as words and the text between them, the part names, the try number, the time allowed and left, and the progress. While the sentence is open it is never told which part a word belongs in. Only the response to a wrong second try, and the sentence brought back after one, say which words are wrong and missed (`wrong_words` and `missed_words`). Only a finished wrong sentence's response carries the `answer`: for each word, the `part` it belongs in, the part he had it in (`placed`), and `had` (`right`, `other`, `missed`, `extra`, or `null`). The attempt `detail` holds `settings`, `runs` (each with its sentence `order`), `last_activity`, and `questions`. Each question has its `run`, its `index` in the task's `sentences`, the `sentence`, its `parts` in order, the `words` with the `part` each belongs in (or `null`), every try in `tries` (his `placements`, the `wrong` and `missed` counts, the `wrong_words` and `missed_words` by position, whether it was `expired`, and `received_ms` from issue), the `outcome`, the `correct_try`, the `points`, `allowed_ms`, and the household-local `issued` time. Attempt details keep their keys in the order written, so the stored settings keep the rows in order.
+
 ### Spelling tasks
 
 A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden/data`. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.

@@ -9,7 +9,10 @@
 // {click: id}, {wait: ms}, {type: [id, text]}, {key: [id, key]}, and
 // {snap: [id, ...], label}. A snap records whether each element is hidden,
 // disabled, and focused, and its text. Prints the posts, plays, and snaps it
-// saw, each with the fake time it happened.
+// saw, each with the fake time it happened. With `bodies`, each post also
+// carries the JSON it sent. `calls` is a list of [name, ...args] run after the
+// steps against the functions a page exposes as `window.partsOfSpeech`, each
+// printed with its result.
 
 const fs = require("fs");
 const vm = require("vm");
@@ -64,12 +67,22 @@ class Element {
     this.tabIndex = 0;
     this.style = { setProperty() {} };
     this.listeners = {};
+    this.dataset = {};
+    const classes = new Set();
+    this.classList = {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+      toggle: (name, on) => ((on === undefined ? !classes.has(name) : on) ? classes.add(name) : classes.delete(name)),
+    };
   }
   addEventListener(type, fn) {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
   }
   dispatch(type, fields = {}) {
-    const event = { type, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...fields };
+    const event = {
+      type, target: this, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...fields,
+    };
     event.preventDefault = () => {};
     for (const fn of this.listeners[type] || []) fn(event);
     if (type === "keydown") for (const fn of documentListeners[type] || []) fn(event);
@@ -79,6 +92,15 @@ class Element {
   }
   focus() {
     document.activeElement = this;
+  }
+  blur() {
+    if (document.activeElement === this) document.activeElement = null;
+  }
+  contains(other) {
+    return other === this;
+  }
+  querySelectorAll() {
+    return [];
   }
   select() {}
   setSelectionRange() {}
@@ -111,6 +133,8 @@ const document = {
   },
   querySelectorAll: () => [],
   createElement: (tag) => new Element(null, tag.toUpperCase()),
+  createTextNode: (text) => ({ textContent: text }),
+  documentElement: new Element(null, "HTML"),
   addEventListener(type, fn) {
     (documentListeners[type] = documentListeners[type] || []).push(fn);
   },
@@ -133,9 +157,11 @@ class Audio {
   pause() {}
 }
 
-async function fetch(url) {
+async function fetch(url, options) {
   const action = new URL(url, "http://page").searchParams.get("do");
-  events.push({ at: now, kind: "post", what: action });
+  const event = { at: now, kind: "post", what: action };
+  if (input.bodies) event.body = options && options.body ? JSON.parse(options.body) : null;
+  events.push(event);
   const reply = (input.replies[action] || []).shift();
   if (reply === undefined) return new Promise(() => {});
   return {
@@ -147,9 +173,11 @@ async function fetch(url) {
   };
 }
 
+const window = { location: { reload: () => events.push({ at: now, kind: "reload" }) } };
+
 vm.runInNewContext(code, {
   document,
-  window: { location: { reload: () => events.push({ at: now, kind: "reload" }) } },
+  window,
   performance: { now: () => now },
   requestAnimationFrame: () => 0,
   setTimeout,
@@ -191,6 +219,9 @@ function snap(ids) {
     if (step.snap) events.push({ at: now, kind: "snap", what: step.label || "", elements: snap(step.snap) });
     await settle();
     if (step.wait) await advance(step.wait);
+  }
+  for (const [name, ...args] of input.calls || []) {
+    events.push({ kind: "call", what: name, result: window.partsOfSpeech[name](...args) });
   }
   process.stdout.write(JSON.stringify(events));
 })();

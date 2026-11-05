@@ -19,7 +19,7 @@ As a parent, I want a quiz he has passed to stay away for a few weeks while a qu
 
 - A `parts_of_speech` task lists as many sentences as the parent wants. Each sentence has a `parts` table mapping part of speech names, chosen by the parent, to words from that sentence (S006.1).
 - Not every word has to be listed. A word that appears more than once is told apart by its occurrence number, such as `dry[1]` and `dry[2]`, or `the[1,2]` for both. Words are matched without regard to case.
-- Each sentence gets 45 seconds unless the task or the sentence sets another `timeout`. The pass mark defaults to 70% of the sentences, rounded up.
+- Each sentence gets 90 seconds unless the task or the sentence sets another `timeout`. The pass mark defaults to 70% of the sentences, rounded up.
 - A mistake in the configuration fails the policy load and names the task, the sentence, and the word.
 
 ## UC2 - Child sorts the words of each sentence
@@ -71,7 +71,7 @@ From the parent:
 - The child-facing wording uses "sort": "Sort the words into the table" and "2 words are in the wrong row. You missed 1 word. Try again." The stories say "sorted" and "not sorted" for classified and unclassified.
 - Every configured sentence is asked in each run. The run always ends after the last sentence, even when a pass is out of reach.
 - `correct_answers_required` defaults to 70% of the sentences, rounded up.
-- Each sentence has a timer, 45 seconds by default, set for the whole task or per sentence. Its deadline is fixed when the sentence is issued and does not move for tries or reloads. When the bar empties, the table is submitted as it stands. A sentence that is abandoned, or not answered by its deadline, is a timeout.
+- Each sentence has a timer, 90 seconds by default, set for the whole task or per sentence. The default was 45 seconds until 2026-11-05, when the parent found that too short. Its deadline is fixed when the sentence is issued and does not move for tries or reloads. When the bar empties, the table is submitted as it stands. A sentence that is abandoned, or not answered by its deadline, is a timeout.
 - A reload within the deadline brings back the same sentence with the tries used, his last submitted table, and its feedback.
 - The answer display shows each correct word in its row on pale green, pale red, or pale orange. A word he sorted that belongs in no row is struck through on pale red where he put it.
 - "Next Question" and Enter are ignored for the first 3 seconds of the answer display.

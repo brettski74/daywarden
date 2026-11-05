@@ -74,12 +74,18 @@ tasks:
     pass_cooldown: 21
     failure_cooldown: 1
     body:
-      sentences: ["The cat sat."]
+      sentences:
+        - sentence: "The cat sat."
+          parts: { noun: [cat] }
   parts-of-speech-2:
     type: parts_of_speech
     groups: [younger, older]
     pass_cooldown: 21
     due_date: 2026-11-09
+    body:
+      sentences:
+        - sentence: "A dog ran."
+          parts: { verb: [ran] }
 rule_sets:
   gate:
     - condition: tasks_required
@@ -93,7 +99,7 @@ def test_a_task_is_only_eligible_for_an_assigned_group(tmp_path):
     policy = _policy(HOUSE, tmp_path)
     task = policy.task("parts-of-speech-1")
     assert task is not None
-    assert task.document() == {"sentences": ["The cat sat."]}
+    assert task.document() == {"sentences": [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}]}
     assert classify_client(policy, YOUNGER) == "younger"
     assert classify_client(policy, TABLET) == "younger"
     assert classify_client(policy, OLDER) == "older"
@@ -462,12 +468,14 @@ def test_changing_max_passes_uses_the_passes_already_stored():
 
 
 def test_editing_the_body_does_not_ask_for_another_pass():
-    original = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body='{"sentences":["The cat sat."]}')
-    edited = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body='{"sentences":["A dog ran."]}')
+    cat = '{"sentences":[{"sentence":"The cat sat.","parts":{"noun":["cat"]}}]}'
+    dog = '{"sentences":[{"sentence":"A dog ran.","parts":{"verb":["ran"]}}]}'
+    original = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body=cat)
+    edited = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body=dog)
     with AttemptStore(":memory:") as store:
         store.record("younger", original.name, "pass", _at(2))
         assert not store.is_eligible(edited, "younger", _day(3))
-        assert edited.document()["sentences"] == ["A dog ran."]
+        assert edited.document()["sentences"][0]["sentence"] == "A dog ran."
 
 
 def test_the_loader_reads_dates_groups_and_an_opaque_body(tmp_path):
@@ -478,8 +486,8 @@ client_groups:
   younger:
     addresses: ["192.0.2.40"]
 tasks:
-  parts-of-speech-1:
-    type: parts_of_speech
+  worksheet-1:
+    type: worksheet
     groups: [younger, default]
     pass_cooldown: 0
     failure_cooldown: 0
@@ -499,7 +507,7 @@ rule_sets:
 """,
         tmp_path,
     )
-    task = policy.task("parts-of-speech-1")
+    task = policy.task("worksheet-1")
     assert task.groups == ("younger", "default")
     assert task.pass_cooldown == 0
     assert task.failure_cooldown == 0
@@ -514,35 +522,35 @@ rule_sets:
     ("task_body", "message"),
     [
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    max_skips: -1\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    max_skips: -1\n",
             "zero or more",
         ),
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    max_passes: -1\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    max_passes: -1\n",
             "zero or more",
         ),
         (
-            'type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    available_from: "tomorrow"\n',
+            'type: worksheet\n    group: younger\n    pass_cooldown: 21\n    available_from: "tomorrow"\n',
             "date",
         ),
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    due_date: 2026-11-05 15:00\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    due_date: 2026-11-05 15:00\n",
             "date",
         ),
         (
-            "type: parts_of_speech\n    group: older\n    pass_cooldown: 21\n",
+            "type: worksheet\n    group: older\n    pass_cooldown: 21\n",
             "unknown client group",
         ),
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21d\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21d\n",
             "whole number",
         ),
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    body: [1, 2]\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    body: [1, 2]\n",
             "mapping",
         ),
         (
-            "type: parts_of_speech\n    group: younger\n    pass_cooldown: 21\n    note: extra\n",
+            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    note: extra\n",
             "unknown setting",
         ),
     ],
@@ -570,7 +578,7 @@ def test_a_task_needs_a_type_a_pass_cooldown_and_a_client_group(tmp_path):
         "entry: open\n"
         "tasks:\n"
         "  quiz:\n"
-        "    type: parts_of_speech\n"
+        "    type: worksheet\n"
         "    group: default\n"
         "rule_sets:\n"
         "  open:\n"
@@ -580,6 +588,6 @@ def test_a_task_needs_a_type_a_pass_cooldown_and_a_client_group(tmp_path):
     with pytest.raises(ConfigError, match="pass_cooldown"):
         _policy(base, tmp_path)
     with pytest.raises(ConfigError, match="type is required"):
-        _policy(base.replace("    type: parts_of_speech\n", ""), tmp_path)
+        _policy(base.replace("    type: worksheet\n", ""), tmp_path)
     with pytest.raises(ConfigError, match="group or groups"):
         _policy(base.replace("    group: default\n", "    pass_cooldown: 1\n"), tmp_path)
