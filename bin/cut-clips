@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 # Cut one recording into named spelling clips, on the machine running Compose.
-#   cut-clips take.m4a --out ~/daywarden/spelling/alphabet   name each clip
-#   cut-clips take.m4a --list                                show the clips found
-#   cut-clips --help                                         every option
-# Runs `python -m policy.clips` here, not in a container, with the repository
-# on the module path. Uses the repository's .venv (made by `make venv`) when
-# there is one, otherwise python3. Set PYTHON to use another interpreter.
-# Works from any directory, including through a symlink in ~/bin.
+#   cut-clips take.m4a --out ~/daywarden/data/spelling/alphabet   name each clip
+#   cut-clips take.m4a --list                                     show the clips found
+#   cut-clips --help                                              every option
+# Runs `python -m policy.clips` here, not in a container. Works from any
+# directory, including through a symlink in ~/bin, and leaves relative paths
+# relative to the current directory.
+#
+# In an installed package (~/daywarden) it runs lib/ with the environment
+# install.sh built in venv/. In a clone it runs the repository with its .venv
+# (made by `make venv`) when there is one, otherwise python3. Set PYTHON to
+# use another interpreter.
 set -euo pipefail
 
 script=$(readlink -f -- "${BASH_SOURCE[0]}")
-repo=$(dirname -- "$(dirname -- "$script")")
-export PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}"
+root=$(dirname -- "$(dirname -- "$script")")
+if [ -d "$root/lib/policy" ]; then
+    export PYTHONPATH="$root/lib${PYTHONPATH:+:$PYTHONPATH}"
+    python=${PYTHON:-$root/venv/bin/python}
+    if ! "$python" -c 'import pydub, policy.clips' >/dev/null 2>&1; then
+        echo "cut-clips: its Python environment in $root/venv is missing or broken. Run install.sh again." >&2
+        exit 1
+    fi
+    exec "$python" -m policy.clips "$@"
+fi
+export PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}"
 python=python3
-[ -x "$repo/.venv/bin/python" ] && python="$repo/.venv/bin/python"
+[ -x "$root/.venv/bin/python" ] && python="$root/.venv/bin/python"
 exec "${PYTHON:-$python}" -m policy.clips "$@"

@@ -9,8 +9,9 @@ load_env = set -a; while IFS= read -r line || [ -n "$$line" ]; do case "$$line" 
 
 VENV := .venv
 VENV_PYTHON := $(VENV)/bin/python
+DIST_DIR := dist
 
-.PHONY: up down show-env venv test
+.PHONY: up down show-env venv test dist
 
 up:
 	$(load_env); mkdir -p "$$CA_VOLUME_PATH" "$${DAYWARDEN_DATA_DIR:-$$HOME/daywarden}" && docker compose up -d --wait
@@ -32,3 +33,8 @@ $(VENV)/.installed: requirements-dev.txt policy/requirements.txt
 # make test ARGS="tests/test_clips.py -q"
 test: venv
 	$(VENV_PYTHON) -m pytest $(ARGS)
+
+# Package for another machine: $(DIST_DIR)/daywarden-<version>.tar.gz.
+# Builds and saves the images. Does not change make up or .env.
+dist: venv
+	$(VENV_PYTHON) -m deploy.build --out $(DIST_DIR)

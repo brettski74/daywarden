@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -192,8 +193,12 @@ def main() -> None:
     store = PolicyStore(database, check_same_thread=False)
     policy, usage = _hierarchical(store)
     server = listen(store, policy=policy, usage=usage)
+    # Exit 0 on docker stop. A container that exits non-zero when Docker
+    # shuts down is started again by an on-failure restart policy at boot.
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     print(f"observation ledger listening on {PORT}", flush=True)
     server.serve_forever()
+    server.server_close()
 
 
 def _hierarchical(store: PolicyStore) -> tuple[Policy | None, UsageStore | None]:

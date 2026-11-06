@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Add a parent account, or replace its password, from the machine running
+# Compose.
+#   add-parent ada      prompts for ada's password
+#   add-parent --help
+# Runs `python -m policy.accounts` in the decisions container. Works from any
+# directory, including through a symlink in ~/bin. Without a terminal, the
+# password is read as one line of standard input.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+dw_prepare add-parent
+dw_require_running
+tty=()
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    tty=(-T)
+fi
+exec docker compose --project-directory "$root" exec "${tty[@]}" decisions \
+    python -m policy.accounts "$@"

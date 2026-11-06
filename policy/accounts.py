@@ -25,6 +25,10 @@ from argon2.exceptions import VerificationError, VerifyMismatchError
 from argon2.low_level import Type
 
 COOKIE_NAME = "parent_session"
+USAGE = """\
+usage: python -m policy.accounts USERNAME
+Add a parent account, or replace its password and end its sessions.
+The password is read once, from the terminal or from one line of stdin."""
 
 # OWASP minimum for Argon2id: 19 MiB, 2 iterations, parallelism 1.
 # memory_cost is kibibytes. Verification reads the parameters in the hash.
@@ -295,8 +299,11 @@ def read_password_once() -> str:
 def main(argv: list[str] | None = None) -> None:
     """Add or replace one parent username. The password is read once."""
     args = list(sys.argv[1:] if argv is None else argv)
+    if args in (["--help"], ["-h"]):
+        print(USAGE, flush=True)
+        return
     if len(args) != 1 or args[0] == "" or args[0].startswith("-"):
-        raise SystemExit("usage: python -m policy.accounts USERNAME")
+        raise SystemExit(USAGE.splitlines()[0])
     username = args[0]
     password = read_password_once()
     if password == "":

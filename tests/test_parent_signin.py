@@ -346,6 +346,23 @@ def test_the_command_stores_a_hash_and_does_not_write_the_policy_file(tmp_path):
         assert accounts.login("ada", "a-new-password", NOW) is not None
 
 
+def test_the_command_help_exits_zero_without_reading_a_password(tmp_path):
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "POLICY_DB": str(tmp_path / "policy.sqlite3")}
+    for flag in ("--help", "-h"):
+        completed = subprocess.run(
+            [sys.executable, "-m", "policy.accounts", flag],
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            env=env,
+            cwd=ROOT,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.startswith("usage: python -m policy.accounts USERNAME")
+    assert not (tmp_path / "policy.sqlite3").exists()
+
+
 def test_the_decision_and_observation_apis_do_not_record_a_pass():
     with PolicyStore(":memory:") as store:
         Accounts(store.connection)

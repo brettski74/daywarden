@@ -8,10 +8,15 @@
 set -euo pipefail
 
 script=$(readlink -f -- "${BASH_SOURCE[0]}")
-repo=$(dirname -- "$(dirname -- "$script")")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+dw_prepare rm-attempts
+dw_require_running
 tty=()
 if [ ! -t 0 ] || [ ! -t 1 ]; then
     tty=(-T)
 fi
-exec docker compose --project-directory "$repo" exec "${tty[@]}" decisions \
+exec docker compose --project-directory "$root" exec "${tty[@]}" decisions \
     python -m policy.maintenance remove-attempts "$@"
