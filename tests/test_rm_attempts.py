@@ -8,33 +8,42 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "bin" / "rm-attempts"
 
 
-def _run(tmp_path: Path, *args: str) -> list[str]:
-    """Run rm-attempts through a symlink, from another directory, with a docker that records its arguments."""
+def _run(tmp_path: Path, *args: str, running: bool = True) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run rm-attempts through a symlink, from another directory, with a docker that records its arguments.
+
+    The fake answers ``docker ps`` with a decisions container when ``running``.
+    """
     fake = tmp_path / "fake-bin"
     fake.mkdir()
     record = tmp_path / "docker-args"
     docker = fake / "docker"
-    docker.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{record}"\n', encoding="utf-8")
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [ "$1" = ps ]; then {"echo id-decisions" if running else "true"}; exit; fi\n'
+        f'printf "%s\\n" "$@" > "{record}"\n',
+        encoding="utf-8",
+    )
     docker.chmod(0o755)
     linked = fake / "rm-attempts"
     linked.symlink_to(SCRIPT)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     env = {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}"}
-    subprocess.run(
+    done = subprocess.run(
         ["rm-attempts", *args],
         cwd=elsewhere,
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
+        text=True,
         timeout=30,
-        check=True,
     )
-    return record.read_text(encoding="utf-8").splitlines()
+    return done, record.read_text(encoding="utf-8").splitlines() if record.exists() else []
 
 
 def test_the_arguments_reach_remove_attempts_in_the_decisions_container(tmp_path):
-    argv = _run(tmp_path, "--client", "younger", "--task", "two words", "--yes")
+    done, argv = _run(tmp_path, "--client", "younger", "--task", "two words", "--yes")
+    assert done.returncode == 0, done.stderr
     assert argv == [
         "compose",
         "--project-directory",
@@ -52,3 +61,10 @@ def test_the_arguments_reach_remove_attempts_in_the_decisions_container(tmp_path
         "two words",
         "--yes",
     ]
+
+
+def test_a_stopped_stack_is_reported_instead(tmp_path):
+    done, argv = _run(tmp_path, "--all", running=False)
+    assert done.returncode == 1
+    assert done.stderr == "daywarden is not running. Start it with dw up.\n"
+    assert argv == []

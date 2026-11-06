@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Start and stop the stack for the daywarden systemd user service. dw enable
+# writes the service. Run dw up and dw down instead of this.
+#   daywarden-service start   wait for Docker, then start and wait for health
+#   daywarden-service stop    stop and remove the containers
+# A user service cannot be ordered after the system's docker.service, so the
+# start waits for the daemon to answer. The user manager may stop after
+# Docker at shutdown, so a stop that cannot reach Docker does nothing.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+wait_seconds=${DAYWARDEN_DOCKER_WAIT:-120}
+
+docker_answers() {
+    timeout 5 docker info >/dev/null 2>&1
+}
+
+case "${1:-}" in
+start)
+    dw_prepare daywarden-service
+    deadline=$((SECONDS + wait_seconds))
+    until docker_answers; do
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "daywarden-service: the Docker daemon did not answer within $wait_seconds seconds, so daywarden was not started." >&2
+            echo "  Is Docker enabled at boot? Fix: sudo systemctl enable docker.service" >&2
+            exit 1
+        fi
+        sleep 1
+    done
+    dw_compose_up
+    ;;
+stop)
+    if ! docker_answers; then
+        echo "daywarden-service: the Docker daemon is not answering, so there is nothing to stop."
+        exit 0
+    fi
+    dw_prepare daywarden-service
+    timeout 100 docker compose --project-directory "$root" down --timeout 20
+    ;;
+*)
+    echo "usage: daywarden-service start|stop" >&2
+    exit 2
+    ;;
+esac

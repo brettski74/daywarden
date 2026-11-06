@@ -1,8 +1,8 @@
 Ticket: S014
 Title: Install daywarden on another machine
-Status: Refined
+Status: Done
 Story Points: 13
-Last Updated: 2026-11-05 19:45:00
+Last Updated: 2026-11-05 21:40:00
 ---
 
 # User Voice
@@ -244,3 +244,72 @@ Most of the installer's logic, and `dw enable`, `dw disable`, and `dw status`, c
 - the upgrade prompt
 - `cut-clips` paths under `~/daywarden/data`
 - pointing the child computers at the new proxy and CA
+
+# Implementation
+
+## Files Added/Changed/Removed
+
+- Added `deploy/build.py` (`make dist`) and `deploy/__init__.py`. It builds `daywarden-policy:<version>` and `daywarden-proxy:<version>`, stages the package, saves the images into it, and writes `dist/daywarden-<version>.tar.gz`.
+- Added `deploy/install.sh`, the installer that goes into the package.
+- Added `proxy/Dockerfile` and `proxy/.dockerignore`. The proxy image is the compose file's mitmproxy image with `proxy/` copied to `/opt/daywarden`.
+- Added `bin/dw`, `bin/add-parent`, `bin/daywarden-service` (what the user service's `ExecStart` and `ExecStop` run), and `bin/daywarden-lib.sh`, the shell library they share with `rm-attempts` and `install.sh`.
+- Changed `bin/rm-attempts` to use the library and to say `daywarden is not running. Start it with dw up.` when the decisions container is not running.
+- Changed `bin/cut-clips` so that in an installed package it runs `lib/` with `venv/`, and says the environment is missing or broken instead of showing a traceback. In a clone it behaves as before.
+- Changed `policy/observations.py` to shut down and exit 0 on SIGTERM.
+- Changed `policy/accounts.py` so `--help` and `-h` print the usage and exit 0.
+- Changed `Makefile` (adds `dist`), `.gitignore` (adds `dist/`), and `README.md` (adds "Installing on another machine", and mentions `bin/add-parent`).
+- Added `tests/hostfakes.py`, `tests/test_install.py`, `tests/test_dw.py`, `tests/test_dist_build.py`, and `tests/test_install_stack.py`. Changed `tests/test_rm_attempts.py` and `tests/test_parent_signin.py`.
+
+## Change Summary
+
+**One implementation in both places.** Every host command finds its root as the directory above its own `bin/`. In a clone that is the repository. In an installed package it is `~/daywarden`. So `bin/dw` in the repository and `~/daywarden/bin/dw` are the same file. The installer copies the commands into `~/daywarden/bin/` and links `~/bin/dw`, `rm-attempts`, `add-parent`, and `cut-clips` to them. A link in `~/bin` that points into `~/daywarden/bin` is how the installer knows an earlier install put it there. Anything else with one of those names stops the install. `~/daywarden/bin/` is the one path that the UC4 table does not list.
+
+**The package.** `deploy/build.py` turns the repository's `docker-compose.yml` into the installed one. It drops `build:`, sets the versioned image tags, sets `pull_policy: never` and `restart: on-failure`, removes the `./proxy` source mount, and moves the data directory default to `~/daywarden/data`. The repository's compose file, `.env`, and `make up` are unchanged. `env.sample` is the repository's `.env` with `CA_VOLUME_PATH` and `DAYWARDEN_DATA_DIR` moved under `~/daywarden`. `policy.yaml` and `bypass.txt` are copied verbatim. `ARCH` is read from the built image (`amd64` here). A full package is about 164 MB. The image layers that Docker saves are already gzip-compressed, so xz was tried and was only 0.4% smaller.
+
+**The installer** refuses root, runs every check, prints each problem with its `pacman` or `systemctl` fix, and exits with nothing changed when a required check fails. When daywarden is running it asks before restarting, and a no stops it with nothing changed. It then loads the images, writes the layout, builds the venv, rewrites the user service when daywarden is enabled, restarts with `dw down` and `dw up` when it was running, and asks about start at boot on a first install. The summary lists what was created and kept, the names added and skipped, and the warnings again.
+
+**Qualified names.** For each `search` and `domain` suffix in `/etc/resolv.conf`, `<host>.<suffix>` is looked up with `timeout 2 getent ahosts`. It is added when an address it resolves to is on a non-loopback interface (`ip -o addr`). Otherwise it is skipped with "does not resolve", "the lookup took longer than 2 seconds", "resolves only to loopback (...)", or "resolves to ..., not this machine". The policy-server lines in `bypass.txt` are found as the lines that equal one of the build machine's names in the package's `PARENT_NAMES`. The first one becomes this machine's names. On garden itself the installer added `garden.bakuna.net`.
+
+**dw.** Each command is a `cmd_<name>` function in a `COMMANDS` list, so a new command is a new function and a new entry. `up` creates the CA and data directories, runs `docker compose up -d --wait`, and on failure names each unhealthy service and prints the last lines the first failed service logged. While daywarden is enabled, `up` also runs `systemctl --user start` and `down` runs `systemctl --user stop`, so the service state stays accurate. Compose still runs directly first, so the parent sees the same output and errors either way, and a missing service is brought back without restarting the healthy ones. The user service is `Type=oneshot` with `RemainAfterExit=yes`. `daywarden-service start` waits up to 120 seconds for Docker. `daywarden-service stop` does nothing, and succeeds, when Docker is not answering.
+
+**Restart policy.** The installed stack uses `on-failure`. The end-to-end test confirms that after `docker stop` every container exits 0. On-failure does not restart a container that exited 0, so Docker does not start daywarden by itself when it starts. The decisions service and mitmproxy already exited 0. The observations service needed a SIGTERM handler. Docker 29 treats `docker kill` as a manual stop under every restart policy, including the development stack's `unless-stopped`, so a `docker kill` container stays down. A real crash, such as SIGKILL to the container's main process, is restarted. The acceptance tests below use the crash.
+
+**Found while testing.** The shipped `policy.yaml` is garden's, and its `spelling` task has `revision_required: 10`. On a new machine with no recordings, the decisions service refuses that policy (`revision_dir: ... is not a directory`), so the first `dw up` fails until ten revision words and the alphabet are recorded, or the task is edited or removed. `dw up` now shows that log line. The end-to-end test records the clips first.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S014
+
+Use a target Arch machine on the LAN with Docker and Compose, called `tundra` below. Build on garden.
+
+1. On garden, run `make dist`. Confirm it writes `dist/daywarden-<YYYYMMDD-HHMMSS>.tar.gz`, that `git status` does not list `dist/`, and that `make up` still starts the development stack (`docker compose ps` healthy).
+2. Copy the tarball to `tundra`, unpack it, and run `./install.sh` from inside the directory, as your own user. Answer Enter to the boot question. Confirm that `~/daywarden` holds `docker-compose.yml`, `VERSION`, `.env`, `.env.sample`, `config/policy.yaml` (the same as garden's `config/policy.yaml`), `config/*.sample`, `ca/`, `data/`, `bin/`, `lib/`, and `venv/`. Confirm that `~/bin` has links for `dw`, `rm-attempts`, `add-parent`, and `cut-clips`, that `docker images` shows both versioned images, and that no daywarden container is running.
+3. Check `PARENT_NAMES` in `~/daywarden/.env` and the policy-server lines of `~/daywarden/config/bypass.txt`. Confirm they name `tundra` and each `tundra.<suffix>` the summary said it added, and that the summary lists every skipped name with its reason.
+4. Record ten revision words and the alphabet with `cut-clips ... --out ~/daywarden/data/spelling/revision` and `.../alphabet`, or remove the `spelling` task from `~/daywarden/config/policy.yaml`. Then, from `/tmp`, run `dw up`. Confirm it reports all services healthy without pulling or building anything. (Without the recordings, confirm `dw up` fails and shows the `revision_dir` log line.)
+5. Point a child computer at `tundra:8080`, with the new CA from `~/daywarden/ca/mitmproxy-ca-cert.pem`. Confirm requests are allowed, denied, and redirected as the installed `policy.yaml` says.
+6. From any directory, run `add-parent ada` and type a password. Open `https://tundra:8090/usage` in a browser that trusts the new CA. Confirm there is no certificate warning and that `ada` can sign in. Repeat with each added `https://tundra.<suffix>:8090/usage`.
+7. Run `dw status` with the stack up. Confirm it shows the version, `Start at boot: disabled`, and all three services healthy, and exits 0 (`echo $?`). Run `dw down`, then `dw status`. Confirm all three are not running and the exit status is non-zero.
+8. Run `dw up` again. Confirm `ada` can still sign in, the attempts from earlier are still at `/attempts`, and `mitmproxy-ca-cert.pem` is unchanged.
+9. Run `dw enable` with daywarden stopped. Confirm it reports turning on lingering, writing `~/.config/systemd/user/daywarden.service`, and enabling, that daywarden is still stopped, and that `dw status` shows `Start at boot: enabled`. Run `dw enable` again and confirm it says nothing changed.
+10. Reboot `tundra` and do not log in. Confirm the child computer is filtered. Log in and confirm `dw status` shows all three healthy.
+11. Run `dw down`, reboot, and confirm daywarden is up again.
+12. With daywarden running, run `dw disable`. Confirm it keeps running, the output gives `loginctl disable-linger`, and `loginctl show-user $USER -p Linger` still says `yes`. Run `dw disable` again and confirm it says nothing changed. Reboot and confirm daywarden is not running until `dw up`.
+13. With daywarden running and disabled, run `dw enable`. Confirm `docker ps` shows the same container start times as before. Then run `dw down` and confirm no daywarden container is left.
+14. With daywarden enabled and running, crash the proxy with `sudo kill -9 $(docker inspect -f '{{.State.Pid}}' daywarden-proxy-1)`. Confirm it comes back by itself within a few seconds. `docker kill` does not work for this check, as the Change Summary explains. Then `docker stop daywarden-observations-1`, run `dw up`, and confirm only observations is started.
+15. Edit `~/daywarden/.env`, `config/policy.yaml`, and `config/bypass.txt`. Build a newer package on garden and install it with daywarden stopped. Confirm it does not ask to restart and does not start daywarden, the three files are byte-for-byte unchanged, and the `.sample` files, compose file, `VERSION`, and scripts are new.
+16. Start daywarden and install a newer package again. Answer `n`, then try again and press Enter. Each time, confirm it stops with an error, and that `VERSION`, the compose file, and the running containers are unchanged. Install again and answer `y`. Confirm it restarts on the new images (`docker ps` image tags) and reports healthy.
+17. With daywarden enabled, install a newer package. Confirm it does not ask about boot, and that daywarden starts at the next boot.
+18. Run `./install.sh` with the Docker daemon stopped (`sudo systemctl stop docker.service docker.socket`). Confirm it reports the problem with the fix and that `~/daywarden` and `~/bin` are unchanged. Repeat with `docker-compose` also uninstalled and confirm both problems are reported in one run. Repeat as a user outside the `docker` group.
+19. Put your own file at `~/bin/dw` and run `./install.sh`. Confirm it names the file, exits with an error, and changes nothing.
+20. Run `sudo ./install.sh`. Confirm it refuses.
+21. Change the package's `ARCH` file to `arm64` and run `./install.sh`. Confirm it refuses and names both architectures.
+22. Disable `docker.service` and `docker.socket`, start something on port 8080 (`python -m http.server 8080`), and remove `~/bin` from `PATH`. Run `./install.sh`. Confirm a warning with advice for each, that the install finishes, and that `~/.bashrc` is unchanged. Then run `dw enable` and confirm it warns about Docker at boot. Reboot, and confirm `dw status` shows the last start failed and `journalctl --user -u daywarden` says the Docker daemon did not answer.
+23. Run `./install.sh` in a `su - youruser` session. Confirm it warns that the user's systemd manager cannot be reached and skips the boot question. Confirm `dw enable` there exits with the same advice.
+24. Set up a resolv.conf suffix whose `tundra.<suffix>` resolves only to another machine, and another under which it resolves only to `127.0.1.1` through `/etc/hosts`. Do a first install into a fresh account. Confirm both are left out and listed as skipped. With the network unplugged, confirm the install finishes promptly with only `tundra`, `localhost`, and `127.0.0.1`.
+25. From any directory, run `cut-clips --help`. Confirm it matches the repository's `bin/cut-clips --help`. Run `cut-clips take.m4a --list`, then `cut-clips take.m4a --play --out ~/daywarden/data/spelling/current`. Confirm each clip plays before its name is asked, and that a spelling quiz uses the clips on its next run without a restart.
+26. Run `./install.sh` again with the same package. Confirm it says the cut-clips environment is up to date. Install a package whose `policy/requirements.txt` changed and confirm it rebuilds it.
+27. With `python` uninstalled, run `./install.sh`. Confirm the warning and `pacman` command, that the install finishes, and that `dw up` works. Confirm `cut-clips` says its environment is missing and to run `install.sh` again.
+28. With `ffmpeg` uninstalled, run `./install.sh` and confirm the warning. Confirm `cut-clips take.m4a --list` gives the `libopus` message and no traceback.
+29. With PyPI blocked, do a first install. Confirm the pip failure is shown, everything else is installed, and it ends with a warning to run `install.sh` again. Unblock it, run `./install.sh` again, and confirm `cut-clips --help` works.
+30. Run `dw`, `dw help`, `dw --help`, and `dw -h`. Confirm each prints the usage with `up`, `down`, `status`, `enable`, and `disable`, and exits 0. Run `dw frobnicate` and confirm the usage goes to standard error with exit status 2. Move `~/daywarden/.env` away, run `dw up`, and confirm it says to run `install.sh` again.
+31. With daywarden stopped, run `rm-attempts --all` and `add-parent ada`. Confirm each says `daywarden is not running. Start it with dw up.` With it running, confirm `rm-attempts --help` shows the S010.1 options and `add-parent --help` shows its usage.

@@ -97,6 +97,8 @@ Add a parent account after the stack is up. The password is read once. It is sto
 docker compose exec decisions python -m policy.accounts ada
 ```
 
+`bin/add-parent ada` does the same from any directory, and is what an installed daywarden uses (see [Installing on another machine](#installing-on-another-machine)).
+
 Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the page stays closed and shows no usage. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup. The attempt review at `/attempts` uses the same sign-in. Choose a client group to see that group's attempts, newest first: the task, the household-local start and finish, the outcome, and the duration. Open an attempt to read the answers that were stored. Record a parent check there to store a pass for a client group. The child has no page that records one.
 
 ## Certificate authority
@@ -208,6 +210,73 @@ cut-clips words-1.m4a words-2.m4a sentences.m4a --out ~/daywarden/spelling/curre
 ```
 
 Each recording starts with `Recording 2 of 3: words-2.m4a` and its own loudness line, clip count, and summary. The last line totals the clips written from all of them. With `--list`, each recording is listed under its own heading. If any recording does not exist, the tool stops before cutting anything, so a typo does not cost you a session of naming. A file ffmpeg cannot read is reported and skipped, and the rest are still cut, with an exit status of 1. Ctrl-C or end of input stops the whole run and says how many recordings were not cut. The pool warnings are checked once, after the last recording, so a `rope.sentence` from the first recording is not reported when `rope` comes in a later one.
+
+## Installing on another machine
+
+The stack can run on another Arch Linux machine on the local network, without a clone of this repository or a container registry. Build a package here, on a machine with Docker:
+
+```sh
+make dist
+```
+
+That builds the policy image and a proxy image with the addon copied in, saves both into the package, and writes `dist/daywarden-<version>.tar.gz`. The version is the build time, such as `20261105-184500`, and the images are tagged with it. The package holds the repository's `config/policy.yaml` and `config/bypass.txt` as they are now, and `.env` with the CA and data directories moved under `~/daywarden`. It does not change `make up` or this repository's `.env`, and it does not check for uncommitted changes.
+
+Copy the tarball to the target, unpack it, and run the installer as the user who will run daywarden, not as root:
+
+```sh
+scp dist/daywarden-20261105-184500.tar.gz tundra:
+ssh tundra
+tar -xzf daywarden-20261105-184500.tar.gz
+cd daywarden-20261105-184500
+./install.sh
+```
+
+The installer checks everything first and changes nothing if something it needs is missing. Docker, the `docker compose` plugin, a running Docker daemon this user can reach without `sudo`, a package built for this machine's CPU architecture, and no file of its own in `~/bin` named like one of the commands below are required. Each problem is printed with the command that fixes it, such as `sudo pacman -S docker-compose`. Docker not enabled at boot, no user systemd manager (in a `su` session), a port from `.env` already in use, `~/bin` missing from the `PATH`, and a missing `python3` or Opus-capable `ffmpeg` are warnings: the install carries on. It never edits `~/.bashrc`. It then loads the images and lays out:
+
+| Path | On install |
+| --- | --- |
+| `~/daywarden/docker-compose.yml`, `VERSION` | Always replaced |
+| `~/daywarden/.env` | Created only if missing. Never overwritten |
+| `~/daywarden/config/policy.yaml`, `config/bypass.txt` | Created only if missing. Never overwritten |
+| `~/daywarden/.env.sample`, `config/*.sample` | Always replaced with the package's copy |
+| `~/daywarden/ca/` | The CA, created by the first `dw up` |
+| `~/daywarden/data/` | Recordings, such as `data/spelling/current` |
+| `~/daywarden/bin/`, `lib/` | Always replaced. The commands, and the Python source `cut-clips` runs |
+| `~/daywarden/venv/` | The `cut-clips` environment, built from PyPI |
+| `~/bin/dw`, `rm-attempts`, `add-parent`, `cut-clips` | Links into `~/daywarden/bin` |
+
+On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.bakuna.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its proxy port and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
+
+### Running it with dw
+
+```sh
+dw up          # start, and wait until every service is healthy
+dw status      # version, start at boot, and each service. Exits 0 only when all are healthy
+dw down        # stop and remove the containers. The CA, database, configuration, and recordings stay
+add-parent ada
+```
+
+`dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts` and `add-parent` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
+
+### Start at boot
+
+`dw enable` writes the systemd user service `~/.config/systemd/user/daywarden.service`, enables it, and turns on lingering for this user (`loginctl enable-linger`), so daywarden starts at boot without anyone logging in. No `sudo` is needed. It does not start a stopped daywarden, and a running one keeps running and is tracked by the service. While enabled, `dw up` and `dw down` also start and stop the service. At boot the service waits up to two minutes for Docker. If Docker does not answer, `dw status` says the last start failed and `journalctl --user -u daywarden` says why. Docker itself must start at boot: `sudo systemctl enable docker.service`. A container that crashes comes back by itself, but Docker does not start daywarden on its own after a reboot: that is only up to `dw enable`.
+
+`dw disable` stops daywarden starting at boot. It does not stop a running daywarden, and it leaves lingering on, because other user services may need it. `loginctl disable-linger` turns that off. A first install asks whether to enable start at boot. An upgrade keeps the current setting.
+
+### Upgrading
+
+Run the newer package's `./install.sh` the same way. `.env`, `policy.yaml`, and `bypass.txt` are kept byte for byte, and the new copies land beside them as `.sample` files, so `diff ~/daywarden/.env ~/daywarden/.env.sample` shows what changed. If daywarden is running, the installer asks `Daywarden is running. Restart it to finish the upgrade? [y/N]` before it changes anything. Anything but `y` stops with nothing changed. A yes installs the files, then runs `dw down` and `dw up`.
+
+### Cutting clips on the installed machine
+
+`cut-clips` takes the same options as `bin/cut-clips`, with the recordings under `~/daywarden/data`. Clips are used from the next quiz run, without a restart:
+
+```sh
+cut-clips take.m4a --out ~/daywarden/data/spelling/current --play
+```
+
+It runs in `~/daywarden/venv`, which the installer builds with `python3 -m venv` and rebuilds only when the requirements or the system Python version change. If that environment is missing, for example because PyPI could not be reached, `cut-clips` says so: run `install.sh` again.
 
 ## Tests
 

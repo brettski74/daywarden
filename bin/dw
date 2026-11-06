@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# Run daywarden on this machine.
+#   dw up        start it and wait until every service is healthy
+#   dw down      stop it and remove its containers
+#   dw status    version, start at boot, and the health of each service
+#   dw enable    start it at boot, through a systemd user service
+#   dw disable   do not start it at boot
+# Acts on the directory above this script's own: ~/daywarden for an
+# installed package, or the repository in a clone. Works from any
+# directory, including through a symlink in ~/bin.
+#
+# Each command is a cmd_<name> function listed in COMMANDS. A new command
+# is a new function and a new entry. Commands parse their own switches.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+COMMANDS=(up down status enable disable help)
+
+usage() {
+    cat <<EOF
+usage: dw COMMAND
+
+Commands:
+  up       start daywarden and wait until every service is healthy
+  down     stop daywarden and remove its containers. The CA, the database,
+           the configuration, and the recordings stay
+  status   show the version, whether daywarden starts at boot, and the
+           health of each service. Exits 0 only when all are healthy
+  enable   start daywarden at boot, without anyone logging in
+  disable  do not start daywarden at boot. A running daywarden keeps running
+  help     show this help
+
+daywarden is in $root.
+EOF
+}
+
+no_arguments() {
+    if [ $# -gt 0 ]; then
+        echo "dw: $COMMAND takes no arguments." >&2
+        usage >&2
+        exit 2
+    fi
+}
+
+cmd_help() {
+    usage
+}
+
+cmd_up() {
+    no_arguments "$@"
+    dw_prepare dw
+    dw_compose_up
+    if dw_user_manager && dw_enabled; then
+        if ! systemctl --user start "$DW_UNIT"; then
+            echo "dw: the daywarden user service did not start. See journalctl --user -u daywarden." >&2
+            exit 1
+        fi
+    fi
+    echo "daywarden is up."
+}
+
+cmd_down() {
+    no_arguments "$@"
+    dw_prepare dw
+    dw_compose down
+    if dw_user_manager && [ "$(systemctl --user is-active "$DW_UNIT" 2>/dev/null)" = active ]; then
+        systemctl --user stop "$DW_UNIT"
+    fi
+    echo "daywarden is down."
+}
+
+cmd_status() {
+    no_arguments "$@"
+    dw_prepare dw
+    local version="not an installed package" service state healthy=0 boot result
+    [ -f "$root/VERSION" ] && version=$(<"$root/VERSION")
+    echo "daywarden $version, in $root"
+    if ! dw_user_manager; then
+        echo "Start at boot: unknown. This user's systemd manager cannot be reached."
+    else
+        boot=disabled
+        dw_enabled && boot=enabled
+        echo "Start at boot: $boot"
+        result=$(systemctl --user show -p ActiveState --value "$DW_UNIT" 2>/dev/null || true)
+        if [ "$result" = failed ]; then
+            echo "Last start through the user service: failed. See journalctl --user -u daywarden."
+        else
+            echo "Last start through the user service: no failure"
+        fi
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "The Docker daemon is not answering."
+    fi
+    while IFS=$'\t' read -r service state; do
+        printf '  %-13s %s\n' "$service" "$state"
+        [ "$state" = healthy ] && healthy=$((healthy + 1))
+    done < <(dw_service_states)
+    [ "$healthy" -eq "${#DW_SERVICES[@]}" ]
+}
+
+cmd_enable() {
+    no_arguments "$@"
+    dw_prepare dw
+    local user changed=0
+    user=$(dw_user)
+    if ! dw_user_manager; then
+        echo "dw: daywarden cannot be enabled at boot." >&2
+        dw_user_manager_advice >&2
+        exit 1
+    fi
+    if ! dw_docker_starts_at_boot; then
+        echo "Warning: neither docker.service nor docker.socket is enabled at boot, so daywarden cannot start at boot."
+        echo "  Fix: sudo systemctl enable docker.service"
+    fi
+    if [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null)" != yes ]; then
+        if ! loginctl enable-linger "$user"; then
+            echo "dw: lingering could not be turned on for $user, so daywarden would not start until $user logs in." >&2
+            echo "  Fix: sudo loginctl enable-linger $user" >&2
+            exit 1
+        fi
+        echo "Turned on lingering for $user, so user services start at boot without anyone logging in."
+        changed=1
+    fi
+    if dw_write_unit; then
+        systemctl --user daemon-reload
+        echo "Wrote $(dw_unit_path)."
+        changed=1
+    fi
+    if ! dw_enabled; then
+        systemctl --user enable --quiet "$DW_UNIT"
+        echo "Enabled daywarden at boot."
+        changed=1
+    fi
+    if dw_running; then
+        if [ "$(systemctl --user is-active "$DW_UNIT" 2>/dev/null)" != active ]; then
+            systemctl --user start "$DW_UNIT"
+            echo "daywarden is running, and the user service now tracks it. No container was restarted."
+            changed=1
+        fi
+    elif [ "$changed" -eq 1 ]; then
+        echo "daywarden was not started now. Run dw up to start it."
+    fi
+    if [ "$changed" -eq 0 ]; then
+        echo "daywarden is already enabled at boot. Nothing changed."
+    fi
+}
+
+cmd_disable() {
+    no_arguments "$@"
+    dw_prepare dw
+    local user
+    user=$(dw_user)
+    if ! dw_user_manager; then
+        echo "dw: daywarden cannot be disabled at boot." >&2
+        dw_user_manager_advice >&2
+        exit 1
+    fi
+    if ! dw_enabled; then
+        echo "daywarden is already disabled at boot. Nothing changed."
+        return
+    fi
+    systemctl --user disable --quiet "$DW_UNIT"
+    echo "Disabled daywarden at boot. A running daywarden keeps running until dw down."
+    echo "Lingering stays on for $user, because other user services may rely on it. To turn it off: loginctl disable-linger"
+}
+
+COMMAND=${1:-help}
+case "$COMMAND" in
+--help | -h) COMMAND=help ;;
+esac
+for known in "${COMMANDS[@]}"; do
+    if [ "$known" = "$COMMAND" ]; then
+        [ $# -gt 0 ] && shift
+        "cmd_$COMMAND" "$@"
+        exit
+    fi
+done
+echo "dw: unknown command: $COMMAND" >&2
+usage >&2
+exit 2

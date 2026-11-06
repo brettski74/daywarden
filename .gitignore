@@ -2,6 +2,8 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .venv/
+# make dist
+dist/
 
 # The CA private key is generated on first start. Do not commit it.
 data/ca/*
