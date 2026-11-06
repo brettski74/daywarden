@@ -29,7 +29,7 @@ bucket_length: 3m
 client_groups:
   younger:
     # PLACEHOLDER: replace with this computer's reserved IP or DNS name.
-    addresses: ["192.168.12.29"]
+    addresses: ["192.168.12.29", "tundra"]
 
 # The older child is not enrolled. To enrol them, add a client group, set
 # their reserved address, and add their computer to the proxy alias on the
@@ -206,8 +206,8 @@ tasks:
     pass_cooldown: 1
     body:
       operation: addition
-      max_timeout: 10s
-      min_timeout: 7s
+      max_timeout: 30s
+      min_timeout: 20s
       correct_answers_required: 9
       first:
         - { from: 4, to: 6, weight: 10 }

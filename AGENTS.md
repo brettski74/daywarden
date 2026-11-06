@@ -86,19 +86,38 @@ Story point values should be estimated based on:
 2.3 A story valued at (m+n) story points is roughly equivalent in implementation and testing effort to implementing and testing a story valued at m story point plus another story valued at n story points.
 3. Reasonable relative consistency of level of effort estimation is the goal, not extreme precision.
 
+### Reference size for one story
+
+S006.1, S006.2, and S006.3 were implemented one after another in a single session, and together they used about 40% of
+the context window. Together they were 14 points (3 + 8 + 3) and 39 acceptance criteria. They covered a new task type
+and its policy-file checks, a drag-and-drop quiz page with a timer, scoring, and resume, and the red marks and answer
+table after a wrong try. That work should have been one story, and one story can hold somewhat more than that. Size
+single stories against this reference. 13 and 21 are normal sizes for one story. 1 to 5 points is a small change.
+
 ## Acceptance through external interfaces
 
 Code review is rare. The reviewer accepts a story through the interfaces a user can see: the policy file and other configuration, files in the data directory, the web pages (the child's quiz pages, the parent pages, and what the proxy allows, blocks, or redirects), and the command-line tools such as `bin/daywarden` and `bin/cut-clips`. Write acceptance criteria and suggested acceptance test cases as checks through those interfaces: what to put in the configuration, what to do in the browser or on the command line, and what should be seen. Do not write them as SQL queries, scripts, or calls to internal APIs. Database changes and internal behaviour are accepted through the features that use them. The automated tests cover the internals.
 
 ## When to make a story an epic
 
-Split a story into an epic with child stories when any of these is true:
+Keep work in one story by default. Parts that could be accepted separately are not, on their own, a reason to split. One
+story with a longer acceptance list is cheaper to implement and review than several small ones. Measure size against
+the reference in "Reference size for one story" above.
 
-1. Parts of it can be accepted separately. Each child has its own acceptance tests through the external interfaces above.
-2. One part carries a risk the rest does not, and that risk is worth seeing working before the rest is built. Examples are a change to what the proxy allows or redirects, or an upgrade of stored household data.
-3. Its acceptance test list would go beyond about 15 to 20 cases.
-4. It is larger than 13 points. A 21-point estimate is always an epic.
-5. One implementation session would struggle to hold it. As a guide, finish a story within about half of the model's context window. Tool output, test runs, browser snapshots, and re-reading edited files use far more context than reading the code once. Split when the code and tests to read and change go beyond about 150k tokens, or when the work needs more than two or three separate rounds of browser checking.
+Split a story into an epic with child stories only when any of these is true:
+
+1. It is larger than 21 points. A 34-point estimate is always an epic.
+2. One implementation session would struggle to hold it. As a guide, finish a story within about 60% of the model's
+   context window. The reference work used about 40%. Tool output, test runs, browser snapshots, and re-reading edited
+   files use far more context than reading the code once. Split when the code, tests, and browser checking clearly go
+   beyond about one and a half times the reference work.
+3. Its acceptance test list would go beyond about 50 cases.
+4. One part carries a risk the rest does not, and that risk is worth seeing working and accepted before the rest is
+   built. Examples are a change to what the proxy allows or redirects, or an upgrade of stored household data.
+5. Some of the work is not wanted yet, such as a feature planned for a later release. Put it in a later child instead of
+   leaving it out.
+
+When an epic is needed, make each child as large as these rules allow. Do not split it into many small children.
 
 Do not split, even when the story is large, when:
 
