@@ -234,14 +234,14 @@ def _document(session: Session, config: Mapping, note: str) -> str:
 
 
 _STYLE = """\
-#number { font-size: 1.1rem; color: #555; }
+#number { margin-left: auto; font-size: 1.1rem; color: #555; }
 #ask .title { font-size: 3rem; margin: 0 0 0.4rem; }
 #ask .instruction { font-size: 1.8rem; color: #555; margin: 0 0 2.5rem; }
 #start-number { font-size: 1.4rem; color: #555; }
 .row { display: flex; flex-wrap: nowrap; justify-content: center; align-items: flex-start; gap: 0.35em; margin: 0 0 1rem;
-  font-size: min(3.2rem, calc(92vw / (var(--n) * (var(--w) * 0.62 + 1.25)))); }
+  font-size: min(3.2rem, calc(92vw / (var(--n) * (var(--w) * 0.75 + 1.25)))); }
 .cell { display: flex; flex-direction: column; align-items: center; }
-.box { box-sizing: content-box; width: calc(var(--w) * 0.62em); height: 1.25em; line-height: 1.25em; font: inherit; font-weight: bold;
+.box { box-sizing: content-box; width: calc(var(--w) * 0.75em); height: 1.25em; line-height: 1.25em; font: inherit; font-weight: bold;
   font-variant-numeric: tabular-nums; text-align: center; padding: 0.15em 0.25em; border: 3px solid #888; border-radius: 8px; background: #fff; }
 .box.given { color: #000; background: #f1f1ea; border-color: #bbb; }
 .box.entry { color: #4169E1; }

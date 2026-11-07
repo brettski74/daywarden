@@ -244,7 +244,7 @@ def _document(session: Session, config: Mapping, note: str) -> str:
     return document(
         title=LABEL,
         config=config,
-        header='<span id="progress" hidden></span>',
+        header='<span id="progress" hidden></span>\n<span></span>',
         start=(
             f"<h1>{_e(LABEL)}</h1>\n"
             f'{note_html(note)}<p id="start-points">{_e(points)}</p>\n'

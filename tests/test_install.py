@@ -45,7 +45,7 @@ def _compose_verbs(host):
     for call in host.calls("docker"):
         if call[1:2] == ["compose"]:
             rest = call[2:]
-            while rest and rest[0] == "--project-directory":
+            while rest and rest[0] in ("--project-directory", "--progress"):
                 rest = rest[2:]
             verbs.append(rest[0])
     return verbs
@@ -232,7 +232,7 @@ def test_accepting_the_restart_installs_then_restarts_the_stack(host, package, n
     done = host.install(newer, input="y\n")
     assert done.returncode == 0, done.stderr + done.stdout
     assert (host.root / "VERSION").read_text(encoding="utf-8").strip() == NEWER
-    assert [verb for verb in _compose_verbs(host) if verb in ("up", "down")] == ["down", "up"]
+    assert [verb for verb in _compose_verbs(host) if verb in ("run", "up", "down")] == ["run", "down", "up"]
     assert f"daywarden restarted on {NEWER}, and every service is healthy." in done.stdout
     assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
 

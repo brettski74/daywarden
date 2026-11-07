@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start and stop the stack for the daywarden systemd user service. dw enable
 # writes the service. Run dw up and dw down instead of this.
-#   daywarden-service start   wait for Docker, then start and wait for health
+#   daywarden-service start   wait for Docker, check the policy, then start
+#                             and wait for health
 #   daywarden-service stop    stop and remove the containers
 # A user service cannot be ordered after the system's docker.service, so the
 # start waits for the daemon to answer. The user manager may stop after
@@ -31,7 +32,7 @@ start)
         fi
         sleep 1
     done
-    dw_compose_up
+    dw_compose_up "daywarden was not started."
     ;;
 stop)
     if ! docker_answers; then

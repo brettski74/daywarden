@@ -1,7 +1,9 @@
 """S006.2: the parts of speech quiz, judged and timed by the server."""
 
+import html
 import json
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -185,6 +187,41 @@ def test_the_start_screen_shows_points_out_of_the_sentences_and_the_pass_mark(tm
     assert "7 points to pass" in page.body
     assert "Sentence 1 of 10" in page.body
     assert "Sort the words into the table" in page.body
+
+
+CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+
+_MEASURE_GIVE_UP = """\
+<script>
+const box = document.getElementById("give-up").getBoundingClientRect();
+document.getElementById("out").textContent = JSON.stringify({left: box.left, right: box.right, window: innerWidth});
+</script>
+"""
+
+
+@pytest.mark.skipif(CHROMIUM is None, reason="needs Chromium to lay out the page")
+def test_try_a_different_task_sits_at_the_top_right_of_the_start_screen(tmp_path):
+    body = Quiz(tmp_path).open(START).body
+    page = tmp_path / "start.html"
+    page.write_text(body.replace("</body>", f'<pre id="out"></pre>{_MEASURE_GIVE_UP}</body>'), encoding="utf-8")
+    run = subprocess.run(
+        [
+            CHROMIUM,
+            "--headless",
+            "--disable-gpu",
+            f"--user-data-dir={tmp_path / 'chromium'}",
+            "--window-size=1280,800",
+            "--dump-dom",
+            page.as_uri(),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    box = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', run.stdout, re.S).group(1)))
+    assert box["left"] > box["window"] / 2, box
+    assert box["window"] - box["right"] < 40, box
 
 
 def test_the_question_has_words_punctuation_and_parts_but_never_the_answer(tmp_path):

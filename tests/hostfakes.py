@@ -50,19 +50,63 @@ def save():
     state_path.write_text(json.dumps(state))
 
 
+def in_container(sub, rest):
+    """docker compose exec or run of a policy module, as the policy image would answer."""
+    options = [arg for arg in rest if arg.startswith("-")]
+    words = [arg for arg in rest if not arg.startswith("-")]
+    service, command = words[0], rest[rest.index(words[0]) + 1:]
+    if sub == "exec" and service not in state["running"]:
+        print(f"service {service!r} is not running", file=sys.stderr)
+        sys.exit(1)
+    if sub == "run":
+        state.setdefault("runs", []).append(service)
+        save()
+    if command[:3] == ["python", "-m", "policy.check"]:
+        errors = state.get("policy_errors", [])
+        if errors:
+            refused = command[command.index("--refused") + 1] if "--refused" in command else ""
+            count = f"dw: the policy has {len(errors)} error{'' if len(errors) == 1 else 's'}."
+            print(f"{count} {refused}".strip(), file=sys.stderr)
+            for error in errors:
+                print(error, file=sys.stderr)
+            sys.exit(1)
+        if "--quiet" not in command:
+            print("household timezone Australia/Sydney")
+    elif command[:3] == ["python", "-m", "policy.reload"]:
+        reloading = command[command.index("--service") + 1]
+        refused = state.get("reload_refused", {}).get(reloading)
+        if refused:
+            print(refused, file=sys.stderr)
+            sys.exit(1)
+        state.setdefault("reloaded", []).append(reloading)
+        save()
+        if reloading == "decisions":
+            print("household timezone Australia/Sydney")
+
+
 def compose(args):
-    while args and args[0] in ("--project-directory", "-p", "-f"):
+    while args and args[0] in ("--project-directory", "-p", "-f", "--progress"):
         args = args[2:]
     sub, rest = (args[0], args[1:]) if args else ("", [])
     if sub == "version":
         print("Docker Compose version v5.4.0")
     elif sub == "up":
         failing = state.get("up_fails", {})
+        recreated = state.setdefault("recreated", {})
+        for service in ("decisions", "observations", "proxy"):
+            if service not in state["running"]:
+                recreated[service] = recreated.get(service, 0) + 1
+                state.setdefault("running_hash", {}).pop(service, None)
         state["running"] = {service: failing.get(service, "healthy") for service in ("decisions", "observations", "proxy")}
         save()
         if failing:
             print("container is unhealthy", file=sys.stderr)
             sys.exit(1)
+    elif sub == "config" and rest[:1] == ["--hash"]:
+        for service in ("decisions", "observations", "proxy"):
+            print(f"{service} {state.get('config_hash', {}).get(service, 'hash-' + service)}")
+    elif sub in ("exec", "run"):
+        in_container(sub, rest)
     elif sub == "down":
         state["running"] = {}
         save()
@@ -76,8 +120,6 @@ def compose(args):
             print(f"{service}\texited\t")
     elif sub == "logs":
         print(state.get("logs", {}).get(rest[-1], f"{rest[-1]} said nothing"))
-    elif sub == "exec":
-        pass
     else:
         sys.exit(f"fake docker compose: {sub} is not faked")
 
@@ -114,7 +156,10 @@ def docker():
             if label.startswith("label=com.docker.compose.service="):
                 wanted = label.split("=", 2)[2]
                 running = {s: h for s, h in running.items() if s == wanted}
-        if "--format" in args:
+        if "--format" in args and "config-hash" in args[args.index("--format") + 1]:
+            for service in running:
+                print(f"{service}\t{state.get('running_hash', {}).get(service, 'hash-' + service)}")
+        elif "--format" in args:
             for service in running:
                 print(state.get("ports", {}).get(service, "8090/tcp"))
         else:

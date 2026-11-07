@@ -1,8 +1,8 @@
 Ticket: S016
 Title: Reload the configuration and restart daywarden with dw
-Status: Draft
+Status: Done
 Story Points: 21
-Last Updated: 2026-11-06 22:47:00
+Last Updated: 2026-11-07 12:35:00
 ---
 
 # User Voice
@@ -345,3 +345,181 @@ The parts add up to about 19, which rounds to 21 on the Fibonacci scale. With ab
 work of 14 points and 39 criteria. It could be split into an epic. S016.1 would check the policy and report every
 error, through `dw check` and the check in `dw up` and at boot. S016.2 would add `dw reload` and `dw restart`.
 S016.1 can be accepted on its own through `dw check` and `dw up`, and S016.2 builds on it without rewriting it.
+
+# Implementation
+
+## Files Added/Changed/Removed
+
+Added:
+
+- `policy/problems.py`: `Problems`, a `ValueError` that carries several problems, and `Collector`, which checks
+  independent parts and raises them together.
+- `policy/check.py`: `python -m policy.check`. It loads the policy as the decisions service does and prints the summary,
+  or a count line, every error, and the warnings. It also holds the summary lines the decisions service logs, and the
+  mapping from `/etc/daywarden` to the host directory.
+- `policy/reload.py`: `python -m policy.reload`. `dw reload` runs it inside each container to ask that service to
+  reload.
+- `tests/test_policy_check.py`: policies with several mistakes, each of which must be listed, and the check command.
+- `tests/test_reload.py`: the decisions and observations reload endpoints in-process. Covers decisions, the loopback
+  rule, refusals, includes, timezone, hostname, quota, bucket length, sessions, a quiz in progress, and a running transfer.
+- `tests/test_reload_stack.py`: the real `bin/dw` against its own Compose project. Covers `dw check`, `dw reload`
+  without a container restart, a refused reload, a request from the proxy container, the `.env` warning, and
+  `dw restart` against `dw down` and `dw up`.
+- `tests/test_make_targets.py`: `make reload`, `make restart`, `make check`, and `make help` on a copy of the checkout,
+  against the fake `docker` from `tests/hostfakes.py`.
+
+Changed:
+
+- `policy/hierarchy.py`: the loader records errors per file, per item, and per field, and checks the whole policy on
+  whatever parsed. A failed item still counts as defined. Errors are sorted by file in include order, then by line, and
+  raised as one `ConfigError`. A client group address must be an IP address or a host name. Each rule keeps where it is
+  written.
+- `policy/arithmetic.py`, `policy/spelling.py`, `policy/parts_of_speech.py`, `policy/skip_counting.py`: each body field is
+  checked on its own, and every problem is raised together. A parts of speech body checks each sentence on its own.
+- `policy/app.py`: the policy, clock, and zone are held in one `Holder` that a reload swaps whole. Each route reads it
+  once. `POST /v1/reload` is accepted only over plain HTTP from 127.0.0.1 or ::1. Any other peer gets 404. A failed
+  start logs every error.
+- `policy/observations.py`: the policy is read once per report, under the report lock. The same loopback-only
+  `POST /v1/reload` is added.
+- `bin/dw`: adds `reload`, `restart`, and `check`. `up` checks the policy first.
+- `bin/daywarden-lib.sh`: adds `dw_check_policy`, `dw_config_dir`, `dw_make_dirs`, `dw_start_checked`,
+  `dw_stale_services`, which compares `docker compose config --hash` with each container's label, and
+  `dw_track_with_user_service`. `dw_compose_up` checks the policy before starting.
+- `bin/daywarden-service`: the start at boot checks the policy.
+- `deploy/install.sh`: an upgrade of a running daywarden runs `dw restart` instead of `dw down` and `dw up`.
+- `docker-compose.yml`: comment only.
+- `Makefile`: `make reload`, `make restart`, and `make check` run `bin/dw` on the checkout, for the local dev stack.
+  `make help` lists every target with the description written on its line.
+- `README.md`, `docs/hierarchical-policy.md`: how to apply an edit, what a reload keeps, what needs `dw restart`, and
+  how errors are reported. The README also describes the new make targets.
+- `tests/hostfakes.py`, `tests/test_dw.py`, `tests/test_install.py`: the fake `docker compose` answers `run`,
+  `exec` of the check and the reload, and `config --hash`. Adds host-fake cases for every new `dw` path.
+
+Removed: nothing.
+
+## Change Summary
+
+The policy loader no longer stops at the first error. It reads every file, parses each item, and checks each field
+of a period, a task, a quota, and a site group on its own. A failed item is still registered by name, so references to
+it raise no knock-on errors. The whole-policy checks report every instance: each duplicate priority, each shared
+address, each `evaluate` cycle, each unknown reference, and a missing `entry`. A YAML syntax error stops only its own
+file. The errors come back sorted and de-duplicated in one `ConfigError`. `str()` of it lists them one per line, so
+existing callers and tests still work. The four task-type validators raise every field problem together. The loader
+places each one at the line of the body field it names.
+
+`python -m policy.check` runs in the policy image. `dw` runs it with `docker compose exec` in the running decisions
+container, or with `docker compose --progress quiet run --rm --no-deps -T --quiet-build decisions` when daywarden is
+down or about to start. `dw` passes `--host-dir`, the configuration directory as written from the daywarden directory,
+so errors read `config/policy.yaml:42:5: ...`.
+
+Each service keeps its policy in one holder that a reload replaces in one assignment. The decisions service reloads on
+its event-loop thread. It re-reads the file, installs the bucket length at the current household time, and rebuilds
+the household clock from the new timezone. The observations service swaps under the lock its reports already take.
+Neither changes enforcement. Running transfers keep their recorded deadline and ceiling, and the re-walk at that
+point uses the swapped policy. `dw reload` checks first, then reloads decisions, then observations. Each service loads
+the file again itself, so a file changed between the steps is checked again. It then compares Compose config hashes
+and names the services still running with old settings.
+
+`dw restart` checks the policy, then runs `docker compose down --remove-orphans` and starts the stack, waiting for
+health as `dw up` does. The proposed `up --force-recreate` was measured at 24.2 s against 21.8 s for `dw down` and
+`dw up`. Following the fallback in the design, a restart is down and up with the check run once at the front. The
+end-to-end test asserts that a restart is no slower than `dw down` and `dw up`, with 2 seconds of tolerance for timing
+noise.
+
+On the local dev stack, `make reload`, `make restart`, and `make check` run the same `bin/dw` commands on the
+checkout. Because of `pull_policy: build`, `make restart` rebuilds the policy image. `make reload` and `make check`
+run inside the containers that are already up. A stack started before S016 has no `policy.check` in its image, so
+it needs one `make restart` before `make reload` and `make check` work. `make help` reads the `## description` on
+each target line. A test fails if a phony target has no description.
+
+Two choices go beyond the letter of the story. An upgrade through `install.sh` now runs `dw restart`, so a policy the
+new version refuses leaves the old version running. A client group address that is neither an IP address nor a host
+name is now a load error. Before, it was only a DNS warning. The acceptance criteria name it as an error.
+
+The full suite passes, including the Docker stacks: 1153 tests, with none skipped.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S016
+
+1. With daywarden running and a child online, edit `config/policy.yaml` to allow a site that is denied, or to move a
+   time window. Run `dw reload`. It prints the summary (timezone, task page address, each client group with its
+   addresses, each site group with its priority), then
+   `The decisions and observations services are using the reloaded policy.`, and exits 0. The next request through the
+   proxy is decided by the new policy. `docker ps` shows the same uptime for every daywarden container as before.
+2. Put these mistakes into the policy at once: a misspelled top-level setting such as `timezon:`, a client group
+   address such as `"not an address"`, two site groups with the same priority, a period with `start: "25:00"`, a rule
+   with `evaluate` of a rule set that does not exist, a quota with `time_grace: -5m`, and an arithmetic task with
+   `correct_answers_required: 0`. Run `dw reload`. It prints `dw: the policy has 7 errors. Nothing was reloaded.` and
+   seven lines, each starting `config/policy.yaml:<line>:<column>:`, in line order. It exits 1. The proxy still
+   decides with the old policy. Fix all seven in one pass and run `dw reload` again. It succeeds.
+3. Start an arithmetic quiz on a child's computer and answer one question. Change that task's
+   `correct_answers_required`, add a new task, remove another, and run `dw reload`. The quiz page keeps working.
+   Finishing it scores against the old count. The next attempt uses the new count. The new task can be opened, and
+   the removed one is no longer offered.
+4. Start a long download or video that a quota allows. Change the policy so that site is denied, and run `dw reload`.
+   The transfer keeps running until its recorded deadline or byte ceiling. It is then cut, or kept if the new policy
+   still allows it.
+5. Sign in to `https://<host>:<POLICY_PORT>/usage`, run `dw reload`, then refresh `/usage` and `/attempts`. They open
+   without signing in again.
+6. Stop daywarden with `dw down`, break the policy, and run `dw up`. It prints
+   `dw: the policy has N errors. daywarden was not started.` and every error, then exits 1. `dw status` shows every
+   service not running. Start daywarden with a good policy, break it again, and run `dw up`. It refuses the same way,
+   and daywarden keeps running with the previous policy.
+7. With daywarden running, change `PROXY_PORT` or `PARENT_NAMES` in `.env` and run `dw reload`. It reloads, then warns
+   that `.env` or `docker-compose.yml` has changed, names the services still running with the old settings, and
+   says to run `dw restart`. It exits 0. The proxy still listens on the old port.
+8. Run `dw restart`. It prints `daywarden restarted.` after every service is healthy. `docker ps` shows new
+   containers, and the proxy now listens on the new `PROXY_PORT`. Parent accounts, the CA, usage, and attempts are
+   all still there.
+9. Break the policy and run `dw restart`. It prints `dw: the policy has N errors. Nothing was restarted.`, exits 1,
+   and the running containers keep running.
+10. Run `dw down`, then `dw restart`. It starts daywarden and says it was not running. Stop one service with
+    `docker compose stop observations` and run `dw restart`. Every service comes back healthy.
+11. With daywarden stopped, run `dw check`. It prints the summary and exits 0, or prints every error and exits 1.
+    `dw status` afterwards still shows every service not running. Run `dw check` again with daywarden running. It
+    gives the same answer, and no container restarts.
+12. With daywarden stopped, run `dw reload`. It checks the policy, says
+    `daywarden is not running, so nothing was reloaded. dw up will use this policy.`, exits 1, and starts nothing.
+13. With daywarden enabled at boot, put an error in the policy and run `systemctl --user restart daywarden`, or reboot.
+    `dw status` shows the last start through the user service failed, and `journalctl --user -u daywarden` shows the
+    count line and every error. Fix the policy and run `dw restart`. `dw status` then shows no failure, and `dw down`
+    stops every container.
+14. Add `include: [extra]` with a file in `config/extra/` that defines a site group. Run `dw reload`. Requests to that
+    site are classified into the new group. Edit only the included file and reload again. The change applies.
+15. Put an error in an included file and another in `policy.yaml`. `dw check` lists both, each with its own file.
+    Make one included file a YAML syntax error. `dw check` reports the syntax error and the errors in every other file.
+16. Raise a quota's limit after some usage today and run `dw reload`. The usage page shows today's usage against the
+    new limit, and a site that was over the limit is allowed again.
+17. Change `timezone` and run `dw reload`. The next lines in `docker compose logs decisions` use the new zone.
+    Change `hostname` and reload. The next redirect to the task pages uses the new host.
+18. Add a client group address that is a DNS name that does not resolve. `dw reload` lists it under `Warnings:` and
+    still reloads. A name that resolved before keeps its addresses.
+19. Move `config/policy.yaml` away and run `dw reload`. It is refused with
+    `config/policy.yaml: the policy file does not exist`, and the old policy stays in force. Put it back.
+20. Point a spelling task's `current_dir` at a directory that does not exist under the data directory. `dw reload`
+    and `dw check` list it beside any other errors.
+21. Run `dw reload` twice with no change in between. Both succeed, and nothing a user can see changes.
+22. From a child's computer, through the proxy, POST to `http://decisions:8090/v1/reload`, and POST to
+    `https://<host>:<POLICY_PORT>/v1/reload`. Neither reloads anything. `docker compose logs decisions` shows no
+    `reloaded` line.
+23. Change `bucket_length` and run `dw reload`. Usage recorded before the reload is still on the usage page, and new
+    buckets use the new length.
+24. Run `dw help`. It lists `reload`, `restart`, and `check`, each with a one-line description. Run `dw reload now`,
+    `dw restart now`, and `dw check now`. Each is a usage error with status 2.
+25. Upgrade a running daywarden with a newer package's `./install.sh` and answer `y`. It runs `dw restart`, and
+    daywarden comes back healthy on the new version.
+26. Read the "Policy file" and "Running it with dw" sections of `README.md`, and "Applying an edit" in
+    `docs/hierarchical-policy.md`. They say a policy change needs `dw reload`, what a reload keeps, that
+    `bypass.txt` and spelling clips need neither a reload nor a restart, and that `.env` changes need `dw restart`.
+27. In the repository, with the local stack up through `make up`, run `make restart`. It rebuilds the policy image,
+    prints `daywarden restarted.` once every service is healthy, and `docker ps` shows new containers. With the stack
+    down, `make restart` starts it and says it was not running.
+28. Edit `config/policy.yaml` and run `make reload`. It prints the summary and
+    `The decisions and observations services are using the reloaded policy.`, and `docker ps` shows no container
+    restarted. Break the policy and run `make reload` and `make restart`. Each lists every error, ends with
+    `Nothing was reloaded.` or `Nothing was restarted.`, and make reports the failure. The stack keeps running.
+29. Run `make check` with the stack up and with it down. It gives the same answer as `bin/dw check` and starts
+    nothing.
+30. Run `make help`. It lists every target, including `reload`, `restart`, `check`, and `help`, each with a one-line
+    description. Plain `make` still starts the stack, as `make up` does.

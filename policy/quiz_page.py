@@ -147,7 +147,7 @@ html, body { height: 100%; margin: 0; }
 body { display: flex; flex-direction: column; font-family: sans-serif; background: #fbfbf7; color: #222; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; min-height: 2rem; }
 #progress { font-size: 1.1rem; color: #555; }
-#give-up { font-size: 0.85rem; padding: 0.3rem 0.7rem; background: none; border: 1px solid #aaa; border-radius: 4px; color: #555; cursor: pointer; }
+#give-up { margin-left: auto; font-size: 0.85rem; padding: 0.3rem 0.7rem; background: none; border: 1px solid #aaa; border-radius: 4px; color: #555; cursor: pointer; }
 main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1rem; }
 .screen h1 { font-size: 4rem; margin: 0 0 1rem; }
 .screen p { font-size: 1.8rem; margin: 0 0 2rem; }

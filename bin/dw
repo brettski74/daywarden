@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Run daywarden on this machine.
-#   dw up        start it and wait until every service is healthy
+#   dw up        check the policy, start it, and wait until every service is healthy
 #   dw down      stop it and remove its containers
+#   dw reload    check the policy and apply it without restarting a container
+#   dw restart   check the policy, then replace every container
+#   dw check     check the policy and change nothing
 #   dw status    version, start at boot, and the health of each service
 #   dw enable    start it at boot, through a systemd user service
 #   dw disable   do not start it at boot
@@ -18,16 +21,22 @@ root=$(dirname -- "$(dirname -- "$script")")
 # shellcheck source=daywarden-lib.sh
 . "$root/bin/daywarden-lib.sh"
 
-COMMANDS=(up down status enable disable help)
+COMMANDS=(up down reload restart check status enable disable help)
 
 usage() {
     cat <<EOF
 usage: dw COMMAND
 
 Commands:
-  up       start daywarden and wait until every service is healthy
+  up       check the policy, start daywarden, and wait until every service
+           is healthy
   down     stop daywarden and remove its containers. The CA, the database,
            the configuration, and the recordings stay
+  reload   check config/policy.yaml and apply it, without restarting any
+           container. Quizzes, transfers, and sign-ins carry on
+  restart  check the policy, then replace every container and wait until
+           every service is healthy. Applies changes to .env
+  check    check the policy and list every error. Changes nothing
   status   show the version, whether daywarden starts at boot, and the
            health of each service. Exits 0 only when all are healthy
   enable   start daywarden at boot, without anyone logging in
@@ -53,14 +62,71 @@ cmd_help() {
 cmd_up() {
     no_arguments "$@"
     dw_prepare dw
-    dw_compose_up
-    if dw_user_manager && dw_enabled; then
-        if ! systemctl --user start "$DW_UNIT"; then
-            echo "dw: the daywarden user service did not start. See journalctl --user -u daywarden." >&2
-            exit 1
-        fi
-    fi
+    dw_compose_up "daywarden was not started." || exit 1
+    dw_track_with_user_service || exit 1
     echo "daywarden is up."
+}
+
+# compose up --force-recreate measured slower than down and up, so a restart
+# is down and up, with the policy checked once before anything is stopped.
+cmd_restart() {
+    no_arguments "$@"
+    dw_prepare dw
+    local was_running=0
+    dw_running && was_running=1
+    dw_make_dirs || exit 1
+    dw_check_policy run --quiet --refused "Nothing was restarted." || exit 1
+    dw_compose down --remove-orphans
+    dw_start_checked || exit 1
+    dw_track_with_user_service || exit 1
+    if [ "$was_running" -eq 1 ]; then
+        echo "daywarden restarted."
+    else
+        echo "daywarden was not running, so it was started. daywarden is up."
+    fi
+}
+
+cmd_check() {
+    no_arguments "$@"
+    dw_prepare dw
+    if dw_running decisions; then
+        dw_check_policy exec || exit 1
+    else
+        dw_check_policy run || exit 1
+    fi
+}
+
+cmd_reload() {
+    no_arguments "$@"
+    dw_prepare dw
+    local service names stale=()
+    if ! dw_running decisions; then
+        if dw_check_policy run --quiet --refused "Nothing was reloaded."; then
+            echo "daywarden is not running, so nothing was reloaded. dw up will use this policy." >&2
+        else
+            echo "daywarden is not running, so nothing was reloaded. dw up will use the policy once these errors are fixed." >&2
+        fi
+        exit 1
+    fi
+    dw_check_policy exec --quiet --refused "Nothing was reloaded." || exit 1
+    dw_compose exec -T decisions python -m policy.reload --service decisions --host-dir "$(dw_config_dir)" || exit 1
+    if ! dw_running observations; then
+        echo "dw: the decisions service is using the reloaded policy. The observations service is not running. dw up starts it with this policy." >&2
+        exit 1
+    fi
+    if ! dw_compose exec -T observations python -m policy.reload --service observations --host-dir "$(dw_config_dir)"; then
+        echo "dw: the decisions service is using the reloaded policy, and the observations service is not." >&2
+        exit 1
+    fi
+    echo "The decisions and observations services are using the reloaded policy."
+    while read -r service; do
+        [ -n "$service" ] && stale+=("$service")
+    done < <(dw_stale_services)
+    if [ "${#stale[@]}" -gt 0 ]; then
+        printf -v names '%s, ' "${stale[@]}"
+        echo "Warning: .env or docker-compose.yml has changed since these containers were created, and dw reload does not apply that."
+        echo "  Still running with the old settings: ${names%, }. Run dw restart to apply the changes."
+    fi
 }
 
 cmd_down() {
