@@ -19,8 +19,7 @@ rules again no longer allows it. A quota the report accrues to does not
 cut the flow on its own. A limit of zero is not a budget. Any other answer
 leaves the transfer running.
 
-This is the store S008.4 reads. The older ``usage_buckets`` rows, keyed by an
-enrolled client and a site group, are left where they are.
+This is the store S008.4 reads.
 """
 
 from __future__ import annotations
@@ -43,8 +42,7 @@ from policy.engine import (
     evaluate,
     judge_frozen,
 )
-from policy.hierarchy import Policy
-from policy.store import DEFAULT_BUCKET_SECONDS
+from policy.hierarchy import DEFAULT_BUCKET_SECONDS, Policy
 from policy.tasks import ensure_attempts, pass_count
 
 # A quota rule set is read before the access path turns a top-level continue

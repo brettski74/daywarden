@@ -938,7 +938,6 @@ def test_the_service_runs_a_skip_counting_question(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     app = create_app()
 
     status, _headers, body = _call(app, "GET", "/tasks/count")

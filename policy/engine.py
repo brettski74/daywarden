@@ -5,7 +5,7 @@ lowest number first, and the first pattern match is the site group. Anything
 left over is the implicit site group ``default``. The source address belongs
 to the one configured client group that contains it, or to the implicit
 client group ``default``. Rules test those two names. They do not match the
-URL or the address again, and a site group does not own a rule list.
+URL or the address again.
 
 ``decide`` is the access path. It starts at ``entry``. ``allow``, ``deny``,
 and ``redirect`` are terminal at every depth. ``evaluate`` substitutes the
@@ -24,18 +24,20 @@ eligible.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
+from functools import lru_cache
+from urllib.parse import urlsplit
 
 from policy.buckets import place
 from policy.clients import normalize_ip
-from policy.groups import matches
-from policy.hierarchy import Action, Period, Policy, Rule
-from policy.rules import REVISION_TASK, UNCONFIGURED_TASK_MESSAGE, absolute_http_url
+from policy.hierarchy import REVISION_TASK, Action, Period, Policy, Rule, absolute_http_url
 from policy.selection import apply_task_selection, picker_url
 from policy.tasks import AttemptStore, household_day
 
 NO_RULE_MESSAGE = "No rule granted access."
+UNCONFIGURED_TASK_MESSAGE = "The revision task page is not configured."
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,35 @@ def classify_site(policy: Policy, url: str) -> str:
         if any(matches(pattern, url) for pattern in group.patterns):
             return group.name
     return "default"
+
+
+def matches(pattern: str, url: str) -> bool:
+    """Return whether a site group pattern matches url.
+
+    A pattern with "://" is matched against the whole URL, less its fragment.
+    Any other pattern is matched against the host alone. Matching ignores
+    case, "*" matches any run of characters including "/", and "?" matches
+    one character.
+    """
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    subject = url.split("#", 1)[0].lower() if "://" in pattern else host.rstrip(".")
+    return _compile(pattern).fullmatch(subject) is not None
+
+
+@lru_cache(maxsize=1024)
+def _compile(pattern: str) -> re.Pattern[str]:
+    return re.compile("".join(_atom(char) for char in pattern.lower()), re.DOTALL)
+
+
+def _atom(char: str) -> str:
+    if char == "*":
+        return ".*"
+    if char == "?":
+        return "."
+    return re.escape(char)
 
 
 def classify_client(policy: Policy, client_ip: str) -> str:

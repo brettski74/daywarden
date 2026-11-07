@@ -3,14 +3,13 @@
 # Hosts that skip authorization are listed in config/bypass.txt.
 # The decisions service is the policy service. The household policy is
 # config/policy.yaml. Client groups, site groups, and rule sets are loaded
-# from that file each time the service starts. An address or a URL in no
-# configured group is the implicit group default.
-# DECISION_FILE is read only when DECISION_STUB=1 and POLICY_FILE is a TOML
-# file, which the addon tests set. The household YAML policy does not read it.
+# from that file each time the service starts. POLICY_FILE must name a
+# .yaml or .yml file. An address or a URL in no configured group is the
+# implicit group default.
 # The observations service writes POST /v1/observations into the usage ledger
-# in the policy-data volume. A YAML policy files each report under the
-# classified client group and site group, and under each quota that accepts
-# it. The proxy still forwards if that service is down. When a report shows
+# in the policy-data volume. Each report is filed under the classified client
+# group and site group, and under each quota that accepts it. The proxy
+# keeps forwarding if that service is down. When a report shows
 # that this flow's recorded allow has reached a clock deadline or a volume
 # ceiling, and the access rules no longer allow it, the service answers
 # with a cut and the proxy stops that transfer. Any other answer leaves it
@@ -29,7 +28,6 @@ services:
     image: daywarden-policy:local
     pull_policy: build
     environment:
-      DECISION_FILE: /etc/daywarden/decision.json
       POLICY_FILE: ${POLICY_FILE:-/etc/daywarden/policy.yaml}
       POLICY_DB: /var/lib/daywarden/policy.sqlite3
       MACHINE_LOCALTIME: /etc/host-localtime

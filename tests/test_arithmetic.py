@@ -756,7 +756,6 @@ def test_the_service_serves_the_sounds_and_runs_a_question(tmp_path, monkeypatch
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     app = create_app()
 
     status, headers, body = _call(app, "GET", "/static/sounds/timeout/bell.opus")

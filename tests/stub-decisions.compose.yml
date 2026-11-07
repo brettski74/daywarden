@@ -1,0 +1,11 @@
+# Test-only. Runs tests/decision_stub.py in place of the decisions service, so
+# a proxy test chooses the next decision document by writing
+# next-decision.json in its config directory, including documents the rule
+# engine never produces. `docker compose up` does not use it.
+services:
+  decisions:
+    command:
+      - python
+      - /opt/stub/decision_stub.py
+    volumes:
+      - ./tests/decision_stub.py:/opt/stub/decision_stub.py:ro

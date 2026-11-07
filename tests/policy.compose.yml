@@ -1,5 +1,9 @@
-# Test-only. Merged by the S001.1 tests so a client can be configured by DNS name.
+# Test-only. Merged by tests/test_policy_service.py so a client group can be
+# configured by DNS name. Both services load the policy, so both resolve it.
 services:
   decisions:
+    extra_hosts:
+      - "older-child.household.test:192.0.2.41"
+  observations:
     extra_hosts:
       - "older-child.household.test:192.0.2.41"

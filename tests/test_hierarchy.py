@@ -1,4 +1,4 @@
-"""S008.1: the YAML policy loader. Decisions still use the TOML engine."""
+"""S008.1: the YAML policy loader."""
 
 import sys
 from datetime import time

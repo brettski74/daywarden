@@ -6,7 +6,7 @@ This note describes the household policy model.
 
 # Model
 
-Rules are the structure. Site groups, client groups, time windows, and quotas are named values a rule can test. A rule does not belong to a site group. Nesting has no required order. The engine walks the list it was given.
+Rules are the structure. Site groups, client groups, time windows, and quotas are named values a rule can test. Nesting has no required order. The engine walks the list it was given.
 
 Before any rule runs, the request is classified once.
 
@@ -98,7 +98,7 @@ Balances reset at household-local midnight. Unused time and unused bytes do not 
 
 ### What accrues
 
-Accrual is decided by the quota's rule set, evaluated on its own when an observation arrives. It is not decided by the site group that owns a quota field, because a quota no longer lives on a site group.
+Accrual is decided by the quota's rule set, evaluated on its own when an observation arrives.
 
 The rule set returns a decision. For accrual that decision is read before the access path turns a top-level continue into a deny:
 
@@ -714,7 +714,7 @@ include:
 
 Paths are relative to the file that contains the `include`. A directory include loads the `*.yaml` and `*.yml` files in that directory, in lexicographic order, and does not walk into subdirectories. A subdirectory is included by a path or by an `include` in one of those files. The loader remembers each file by its canonical path. A file that is already loaded is skipped, including when the includes form a cycle. That is the same idea as an include guard. It is not an error. A cycle in `evaluate` is a different thing and is still a load error, because a rule cycle does not terminate.
 
-The load is atomic. Every file is parsed, the namespaces are merged, and references are checked. Any error rejects the whole load and leaves the previously stored policy in force. A missing root file means the service keeps the policy it stored last time. A missing included path, when the root file is present, is an error.
+The load is atomic. Every file is parsed, the namespaces are merged, and references are checked. Any error rejects the whole load and leaves the policy already loaded in force. A missing root file also keeps the policy already loaded. At start there is none, so nothing is allowed until the file is there. A missing included path, when the root file is present, is an error. The root file's name must end in `.yaml` or `.yml`. Any other name is a load error that names the file, whether or not it exists.
 
 # Usage report
 
@@ -730,7 +730,7 @@ The report can be sliced by site group, by client group, or by quota. A quota sl
 - Start-inclusive, end-exclusive periods, including the one-midnight rule for an end clock that is earlier than the start.
 - One completion, one point, for the classified client group and the local date.
 - Bucket length, ended buckets for time, stored bytes for volume, and no banking across midnight. Byte suffixes are `b`, `k`, `M`, `G`, and `T`.
-- A policy file that fails to load does not replace the stored policy.
+- A policy file that fails to load does not replace the policy already loaded.
 - Unknown keys are rejected.
 
 # Later, and not required for the rule engine

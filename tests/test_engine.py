@@ -16,10 +16,18 @@ from policy.engine import (  # noqa: E402
     decide,
     evaluate,
     log_fields,
+    matches,
 )
 from policy.hierarchy import ConfigError, SiteGroup, load  # noqa: E402
 
 SYDNEY = ZoneInfo("Australia/Sydney")
+OPEN_POLICY = """\
+entry: entry
+rule_sets:
+  entry:
+    - condition: always
+      when_true: { action: allow }
+"""
 PLACEHOLDER = "https://tasks.example/tasks/next"
 NO_RULE = "No rule granted access."
 BEDTIME = {"action": "deny", "status": 403, "message": "It's bedtime."}
@@ -607,10 +615,7 @@ rule_sets:
     monkeypatch.setenv("POLICY_FILE", str(policy))
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_PASSWORD", raising=False)
-    (tmp_path / "decision.json").write_text('{"action": "allow", "marker": "from the file"}', encoding="utf-8")
     status, body = _post_decision(
         create_app(),
         {
@@ -629,4 +634,117 @@ rule_sets:
     assert logged["rule_index"] == 1
     assert logged["continued"] is False
     assert logged["decision"]["message"] == "From the rule set."
-    assert b"from the file" not in body
+    assert logged["local_time"] == "2026-10-21T11:00:00+11:00"
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        [],
+        {"method": "GET", "url": "http://x/"},
+        {"client_ip": "younger-child.lan", "method": "GET", "url": "http://x/"},
+        {"client_ip": "192.0.2.40", "method": "", "url": "http://x/"},
+        {"client_ip": "192.0.2.40", "method": "GET"},
+        {"client_ip": "192.0.2.40", "method": "GET", "url": "http://x/", "occurred_at": "yesterday"},
+        {"client_ip": "192.0.2.40", "method": "GET", "url": "http://x/", "occurred_at": 12},
+        {"client_ip": "192.0.2.40", "method": "GET", "url": "http://x/", "flow_id": ""},
+    ],
+)
+def test_a_malformed_decision_request_is_refused_and_logged_without_a_decision(tmp_path, monkeypatch, document):
+    pytest.importorskip("fastapi")
+    from policy.app import create_app
+
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(OPEN_POLICY, encoding="utf-8")
+    monkeypatch.setenv("POLICY_FILE", str(policy))
+    monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    status, _body = _post_decision(create_app(), document)
+    assert status == 400
+    logged = json.loads((tmp_path / "decisions.jsonl").read_text(encoding="utf-8"))
+    assert logged == {"request": document, "decision": None}
+
+
+@pytest.mark.parametrize("name", ["policy.json", "policy.conf", "policy"])
+def test_a_policy_file_that_is_not_yaml_stops_both_services_and_is_named(tmp_path, monkeypatch, name):
+    pytest.importorskip("fastapi")
+    from policy import observations
+    from policy.app import create_app
+
+    policy = tmp_path / name
+    policy.write_text(OPEN_POLICY, encoding="utf-8")
+    monkeypatch.setenv("POLICY_FILE", str(policy))
+    monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    with pytest.raises(ConfigError, match=f"{name}: the policy must be YAML"):
+        create_app()
+    with pytest.raises(ConfigError, match=f"{name}: the policy must be YAML"):
+        observations._load_policy(policy)
+    missing = tmp_path / "missing.json"
+    monkeypatch.setenv("POLICY_FILE", str(missing))
+    with pytest.raises(ConfigError, match="missing.json: the policy must be YAML"):
+        create_app()
+    with pytest.raises(ConfigError, match="missing.json: the policy must be YAML"):
+        observations._load_policy(missing)
+    assert not (tmp_path / "policy.sqlite3").exists()
+
+
+@pytest.mark.parametrize("name", ["policy.yaml", "policy.YML"])
+def test_a_yaml_policy_file_loads_in_both_services(tmp_path, monkeypatch, name):
+    pytest.importorskip("fastapi")
+    from policy import observations
+    from policy.app import create_app
+
+    policy = tmp_path / name
+    policy.write_text(OPEN_POLICY, encoding="utf-8")
+    monkeypatch.setenv("POLICY_FILE", str(policy))
+    monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    status, body = _post_decision(
+        create_app(),
+        {"client_ip": "192.0.2.40", "method": "GET", "url": "https://example.org/"},
+    )
+    assert (status, json.loads(body)) == (200, ALLOW)
+    assert observations._load_policy(policy).entry == "entry"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "url"),
+    [
+        ("https://classroom.google.com/*", "https://classroom.google.com/u/0/h"),
+        ("classroom.google.com", "https://classroom.google.com/u/0/h"),
+        ("*.youtube.com", "https://www.youtube.com/watch?v=abc#t=10"),
+        ("youtu.be", "https://youtu.be/abc"),
+        ("*.youtube.com", "https://WWW.YouTube.COM/watch"),
+        ("*.YOUTUBE.com", "https://www.youtube.com/watch"),
+        ("HTTPS://Classroom.Google.com/*", "https://classroom.google.com/c/xyz"),
+        ("https://*.google.com/*/edit", "https://docs.google.com/document/d/1/edit"),
+        ("youtu.?e", "https://youtu.be/abc"),
+        ("www.youtube.com", "https://www.youtube.com:8443/watch"),
+        ("www.youtube.com", "https://www.youtube.com./watch"),
+        ("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc#t=10"),
+        ("https://www.youtube.com*", "https://www.youtube.com/a/b/c?d=e"),
+        ("*://classroom.google.com/*", "http://classroom.google.com/x/y"),
+    ],
+)
+def test_a_site_group_pattern_matches(pattern, url):
+    assert matches(pattern, url)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "url"),
+    [
+        ("*.googlevideo.com", "https://www.youtube.com/watch?v=abc"),
+        ("*.youtube.com", "https://youtube.com/watch"),
+        ("youtube.com", "https://www.youtube.com/watch"),
+        ("youtube.com", "https://example.org/youtube.com"),
+        ("https://www.youtube.com/watch?v=abc#t=10", "https://www.youtube.com/watch?v=abc#t=10"),
+        ("*#t=10", "https://www.youtube.com/watch?v=abc#t=10"),
+        ("https://classroom.google.com/*", "http://classroom.google.com/u/0/h"),
+        ("youtu.?e", "https://youtu.bbe/abc"),
+        ("classroom.google.com", "https://evil.test/?classroom.google.com"),
+        ("example.org", "http://[bad/"),
+    ],
+)
+def test_a_site_group_pattern_does_not_match(pattern, url):
+    assert not matches(pattern, url)

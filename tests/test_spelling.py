@@ -310,10 +310,8 @@ def test_the_observations_service_loads_a_spelling_policy_without_the_data_direc
 
     monkeypatch.setenv("DAYWARDEN_DATA_DIR", str(tmp_path / "not-mounted"))
     path = _write(tmp_path / "policy", _house({"revision_required": 10}))
-    monkeypatch.setenv("POLICY_FILE", str(path))
-    with PolicyStore(":memory:") as store:
-        policy, usage = observations._hierarchical(store)
-    assert policy is not None and usage is not None
+    policy = observations._load_policy(path)
+    assert policy is not None
     assert policy.task("words").document() == {"revision_required": 10}
 
 
@@ -1072,7 +1070,6 @@ def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     app = create_app()
 
     status, _headers, body = _call(app, "GET", "/tasks/words")
@@ -1327,7 +1324,6 @@ def test_the_service_serves_letter_clips_for_practice(tmp_path, data, monkeypatc
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     app = create_app()
 
     assert _call(app, "GET", "/tasks/words")[0] == 200

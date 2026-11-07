@@ -309,7 +309,6 @@ def test_plain_http_does_not_show_an_attempt(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_FILE", str(tmp_path / "missing.yaml"))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
     with PolicyStore(database) as saved:
         accounts = Accounts(saved.connection)
         accounts.set_password("ada", PASSWORD)
