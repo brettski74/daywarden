@@ -8,10 +8,28 @@ It is set before any fixture runs, so the Docker Compose stacks mount it
 instead of the household's own directory.
 """
 
+import json
+import shutil
+import subprocess
 import wave
 from pathlib import Path
 
 import pytest
+
+HARNESS = Path(__file__).resolve().parent / "page_harness.js"
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+
+
+def run_page(page: str, replies: dict, **options) -> list[dict]:
+    """Run a quiz page's script in ``page_harness.js`` and return the events it saw."""
+    run = subprocess.run(
+        ["node", str(HARNESS)],
+        input=json.dumps({"html": page, "replies": replies, "clip_ms": 0, **options}),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(run.stdout)
 
 
 def write_wav(path: Path, milliseconds: int = 500, rate: int = 8000) -> Path:

@@ -109,9 +109,10 @@ class Task:
 
     ``body`` is a JSON object with its keys in the order the policy file
     wrote them. Quiz stories define its fields.
-    This layer does not read them. ``groups`` is the client groups that share
-    one attempt history. ``failure_cooldown`` is None when the file left it
-    out, which means a failure does not make the task wait.
+    This layer does not read them. ``groups`` is the client groups it is
+    assigned to. Each keeps its own attempt history. ``failure_cooldown`` is
+    None when the file left it out, which means a failure does not make the
+    task wait.
     """
 
     name: str

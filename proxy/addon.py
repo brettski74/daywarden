@@ -353,6 +353,11 @@ def _ask(flow: http.HTTPFlow):
         "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "flow_id": flow.id,
     }
+    # The policy service reads these to tell a page load from the fetches it makes.
+    for header, key in (("Sec-Fetch-Dest", "sec_fetch_dest"), ("Accept", "accept")):
+        value = flow.request.headers.get(header)
+        if value is not None:
+            payload[key] = value
     request = urllib.request.Request(
         DECISION_URL,
         data=json.dumps(payload).encode("utf-8"),

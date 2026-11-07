@@ -127,7 +127,15 @@ def _curl(args, *, timeout=20):
     )
 
 
-def _exchange(proxy: Stack, url: str, *, method: str = "GET", data: str | None = None, tls: bool = False):
+def _exchange(
+    proxy: Stack,
+    url: str,
+    *,
+    method: str = "GET",
+    data: str | None = None,
+    tls: bool = False,
+    headers: tuple[str, ...] = (),
+):
     header_path = proxy.config_dir / "headers.txt"
     body_path = proxy.config_dir / "body.bin"
     header_path.unlink(missing_ok=True)
@@ -146,6 +154,8 @@ def _exchange(proxy: Stack, url: str, *, method: str = "GET", data: str | None =
         command += ["--cacert", str(proxy.cert_pem), "-v"]
     if data is not None:
         command += ["--data", data]
+    for header in headers:
+        command += ["-H", header]
     command.append(url)
     completed = _curl(command)
     headers = header_path.read_text() if header_path.exists() else ""
@@ -229,14 +239,31 @@ def test_allow_returns_the_origin_response(stack):
     assert logged["client"] is None
     assert logged["decision"] == {"action": "allow"}
     entry = logged["request"]
-    assert set(entry) == {"client_ip", "method", "url", "occurred_at", "flow_id"}
+    assert set(entry) == {"client_ip", "method", "url", "occurred_at", "flow_id", "accept"}
     assert isinstance(entry["flow_id"], str) and entry["flow_id"]
     ipaddress.ip_address(entry["client_ip"])
     assert entry["method"] == "GET"
     assert entry["url"] == url
+    assert entry["accept"] == "*/*"
     occurred = datetime.fromisoformat(entry["occurred_at"])
     assert occurred.tzinfo is not None
     assert abs((datetime.now().astimezone() - occurred).total_seconds()) < 120
+
+
+def test_the_decision_request_carries_what_tells_a_page_load_from_a_fetch(stack):
+    _write_decision(stack.config_dir, {"action": "allow"})
+    stack.clear_jsonl("decisions", DECISION_LOG)
+    completed, headers, _body = _exchange(
+        stack,
+        "http://origin/watch?v=abc",
+        headers=("Sec-Fetch-Dest: document", "Accept: text/html,application/xhtml+xml"),
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert _status(headers) == 200
+    entry = stack.jsonl("decisions", DECISION_LOG)[-1]["request"]
+    assert entry["url"] == "http://origin/watch?v=abc"
+    assert entry["sec_fetch_dest"] == "document"
+    assert entry["accept"] == "text/html,application/xhtml+xml"
 
 
 def test_deny_returns_403_and_the_origin_sees_nothing(stack):

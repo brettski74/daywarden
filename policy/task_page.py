@@ -26,7 +26,7 @@ from policy.arithmetic import ARITHMETIC
 from policy.engine import classify_client
 from policy.hierarchy import Policy
 from policy.parts_of_speech import PARTS_OF_SPEECH
-from policy.quiz_page import reload
+from policy.quiz_page import Back, reload
 from policy.report import PageResponse, _document, _e, _response
 from policy.selection import (
     PICKER_PATH,
@@ -67,11 +67,13 @@ def respond_task(
     query: Mapping[str, str] | None = None,
     body: bytes = b"",
     sounds: SoundSets | None = None,
+    back: Back | None = None,
 ) -> PageResponse:
     """Open a task, give it up, or say there is nothing to revise.
 
     A post with ``do`` in the query is a quiz request, answered with JSON.
-    Any other post is "Try a different task".
+    Any other post is "Try a different task". ``back`` is asked, after a
+    pass, for the page this computer was sent away from.
     """
     client = classify_client(policy, client_ip)
     today = household_day(now)
@@ -93,8 +95,10 @@ def respond_task(
     quiz = _QUIZZES.get(task.type)
     if method.upper() == "POST":
         if action is not None and quiz is not None:
-            return quiz.respond_api(policy, store, task, client, action=action, body=body, now=now, sounds=sounds)
-        return _give_up(policy, store, task, client, today, cookie, now, path)
+            return quiz.respond_api(
+                policy, store, task, client, action=action, body=body, now=now, sounds=sounds, back=back
+            )
+        return _give_up(policy, store, task, client, today, cookie, now, path, back)
     attempt = store.begin(client, task.name, now)
     return _show(policy, store, task, attempt, path, now, stuck=False)
 
@@ -125,11 +129,11 @@ def _send_to_choice(policy, store, client, today) -> PageResponse:
     return _redirect(location)
 
 
-def _give_up(policy, store, task, client, today, cookie, now, path: str) -> PageResponse:
+def _give_up(policy, store, task, client, today, cookie, now, path: str, back: Back | None) -> PageResponse:
     rows = store.attempts(client)
     if not may_abandon(task, policy.tasks, client, today, rows):
         current = store.begin(client, task.name, now)
-        return _show(policy, store, task, current, path, now, stuck=True)
+        return _show(policy, store, task, current, path, now, stuck=True, back=back)
     current = store.in_progress(client, task.name)
     if current is None:
         current = store.begin(client, task.name, now)
@@ -167,11 +171,14 @@ def _show(
     now: datetime,
     *,
     stuck: bool,
+    back: Back | None = None,
 ) -> PageResponse:
     quiz = _QUIZZES.get(task.type)
     if quiz is not None:
         note = MUST_FINISH if stuck else ""
-        return quiz.show(store, task, attempt, path=action, now=now, policy=policy, note=note, record=stuck)
+        return quiz.show(
+            store, task, attempt, path=action, now=now, policy=policy, note=note, record=stuck, back=back
+        )
     note = f"<p>{_e(MUST_FINISH)}</p>\n" if stuck else ""
     form = (
         f'<form method="post" action="{_e(action)}">\n'
