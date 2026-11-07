@@ -233,8 +233,6 @@ class Service:
         monkeypatch.setenv("POLICY_FILE", str(self.policy_file))
         monkeypatch.setenv("POLICY_DB", str(directory / "policy.sqlite3"))
         monkeypatch.setenv("DECISION_LOG", str(directory / "decisions.jsonl"))
-        monkeypatch.setenv("DECISION_FILE", str(directory / "decision.json"))
-        monkeypatch.delenv("DECISION_STUB", raising=False)
         self._create = create_app
         self.app = create_app()
 

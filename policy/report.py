@@ -1,7 +1,6 @@
 """The parent usage report.
 
-The TOML policy still asks for one enrolled client and one site group. A YAML
-policy asks for a site group, a client group, or a quota. A site group or a
+The page asks for a site group, a client group, or a quota. A site group or a
 client group shows the last 14 household-local days. Each day lists the
 buckets that contained traffic: the clock times, the length stored for that
 bucket, and the bytes. A bucket counts toward the day's time once its end
@@ -25,14 +24,18 @@ from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlencode
 
 from policy.accounts import Accounts
-from policy.clients import Client
-from policy.config import BYTE_UNITS
-from policy.groups import SiteGroup
 from policy.hierarchy import Policy
-from policy.store import PolicyStore
 from policy.usage import UsageStore
 
 RECENT_DAYS = 14
+# The units the policy file's byte limits are written in, largest first.
+BYTE_UNITS = (
+    ("TB", 1024**4),
+    ("GB", 1024**3),
+    ("MB", 1024**2),
+    ("KB", 1024),
+)
+_KEYS = ("view", "client", "site", "quota")
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _MONTHS = (
@@ -49,12 +52,6 @@ _MONTHS = (
     "November",
     "December",
 )
-
-
-class NotInHousehold(Exception):
-    def __init__(self, kind: str) -> None:
-        super().__init__(kind)
-        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -75,20 +72,6 @@ class DayLine:
     def counted_seconds(self) -> int:
         return sum(bucket.length_seconds for bucket in self.buckets if bucket.counted)
 
-    @property
-    def byte_count(self) -> int:
-        return sum(bucket.byte_count for bucket in self.buckets)
-
-
-@dataclass(frozen=True)
-class UsageReport:
-    client: str
-    group: str
-    quota: int | None
-    byte_limit: int | None
-    timezone: str | None
-    days: tuple[DayLine, ...]
-
 
 @dataclass(frozen=True)
 class PageResponse:
@@ -102,28 +85,6 @@ def recent_dates(today: date, count: int = RECENT_DAYS) -> tuple[date, ...]:
     if count < 1:
         raise ValueError("the report covers at least one day")
     return tuple(today - timedelta(days=offset) for offset in range(count))
-
-
-def load_report(store: PolicyStore, client_name: str, group_name: str, now: datetime) -> UsageReport:
-    """Return the recent days for this client and group.
-
-    now is household-local. An aware value is already in that zone; its offset
-    is dropped, not converted. A bucket is counted when now is at or past its end.
-    """
-    wall = _wall(now)
-    client = next((item for item in store.clients() if item.name == client_name), None)
-    if client is None:
-        raise NotInHousehold("client")
-    group = next((item for item in store.groups() if item.name == group_name), None)
-    if group is None:
-        raise NotInHousehold("group")
-    dates = recent_dates(wall.date())
-    grouped: dict[date, list[BucketLine]] = {}
-    for day, start, length, nbytes in store.buckets_between(client.id, group.name, dates[-1], dates[0]):
-        end = start + timedelta(seconds=length)
-        grouped.setdefault(day, []).append(BucketLine(start, length, nbytes, end <= wall))
-    days = tuple(DayLine(day, tuple(grouped.get(day, ()))) for day in dates)
-    return UsageReport(client.name, group.name, group.quota, group.byte_limit, store.timezone(), days)
 
 
 def parse_form(body: bytes) -> dict[str, str]:
@@ -166,37 +127,6 @@ def open_parent(
     if accounts.accept(cookie, now) is None:
         return _response(200, _sign_in_page(query, rejected=False, keys=keys, title=title, home=home))
     return None
-
-
-def respond(
-    store: PolicyStore,
-    accounts: Accounts,
-    *,
-    method: str,
-    query: Mapping[str, str],
-    cookie: str | None,
-    form: Mapping[str, str],
-    now: datetime,
-) -> PageResponse:
-    """Return the usage page, the sign-in form, or a closed page.
-
-    now is household-local. The report is included only for a valid session.
-    A password in the query string does not open it.
-    """
-    denied = open_parent(
-        accounts,
-        method=method,
-        query=query,
-        cookie=cookie,
-        form=form,
-        now=now,
-        keys=("client", "group"),
-        title="Usage",
-        home="/usage",
-    )
-    if denied is not None:
-        return denied
-    return _response(200, _signed_in(store, query, now))
 
 
 def format_duration(seconds: int) -> str:
@@ -256,50 +186,10 @@ def format_day(day: date) -> str:
     return f"{_WEEKDAYS[day.weekday()]} {day.day} {_MONTHS[day.month - 1]} {day.year}"
 
 
-def _signed_in(store: PolicyStore, query: Mapping[str, str], now: datetime) -> str:
-    clients = store.clients()
-    groups = ordered_groups(store.groups())
-    client_name = query.get("client", "")
-    group_name = query.get("group", "")
-    parts = [
-        "<h1>Usage</h1>",
-        f"<p>{_timezone_line(store.timezone())}</p>",
-        f"<p>The last {RECENT_DAYS} days.</p>",
-        _chooser(clients, groups, client_name, group_name),
-    ]
-    if not client_name or not group_name:
-        parts.append("<p>Choose a client and a site group.</p>")
-    else:
-        try:
-            report = load_report(store, client_name, group_name, now)
-        except NotInHousehold as exc:
-            if exc.kind == "client":
-                parts.append("<p>That client is not in the household.</p>")
-            else:
-                parts.append("<p>That site group is not in the household.</p>")
-        else:
-            parts.append(_report_block(report))
-    return _document("\n".join(parts))
-
-
-def _report_block(report: UsageReport) -> str:
-    quota = (
-        "No quota on this group."
-        if report.quota is None
-        else f"Quota: {format_duration(report.quota)}."
-    )
-    limit = ""
-    if report.byte_limit is not None:
-        limit = f"\n<p>Byte limit: {_e(format_byte_limit(report.byte_limit))}.</p>"
-    days = "\n".join(_day_section(day, report.byte_limit) for day in report.days)
-    return f"<h2>{_e(report.client)}, {_e(report.group)}</h2>\n<p>{quota}</p>{limit}\n{days}"
-
-
-def _day_section(day: DayLine, byte_limit: int | None, *, site_column: bool = False) -> str:
+def _day_section(day: DayLine, *, site_column: bool = False) -> str:
     heading = format_day(day.day)
-    volume = _volume_line(day, byte_limit)
     if not day.buckets:
-        return f"<section><h3>{heading}</h3><p>no usage</p>{volume}</section>"
+        return f"<section><h3>{heading}</h3><p>no usage</p></section>"
     if day.counted_seconds == 0:
         summary = "Counted time: none yet."
     else:
@@ -309,7 +199,7 @@ def _day_section(day: DayLine, byte_limit: int | None, *, site_column: bool = Fa
     return (
         "<section>\n"
         f"<h3>{heading}</h3>\n"
-        f"<p>{summary}</p>{volume}\n"
+        f"<p>{summary}</p>\n"
         "<table>\n"
         f"<thead><tr><th>When</th>{site_head}<th>Time</th><th>Bytes</th></tr></thead>\n"
         "<tbody>\n"
@@ -318,13 +208,6 @@ def _day_section(day: DayLine, byte_limit: int | None, *, site_column: bool = Fa
         "</table>\n"
         "</section>"
     )
-
-
-def _volume_line(day: DayLine, byte_limit: int | None) -> str:
-    if byte_limit is None:
-        return ""
-    text = f"Bytes: {format_bytes(day.byte_count)} of {format_byte_limit(byte_limit)}."
-    return f"\n<p>{_e(text)}</p>"
 
 
 def _bucket_row(bucket: BucketLine, *, site_column: bool = False) -> str:
@@ -342,47 +225,17 @@ def _bucket_row(bucket: BucketLine, *, site_column: bool = False) -> str:
     )
 
 
-def _chooser(
-    clients: Sequence[Client],
-    groups: Sequence[SiteGroup],
-    client_name: str,
-    group_name: str,
-) -> str:
-    client_options = "\n".join(_option(client.name, client_name) for client in clients)
-    group_options = "\n".join(_option(group.name, group_name) for group in groups)
-    return (
-        '<form method="get" action="/usage">\n'
-        '<label for="client">Client</label>\n'
-        '<select id="client" name="client">\n'
-        f"{client_options}\n"
-        "</select>\n"
-        '<label for="group">Site group</label>\n'
-        '<select id="group" name="group">\n'
-        f"{group_options}\n"
-        "</select>\n"
-        '<button type="submit">Show</button>\n'
-        "</form>"
-    )
-
-
 def _option(name: str, chosen: str, label: str | None = None) -> str:
     selected = " selected" if name == chosen else ""
     shown = name if label is None else label
     return f'<option value="{_e(name)}"{selected}>{_e(shown)}</option>'
 
 
-def ordered_groups(groups: Sequence[SiteGroup]) -> tuple[SiteGroup, ...]:
-    """Return groups lowest priority first, with the default group last."""
-    ordinary = sorted((group for group in groups if not group.default), key=lambda group: group.priority)
-    default = [group for group in groups if group.default]
-    return tuple([*ordinary, *default])
-
-
 def _sign_in_page(
     query: Mapping[str, str],
     *,
     rejected: bool,
-    keys: Sequence[str] = ("client", "group"),
+    keys: Sequence[str] = _KEYS,
     title: str = "Usage",
     home: str = "/usage",
 ) -> str:
@@ -419,7 +272,7 @@ def _timezone_line(timezone: str | None) -> str:
 
 def _return_to(
     query: Mapping[str, str],
-    keys: Sequence[str] = ("client", "group"),
+    keys: Sequence[str] = _KEYS,
     home: str = "/usage",
 ) -> str:
     kept = [(key, query[key]) for key in keys if query.get(key)]
@@ -480,10 +333,7 @@ def _e(value: str) -> str:
     return html.escape(value, quote=True)
 
 
-_HIERARCHY_KEYS = ("view", "client", "site", "quota")
-
-
-def respond_hierarchy(
+def respond(
     policy: Policy | None,
     usage: UsageStore,
     accounts: Accounts,
@@ -506,16 +356,16 @@ def respond_hierarchy(
         cookie=cookie,
         form=form,
         now=now,
-        keys=_HIERARCHY_KEYS,
+        keys=_KEYS,
         title="Usage",
         home="/usage",
     )
     if denied is not None:
         return denied
-    return _response(200, _hierarchy_signed_in(policy, usage, query, now))
+    return _response(200, _signed_in(policy, usage, query, now))
 
 
-def _hierarchy_signed_in(
+def _signed_in(
     policy: Policy | None,
     usage: UsageStore,
     query: Mapping[str, str],
@@ -527,7 +377,7 @@ def _hierarchy_signed_in(
     parts = [
         "<h1>Usage</h1>",
         f"<p>{_timezone_line(timezone)}</p>",
-        _hierarchy_chooser(clients, sites, quotas, query),
+        _chooser(clients, sites, quotas, query),
     ]
     if view == "site":
         parts.append(_site_section(usage, clients, sites, query, now))
@@ -553,7 +403,7 @@ def _catalog(policy: Policy | None) -> tuple[tuple[str, ...], tuple[str, ...], t
     return tuple(clients), tuple(sites), tuple(quota.name for quota in policy.quotas)
 
 
-def _hierarchy_chooser(
+def _chooser(
     clients: Sequence[str],
     sites: Sequence[str],
     quotas: Sequence[str],
@@ -618,7 +468,7 @@ def _site_section(
     if site not in sites:
         return "<p>That site group is not in the household.</p>"
     days = _fill_days(usage.site_buckets(client, site, *_oldest_and_newest(now)), now, with_site=False)
-    body = "\n".join(_day_section(day, None) for day in days)
+    body = "\n".join(_day_section(day) for day in days)
     return f"<h2>{_e(client)}, {_e(site)}</h2>\n<p>The last {RECENT_DAYS} days.</p>\n{body}"
 
 
@@ -634,7 +484,7 @@ def _client_section(
     if client not in clients:
         return "<p>That client group is not in the household.</p>"
     days = _fill_days(usage.client_buckets(client, *_oldest_and_newest(now)), now, with_site=True)
-    body = "\n".join(_day_section(day, None, site_column=True) for day in days)
+    body = "\n".join(_day_section(day, site_column=True) for day in days)
     return f"<h2>{_e(client)}</h2>\n<p>The last {RECENT_DAYS} days.</p>\n{body}"
 
 

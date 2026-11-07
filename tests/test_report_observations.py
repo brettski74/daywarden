@@ -46,8 +46,8 @@ def _run(cmd, *, env, timeout, check=True):
 
 
 def _write_decision(config_dir: Path, document) -> None:
-    target = config_dir / "decision.json"
-    temporary = config_dir / ".decision.json.tmp"
+    target = config_dir / "next-decision.json"
+    temporary = config_dir / ".next-decision.json.tmp"
     temporary.write_text(json.dumps(document))
     temporary.replace(target)
 
@@ -64,7 +64,6 @@ class Stack:
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.env["OBSERVATION_INTERVAL"] = "1"
         self.cmd = [
             "docker",
@@ -76,7 +75,7 @@ class Stack:
             "-f",
             "tests/recording-origin.compose.yml",
             "-f",
-            "tests/decision-stub.compose.yml",
+            "tests/stub-decisions.compose.yml",
         ]
 
     @property
@@ -182,9 +181,6 @@ def stack(request):
         config_dir.mkdir()
         (config_dir / "bypass.txt").write_text("tasks.daywarden.test\n")
         _write_decision(config_dir, {"action": "allow"})
-        (config_dir / "policy.toml").write_text(
-            '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
-        )
         running = Stack(
             ca_dir,
             config_dir,

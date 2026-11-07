@@ -53,7 +53,6 @@ class Stack:
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.cmd = [
             "docker",
             "compose",
@@ -62,7 +61,7 @@ class Stack:
             "-f",
             "docker-compose.yml",
             "-f",
-            "tests/decision-stub.compose.yml",
+            "tests/stub-decisions.compose.yml",
         ]
 
     @property
@@ -101,10 +100,7 @@ def stack(request):
         ca_dir.mkdir()
         config_dir.mkdir()
         (config_dir / "bypass.txt").write_text("# none\n")
-        (config_dir / "decision.json").write_text('{"action": "allow"}\n')
-        (config_dir / "policy.toml").write_text(
-            '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
-        )
+        (config_dir / "next-decision.json").write_text('{"action": "allow"}\n')
         running = Stack(
             ca_dir,
             config_dir,

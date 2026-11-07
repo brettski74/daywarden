@@ -1,14 +1,14 @@
 """The policy service. The container runs: python -m policy.serve
 
-On start, POLICY_FILE is loaded. The household file is YAML
-(/etc/daywarden/policy.yaml). A YAML policy is decided by nested rule sets,
-and GET /usage slices today's usage by site group, client group, or quota.
-A path ending in .toml is still the previous engine, so older tests can
-point POLICY_FILE at a file they wrote. The shipped config/policy.toml is
-not that path. Parent pages stay closed until a parent account is added,
-and they are served only over HTTPS. The quiz sound sets are read once at
-start, from SOUND_DIR or the image's policy/static/sounds. Spelling words
-are read from DAYWARDEN_DATA_DIR each time a run starts.
+On start, POLICY_FILE is loaded. The household file is
+/etc/daywarden/policy.yaml. Requests are decided by its nested rule sets,
+and GET /usage slices recent usage by site group, client group, or quota.
+A POLICY_FILE that does not end in .yaml or .yml stops the service. A
+missing file leaves it running with nothing allowed. Parent pages stay
+closed until a parent account is added, and they are served only over
+HTTPS. The quiz sound sets are read once at start, from SOUND_DIR or the
+image's policy/static/sounds. Spelling words are read from
+DAYWARDEN_DATA_DIR each time a run starts.
 """
 
 from __future__ import annotations
@@ -21,21 +21,13 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
-from policy import config
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
-from policy.clients import ClientDirectory, normalize_ip
+from policy.clients import normalize_ip
 from policy.clock import HouseholdClock, machine_zone, named_zone
-from policy.decisions import (
-    DecisionLog,
-    answer_from_store,
-    context_for,
-    log_entry,
-    parse_request,
-)
+from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
-from policy.groups import SiteGroups
-from policy.hierarchy import Policy, load as load_hierarchy
-from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
+from policy.hierarchy import Policy, load as load_hierarchy, require_yaml
+from policy.report import parse_form, respond
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
 from policy.selection import picker_url
@@ -49,43 +41,20 @@ from policy.usage import UsageStore
 def create_app() -> FastAPI:
     policy_file = Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml"))
     database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
-    decision_file = Path(os.environ.get("DECISION_FILE", "/etc/daywarden/decision.json"))
-    decision_stub = os.environ.get("DECISION_STUB") == "1"
     decision_log = DecisionLog(Path(os.environ.get("DECISION_LOG", "/tmp/decisions.jsonl")))
     localtime = Path(os.environ.get("MACHINE_LOCALTIME", "/etc/localtime"))
 
     database.parent.mkdir(parents=True, exist_ok=True)
     idle, lifetime = session_limits(os.environ)
+    hierarchy_policy, clock, source = _load_policy(policy_file, localtime)
     store = PolicyStore(database)
     accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
     attempts = AttemptStore(connection=store.connection)
     returns = ReturnPages(store.connection)
-    # YAML is the household policy. A .toml path is the previous engine.
-    yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
-    hierarchy_policy: Policy | None = None
-    ledger: Ledger = Ledger()
-    usage_store: UsageStore | None = None
-    if yaml_mode:
-        hierarchy_policy, clock, source = _start_hierarchy(policy_file, localtime)
-        usage_store = UsageStore(connection=store.connection)
-        if hierarchy_policy is not None:
-            usage_store.install_length(hierarchy_policy.bucket_length, clock.local())
-        ledger = usage_store
-        _announce_hierarchy(hierarchy_policy, clock, source)
-        directory = ClientDirectory(())
-        site_groups = SiteGroups(())
-    elif policy_file.is_file():
-        print(f"loading {policy_file}", flush=True)
-        loaded = config.load(policy_file)
-        _zone, source = _household_zone(loaded.timezone, localtime)
-        clock = HouseholdClock(_zone)
-        config.apply(loaded, store, loaded_at=clock.local())
-        directory, site_groups = _announce_stored(store, clock, source)
-    else:
-        print(f"{policy_file} not found; using the stored policy", flush=True)
-        _zone, source = _household_zone(store.timezone(), localtime)
-        clock = HouseholdClock(_zone)
-        directory, site_groups = _announce_stored(store, clock, source)
+    usage_store = UsageStore(connection=store.connection)
+    if hierarchy_policy is not None:
+        usage_store.install_length(hierarchy_policy.bucket_length, clock.local())
+    _announce_policy(hierarchy_policy, clock, source)
     _announce_parents(accounts)
     sounds = load_sounds(Path(os.environ.get("SOUND_DIR", str(SOUND_DIR))))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -103,74 +72,47 @@ def create_app() -> FastAPI:
             document = json.loads(raw)
         except json.JSONDecodeError:
             document = {"raw": raw.decode("utf-8", "replace")}
-        if yaml_mode:
-            try:
-                parsed = parse_request(document)
-            except ValueError as exc:
-                decision_log.append(log_entry(document, None, None))
-                return PlainTextResponse(str(exc), status_code=400)
-            at = clock.local(parsed.occurred_at)
-            trace, assumption = _judge_for(
-                hierarchy_policy,
-                ledger,
-                parsed.client_ip,
-                parsed.url,
-                at,
-                attempts,
-            )
-            if (
-                usage_store is not None
-                and parsed.flow_id
-                and trace.decision.get("action") == "allow"
-            ):
-                usage_store.save_transfer(
-                    parsed.flow_id,
-                    trace.client_group,
-                    trace.site_group,
-                    parsed.url,
-                    assumption,
-                )
-            if hierarchy_policy is not None:
-                returns.note(
-                    hierarchy_policy,
-                    trace,
-                    client_ip=parsed.client_ip,
-                    method=parsed.method,
-                    url=parsed.url,
-                    sec_fetch_dest=parsed.sec_fetch_dest,
-                    accept=parsed.accept,
-                    at=at,
-                )
-            decision = json.dumps(trace.decision).encode()
-            decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
-            where = "no rule" if trace.continued else f"{trace.rule_set} rule {trace.rule_index}"
-            print(
-                f"decision {parsed.method} {parsed.url} ({trace.site_group}) "
-                f"for {trace.client_group} at {at.isoformat(timespec='seconds')} by {where}",
-                flush=True,
-            )
-            return Response(decision, media_type="application/json")
         try:
-            context = context_for(parse_request(document), clock, directory, site_groups)
+            parsed = parse_request(document)
         except ValueError as exc:
-            decision_log.append(log_entry(document, None, None))
+            decision_log.append(log_entry(document))
             return PlainTextResponse(str(exc), status_code=400)
-        decision = answer_from_store(
-            store,
-            context,
-            decision_file,
-            stub=decision_stub,
+        at = clock.local(parsed.occurred_at)
+        trace, assumption = _judge_for(
+            hierarchy_policy,
+            usage_store,
+            parsed.client_ip,
+            parsed.url,
+            at,
+            attempts,
         )
-        decision_log.append(log_entry(document, context, decision))
-        who = context.client.name if context.client else context.request.client_ip
-        group = context.group.name if context.group else "no group"
+        if parsed.flow_id and trace.decision.get("action") == "allow":
+            usage_store.save_transfer(
+                parsed.flow_id,
+                trace.client_group,
+                trace.site_group,
+                parsed.url,
+                assumption,
+            )
+        if hierarchy_policy is not None:
+            returns.note(
+                hierarchy_policy,
+                trace,
+                client_ip=parsed.client_ip,
+                method=parsed.method,
+                url=parsed.url,
+                sec_fetch_dest=parsed.sec_fetch_dest,
+                accept=parsed.accept,
+                at=at,
+            )
+        decision = json.dumps(trace.decision).encode()
+        decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
+        where = "no rule" if trace.continued else f"{trace.rule_set} rule {trace.rule_index}"
         print(
-            f"decision {context.request.method} {context.request.url} ({group}) "
-            f"for {who} at {context.local_time.isoformat(timespec='seconds')}",
+            f"decision {parsed.method} {parsed.url} ({trace.site_group}) "
+            f"for {trace.client_group} at {at.isoformat(timespec='seconds')} by {where}",
             flush=True,
         )
-        if decision is None:
-            return PlainTextResponse("missing decision", status_code=500)
         return Response(decision, media_type="application/json")
 
     @app.get("/quiz")
@@ -222,7 +164,7 @@ def create_app() -> FastAPI:
         def back() -> str | None:
             if hierarchy_policy is None:
                 return None
-            return way_back(hierarchy_policy, returns, ledger, client_ip, clock.local())
+            return way_back(hierarchy_policy, returns, usage_store, client_ip, clock.local())
 
         page = respond_task(
             policy,
@@ -288,26 +230,14 @@ def create_app() -> FastAPI:
 
     def _usage_page(request: Request, raw: bytes):
         cookie = cookie_value(request.headers.get("cookie"), COOKIE_NAME)
-        form = parse_form(raw)
-        if yaml_mode:
-            assert usage_store is not None
-            return respond_hierarchy(
-                hierarchy_policy,
-                usage_store,
-                accounts,
-                method=request.method,
-                query=_query(request, ("view", "client", "site", "quota")),
-                cookie=cookie,
-                form=form,
-                now=clock.local(),
-            )
         return respond(
-            store,
+            hierarchy_policy,
+            usage_store,
             accounts,
             method=request.method,
-            query=_query(request, ("client", "group")),
+            query=_query(request, ("view", "client", "site", "quota")),
             cookie=cookie,
-            form=form,
+            form=parse_form(raw),
             now=clock.local(),
         )
 
@@ -365,49 +295,23 @@ def _announce_parents(accounts: Accounts) -> None:
         print("usage report is closed until a parent account is added", flush=True)
 
 
-def _announce_stored(store: PolicyStore, clock: HouseholdClock, source: str):
-    """Print the TOML policy the way the service always has, and return what decisions use."""
-    clients = store.clients()
-    groups = store.groups()
-    revision_task = store.revision_task()
-    print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
-    for client in clients:
-        print(f"client {client.name}: {', '.join(client.ips) or 'no IP'}", flush=True)
-    if revision_task:
-        print(f"revision task placeholder {revision_task}", flush=True)
-    print(f"usage buckets are {_span(store.bucket_length())}", flush=True)
-    for group in sorted(groups, key=lambda group: (group.default, group.priority)):
-        detail = "default" if group.default else f"priority {group.priority}, {len(group.patterns)} patterns"
-        rules = "1 rule" if len(group.rules) == 1 else f"{len(group.rules)} rules"
-        quota = "no quota" if group.quota is None else f"quota {_span(group.quota)}"
-        volume = (
-            "no byte limit"
-            if group.byte_limit is None
-            else f"byte limit {format_byte_limit(group.byte_limit)}"
-        )
-        print(f"group {group.name}: {detail}, {rules}, {quota}, {volume}", flush=True)
-    if not any(group.default for group in groups):
-        print("no default group; sites outside every group are denied", flush=True)
-    return ClientDirectory(clients), SiteGroups(groups)
-
-
-def _start_hierarchy(policy_file: Path, localtime: Path):
-    """Load a YAML policy. A missing file leaves the service with nothing to decide."""
+def _load_policy(policy_file: Path, localtime: Path):
+    """Load the household policy. A missing file leaves the service with nothing to decide."""
+    require_yaml(policy_file)
     if policy_file.is_file():
         print(f"loading {policy_file}", flush=True)
-        policy = load_hierarchy(policy_file)
     else:
-        print(f"{policy_file} not found; no hierarchical policy is loaded", flush=True)
-        policy = None
+        print(f"{policy_file} not found; no policy is loaded", flush=True)
+    policy = load_hierarchy(policy_file)
     timezone = None if policy is None else policy.timezone
     zone, source = _household_zone(timezone, localtime)
     return policy, HouseholdClock(zone), source
 
 
-def _announce_hierarchy(policy: Policy | None, clock: HouseholdClock, source: str) -> None:
+def _announce_policy(policy: Policy | None, clock: HouseholdClock, source: str) -> None:
     print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
     if policy is None:
-        print("no hierarchical policy loaded", flush=True)
+        print("no policy loaded", flush=True)
         return
     print(f"task pages are {picker_url(policy)}", flush=True)
     print(f"usage buckets are {_span(policy.bucket_length)}", flush=True)

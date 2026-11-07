@@ -1,21 +1,12 @@
-"""Which household computer a source IP belongs to."""
+"""IP addresses and the DNS names a client group may list instead."""
 
 from __future__ import annotations
 
 import ipaddress
 import socket
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable
 
 Lookup = Callable[..., list]
-
-
-@dataclass(frozen=True)
-class Client:
-    id: int
-    name: str
-    address: str
-    ips: tuple[str, ...]
 
 
 class UnresolvedAddress(LookupError):
@@ -54,14 +45,3 @@ def resolve_address(address: str, lookup: Lookup = socket.getaddrinfo) -> tuple[
     if not ips:
         raise UnresolvedAddress(f"{address}: no addresses")
     return tuple(ips)
-
-
-class ClientDirectory:
-    def __init__(self, clients: Iterable[Client]) -> None:
-        self._by_ip = {ip: client for client in clients for ip in client.ips}
-
-    def find(self, ip: str) -> Client | None:
-        normalized = normalize_ip(ip)
-        if normalized is None:
-            return None
-        return self._by_ip.get(normalized)

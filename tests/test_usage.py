@@ -634,30 +634,6 @@ rule_sets:
         assert usage.client_buckets("younger", WEDNESDAY) == []
 
 
-def test_the_old_client_and_site_group_rows_are_not_the_ledger(tmp_path):
-    policy = _house(
-        tmp_path,
-        """\
-entry: entry
-quotas:
-  entertainment:
-    time: 2h
-    ruleset: entertainment_meter
-rule_sets:
-  entry:
-    - condition: always
-      when_true: { action: allow }
-"""
-        + METER,
-    )
-    with PolicyStore(":memory:") as store:
-        usage = UsageStore(connection=store.connection)
-        _observe(policy, usage, _at(15, 0, 1), nbytes=100)
-        (old_rows,) = store.connection.execute("SELECT COUNT(*) FROM usage_buckets").fetchone()
-        assert old_rows == 0
-        assert usage.stored_bytes("younger", "entertainment", _at(15, 4)) == 100
-
-
 def test_a_balance_on_a_zero_grace_is_a_cut_and_a_failure_is_not(tmp_path, monkeypatch):
     policy = _house(
         tmp_path,
@@ -682,7 +658,7 @@ rule_sets:
     database = tmp_path / "policy.sqlite3"
     with PolicyStore(database, check_same_thread=False) as store:
         usage = UsageStore(connection=store.connection)
-        server = listen(store, "127.0.0.1", 0, tmp_path / "observations.jsonl", policy=policy, usage=usage)
+        server = listen(policy, usage, "127.0.0.1", 0, tmp_path / "observations.jsonl")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_address[1]
@@ -717,11 +693,11 @@ rule_sets:
             server.server_close()
 
 
-def test_a_missing_yaml_policy_accepts_a_report_and_records_nothing(tmp_path):
+def test_a_missing_policy_accepts_a_report_and_records_nothing(tmp_path):
     with PolicyStore(":memory:") as store:
         usage = UsageStore(connection=store.connection)
         body = json.dumps(_report(_at(15, 0, 1))).encode()
-        assert status_for(store, body, policy=None, usage=usage) == (204, b"")
+        assert status_for(None, usage, body) == (204, b"")
         assert usage.quota_clients("entertainment") == []
 
 
@@ -753,8 +729,6 @@ rule_sets:
     monkeypatch.setenv("POLICY_FILE", str(policy_path))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_PASSWORD", raising=False)
     app = create_app()
     status, body = _post_decision(

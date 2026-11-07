@@ -46,8 +46,8 @@ def _run(cmd, *, env, timeout, check=True):
 
 
 def _write_decision(config_dir: Path, document) -> None:
-    target = config_dir / "decision.json"
-    temporary = config_dir / ".decision.json.tmp"
+    target = config_dir / "next-decision.json"
+    temporary = config_dir / ".next-decision.json.tmp"
     if isinstance(document, str):
         text = document
     else:
@@ -68,7 +68,6 @@ class Stack:
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
-        self.env["POLICY_FILE"] = "/etc/daywarden/policy.toml"
         self.cmd = [
             "docker",
             "compose",
@@ -79,7 +78,7 @@ class Stack:
             "-f",
             "tests/recording-origin.compose.yml",
             "-f",
-            "tests/decision-stub.compose.yml",
+            "tests/stub-decisions.compose.yml",
         ]
 
     @property
@@ -203,9 +202,6 @@ def stack(request):
             "# task site and classroom\n*.google.test\ntasks.daywarden.test\n"
         )
         _write_decision(config_dir, {"action": "allow"})
-        (config_dir / "policy.toml").write_text(
-            '[[groups]]\nname = "Everything"\npriority = 1\ndefault = true\n'
-        )
         running = Stack(
             ca_dir,
             config_dir,
@@ -236,7 +232,6 @@ def test_allow_returns_the_origin_response(stack):
     assert _paths(stack.jsonl("origin", ORIGIN_LOG)) == ["/index.html?v=abc"]
 
     logged = stack.jsonl("decisions", DECISION_LOG)[-1]
-    assert logged["client"] is None
     assert logged["decision"] == {"action": "allow"}
     entry = logged["request"]
     assert set(entry) == {"client_ip", "method", "url", "occurred_at", "flow_id", "accept"}

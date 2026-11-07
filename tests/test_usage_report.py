@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 from policy.clock import HouseholdClock  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
-from policy.report import respond_hierarchy  # noqa: E402
+from policy.report import format_byte_limit, respond  # noqa: E402
 from policy.usage import UsageStore, observe  # noqa: E402
 
 SYDNEY = ZoneInfo("Australia/Sydney")
@@ -113,7 +113,7 @@ def _token(page) -> str:
 
 def _signed(policy, usage: UsageStore, now: datetime, query: dict) -> str:
     accounts = _accounts(usage)
-    opened = respond_hierarchy(
+    opened = respond(
         policy,
         usage,
         accounts,
@@ -124,7 +124,7 @@ def _signed(policy, usage: UsageStore, now: datetime, query: dict) -> str:
         now=now,
     )
     assert opened.status == 303
-    page = respond_hierarchy(
+    page = respond(
         policy,
         usage,
         accounts,
@@ -558,7 +558,7 @@ def test_without_an_account_the_page_is_closed(tmp_path):
         now = _at(12, day=22)
         query = {"view": "site", "client": "younger", "site": "entertainment"}
         accounts = Accounts(usage.connection)
-        page = respond_hierarchy(
+        page = respond(
             policy, usage, accounts, method="GET", query=query, cookie=None, form={}, now=now
         )
         assert page.status == 403
@@ -570,7 +570,7 @@ def test_without_an_account_the_page_is_closed(tmp_path):
         assert "140" not in page.body
         assert "<option" not in page.body
         assert dict(page.headers)["cache-control"] == "no-store"
-        posted = respond_hierarchy(
+        posted = respond(
             policy,
             usage,
             accounts,
@@ -592,7 +592,7 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         now = _at(12, day=22)
         accounts = _accounts(usage)
         query = {"view": "site", "client": "younger", "site": "entertainment", "quota": "notes"}
-        page = respond_hierarchy(
+        page = respond(
             policy, usage, accounts, method="GET", query=query, cookie=None, form={}, now=now
         )
         assert page.status == 200
@@ -602,7 +602,7 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         assert "140" not in page.body
         assert "no usage" not in page.body
 
-        posted = respond_hierarchy(
+        posted = respond(
             policy,
             usage,
             accounts,
@@ -619,7 +619,7 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         assert "00:30" not in posted.body
         assert "140" not in posted.body
 
-        opened = respond_hierarchy(
+        opened = respond(
             policy,
             usage,
             accounts,
@@ -638,21 +638,21 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         assert parsed["site"] == ["entertainment"]
         assert parsed["quota"] == ["notes"]
         token = _token(opened)
-        shown = respond_hierarchy(
+        shown = respond(
             policy, usage, accounts, method="GET", query=query, cookie=token, form={}, now=now
         )
         assert "00:30 to 00:35" in shown.body
         assert "140 bytes" in shown.body
 
         forged = token[:-1] + ("0" if token[-1] != "0" else "1")
-        rejected = respond_hierarchy(
+        rejected = respond(
             policy, usage, accounts, method="GET", query=query, cookie=forged, form={}, now=now
         )
         assert "Enter your username and password." in rejected.body
         assert "00:30" not in rejected.body
         assert "140" not in rejected.body
 
-        from_query = respond_hierarchy(
+        from_query = respond(
             policy,
             usage,
             accounts,
@@ -666,6 +666,25 @@ def test_the_password_opens_the_report_and_a_forged_cookie_does_not(tmp_path):
         assert "00:30" not in from_query.body
 
 
+@pytest.mark.parametrize(
+    ("count", "shown"),
+    [
+        (0, "0 bytes"),
+        (1, "1 byte"),
+        (1000, "1,000 bytes"),
+        (1024, "1 KB"),
+        (1500, "1,500 bytes"),
+        (2 * 1024, "2 KB"),
+        (500 * 1024**2, "500 MB"),
+        (1024**3, "1 GB"),
+        (2 * 1024**4, "2 TB"),
+        (1024**4 + 1024, "1,073,741,825 KB"),
+    ],
+)
+def test_a_byte_limit_is_shown_in_the_largest_whole_unit(count, shown):
+    assert format_byte_limit(count) == shown
+
+
 def test_the_service_serves_the_report_behind_the_same_barrier(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from policy.app import create_app
@@ -676,8 +695,6 @@ def test_the_service_serves_the_report_behind_the_same_barrier(tmp_path, monkeyp
     monkeypatch.setenv("POLICY_FILE", str(policy_path))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_PASSWORD", raising=False)
     monkeypatch.delenv("PARENT_IDLE", raising=False)
     monkeypatch.delenv("PARENT_LIFETIME", raising=False)

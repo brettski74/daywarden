@@ -774,8 +774,6 @@ def test_the_service_serves_the_task_and_counts_a_parent_check(tmp_path, monkeyp
     monkeypatch.setenv("POLICY_FILE", str(policy_file))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     app = create_app()
 
     def call(method, path, *, body=b"", cookie=None, client=YOUNGER, scheme="http", content_type=None):

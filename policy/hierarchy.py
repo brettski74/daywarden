@@ -32,6 +32,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -39,10 +40,11 @@ from policy import arithmetic, parts_of_speech, skip_counting, spelling
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, resolve_address
 from policy.clock import named_zone
-from policy.rules import REVISION_TASK, absolute_http_url
-from policy.store import DEFAULT_BUCKET_SECONDS
 from policy.tasks import Task
 
+# A redirect to this location goes to the task pages on the policy server.
+REVISION_TASK = "revision_task"
+DEFAULT_BUCKET_SECONDS = 300
 DEFAULT_TIME_GRACE = 5 * 60
 DEFAULT_VOLUME_GRACE = 1024**2
 
@@ -324,6 +326,22 @@ class _Loader(yaml.SafeLoader):
         return super().compose_node(parent, index)
 
 
+def absolute_http_url(value: str) -> bool:
+    """True when value is an absolute http or https URL the addon will accept."""
+    if any(char in value for char in "\r\n\t "):
+        return False
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def require_yaml(path: str | Path) -> Path:
+    """Return path when it names a YAML file. Raise ``ConfigError`` otherwise."""
+    root = Path(path)
+    if root.suffix.lower() not in {".yaml", ".yml"}:
+        raise ConfigError(f"{root}: the policy must be YAML, in a file ending in .yaml or .yml")
+    return root
+
+
 def load(
     path: str | Path,
     *,
@@ -334,8 +352,10 @@ def load(
 ) -> Policy | None:
     """Load ``path`` into a new policy.
 
-    A missing root file returns ``previous``, including when ``previous`` is
-    None. A present root that is not valid YAML policy raises ``ConfigError``.
+    A root path that does not end in ``.yaml`` or ``.yml`` raises
+    ``ConfigError``, whether or not the file is there. A missing root file
+    returns ``previous``, including when ``previous`` is None. A present root
+    that is not valid YAML policy raises ``ConfigError``.
     ``previous`` is only read, so a failed load leaves it as it was. Pass the
     last successful policy so a DNS name that fails this time can keep the
     addresses that name resolved to then.
@@ -344,7 +364,7 @@ def load(
     household data directory, such as the spelling word pools. A service that
     does not mount that directory loads this way.
     """
-    root = Path(path)
+    root = require_yaml(path)
     if not root.is_file():
         return previous
     build = _Build(task_data=task_data)

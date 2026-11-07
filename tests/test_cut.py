@@ -437,9 +437,7 @@ rule_sets:
     database = tmp_path / "policy.sqlite3"
     with PolicyStore(database, check_same_thread=False) as store:
         usage = UsageStore(connection=store.connection)
-        server = listen(
-            store, "127.0.0.1", 0, tmp_path / "observations.jsonl", policy=policy, usage=usage
-        )
+        server = listen(policy, usage, "127.0.0.1", 0, tmp_path / "observations.jsonl")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_address[1]
@@ -747,8 +745,6 @@ rule_sets:
     monkeypatch.setenv("POLICY_FILE", str(tmp_path / "policy.yaml"))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_PASSWORD", raising=False)
     app = create_app()
     status, body = _post_decision(
@@ -768,12 +764,6 @@ rule_sets:
         assert row is not None
         assert row[4] == (("entertainment", 1000),)
         assert _answer(policy, usage, _at(15, 0, 1), nbytes=1000) == (200, CUT_BODY)
-
-
-def test_the_toml_ledger_answers_empty(tmp_path):
-    with PolicyStore(":memory:") as store:
-        body = json.dumps(_report(_at(15, 0, 1))).encode()
-        assert status_for(store, body) == (204, b"")
 
 
 def _house(directory: Path, body: str):
@@ -815,8 +805,7 @@ def _report(
 
 def _answer(policy, usage: UsageStore, moment: datetime, **kwargs) -> tuple[int, bytes]:
     body = json.dumps(_report(moment, **kwargs)).encode()
-    with PolicyStore(":memory:") as store:
-        return status_for(store, body, policy=policy, usage=usage)
+    return status_for(policy, usage, body)
 
 
 def _decision(policy, usage: UsageStore, moment: datetime) -> dict:

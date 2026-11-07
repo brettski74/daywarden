@@ -17,25 +17,29 @@ sys.path.insert(0, str(ROOT))
 
 from policy import accounts as accounts_module  # noqa: E402
 from policy.accounts import Accounts, _DUMMY, session_limits  # noqa: E402
+from policy.hierarchy import load  # noqa: E402
 from policy.observations import status_for  # noqa: E402
 from policy.report import respond  # noqa: E402
 from policy.review import respond_attempts, respond_parent_check  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
+from policy.usage import UsageStore  # noqa: E402
 
 PASSWORD = "s3cret-pass"
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
-HOUSE = """
-[household]
-timezone = "Australia/Sydney"
-
-[[clients]]
-name = "Younger child"
-address = "192.0.2.40"
-
-[[groups]]
-name = "Entertainment"
-priority = 30
-patterns = ["*.youtube.com"]
+HOUSE = """\
+timezone: Australia/Sydney
+entry: entry
+client_groups:
+  younger:
+    addresses: ["192.0.2.40"]
+site_groups:
+  entertainment:
+    priority: 30
+    patterns: ["*.youtube.com"]
+rule_sets:
+  entry:
+    - condition: always
+      when_true: { action: allow }
 """
 
 
@@ -45,9 +49,16 @@ def _accounts(store: PolicyStore, **limits) -> Accounts:
     return accounts
 
 
+def _policy(directory: Path):
+    path = directory / "policy.yaml"
+    path.write_text(HOUSE, encoding="utf-8")
+    return load(path)
+
+
 def _usage(store: PolicyStore, accounts: Accounts, method: str, **kwargs):
     return respond(
-        store,
+        kwargs.get("policy"),
+        UsageStore(connection=store.connection),
         accounts,
         method=method,
         query=kwargs.get("query", {}),
@@ -71,7 +82,7 @@ def test_a_missing_limit_uses_the_default_and_a_bad_one_stops_startup():
 
 def test_the_password_is_an_argon2id_hash_and_the_session_stores_the_key_hash(tmp_path):
     database = tmp_path / "policy.sqlite3"
-    policy = tmp_path / "policy.toml"
+    policy = tmp_path / "policy.yaml"
     policy.write_text(HOUSE, encoding="utf-8")
     before = policy.read_bytes()
     with PolicyStore(database) as store:
@@ -117,49 +128,59 @@ def test_an_unknown_username_still_runs_a_password_check(monkeypatch):
     assert seen[1].startswith("$argon2id$")
 
 
-def test_unknown_username_and_wrong_password_look_the_same():
+def test_unknown_username_and_wrong_password_look_the_same(tmp_path):
+    policy = _policy(tmp_path)
     with PolicyStore(":memory:") as store:
-        from policy import config
-
-        config.apply(config.parse(HOUSE), store, loaded_at=None)
         accounts = _accounts(store)
         unknown = _usage(
             store,
             accounts,
             "POST",
-            query={"client": "Younger child"},
+            policy=policy,
+            query={"view": "site", "client": "younger", "site": "entertainment"},
             form={"username": "nobody", "password": PASSWORD},
         )
         wrong = _usage(
             store,
             accounts,
             "POST",
-            query={"client": "Younger child"},
+            policy=policy,
+            query={"view": "site", "client": "younger", "site": "entertainment"},
             form={"username": "ada", "password": "wrong-password"},
         )
         assert unknown.status == wrong.status == 401
         assert unknown.body == wrong.body
         assert "That username or password is not right." in unknown.body
-        assert "Younger child" not in unknown.body
+        assert "<h2>" not in unknown.body
+        assert "<option" not in unknown.body
         assert "set-cookie" not in dict(unknown.headers)
         assert "set-cookie" not in dict(wrong.headers)
 
 
-def test_the_right_password_sets_a_secure_cookie_and_the_next_page_opens():
+def test_the_right_password_sets_a_secure_cookie_and_the_next_page_opens(tmp_path):
+    policy = _policy(tmp_path)
     with PolicyStore(":memory:") as store:
         accounts = _accounts(store)
         opened = _usage(
-            store, accounts, "POST", form={"username": "ada", "password": PASSWORD}
+            store,
+            accounts,
+            "POST",
+            query={"view": "client", "client": "younger"},
+            form={"username": "ada", "password": PASSWORD},
         )
+        assert dict(opened.headers)["location"] == "/usage?view=client&client=younger"
         assert opened.status == 303
         header = dict(opened.headers)["set-cookie"]
         assert header.startswith("parent_session=")
         assert "Secure" in header
         assert "HttpOnly" in header
         token = header.split(";", 1)[0].split("=", 1)[1]
-        page = _usage(store, accounts, "GET", cookie=token)
+        page = _usage(
+            store, accounts, "GET", policy=policy, cookie=token, query={"view": "client", "client": "younger"}
+        )
         assert page.status == 200
         assert "Enter your username and password." not in page.body
+        assert "<h2>younger</h2>" in page.body
 
 
 def test_a_query_string_password_and_an_old_gate_cookie_do_not_sign_in():
@@ -374,7 +395,7 @@ def test_the_decision_and_observation_apis_do_not_record_a_pass():
                 "bytes": 20,
             }
         ).encode()
-        assert status_for(store, body) == (204, b"")
+        assert status_for(None, UsageStore(connection=store.connection), body) == (204, b"")
         assert store.connection.execute("SELECT COUNT(*) FROM parent_checks").fetchone()[0] == 0
 
 
@@ -386,8 +407,6 @@ def test_parent_pages_over_http_do_not_set_a_cookie_or_record_a_pass(tmp_path, m
     monkeypatch.setenv("POLICY_FILE", str(tmp_path / "policy.yaml"))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
-    monkeypatch.delenv("DECISION_STUB", raising=False)
     monkeypatch.delenv("PARENT_IDLE", raising=False)
     monkeypatch.delenv("PARENT_LIFETIME", raising=False)
     with PolicyStore(database) as store:
@@ -480,7 +499,6 @@ def test_the_service_uses_the_configured_session_limits(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_FILE", str(tmp_path / "policy.yaml"))
     monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.setenv("DECISION_FILE", str(tmp_path / "decision.json"))
     monkeypatch.setenv("PARENT_IDLE", "1m")
     monkeypatch.setenv("PARENT_LIFETIME", "5m")
     app = create_app()
