@@ -95,16 +95,58 @@ dw_service_states() {
     done
 }
 
+# The host directory mounted at /etc/daywarden, written the way the parent
+# would from the daywarden directory, such as config.
+dw_config_dir() {
+    local dir=${DAYWARDEN_CONFIG_DIR:-./config}
+    case "$dir" in
+    "$root"/*) dir=${dir#"$root"/} ;;
+    /*) ;;
+    *) dir=${dir#./} ;;
+    esac
+    printf '%s\n' "$dir"
+}
+
 # Create the CA and data directories, so Docker does not create them owned
-# by root, then start the stack and wait until every service is healthy.
-dw_compose_up() {
-    local data bad="" service state failed=()
+# by root.
+dw_make_dirs() {
     if [ -z "${CA_VOLUME_PATH:-}" ]; then
         echo "dw: CA_VOLUME_PATH is not set in $root/.env." >&2
         return 1
     fi
-    data=$(dw_data_dir)
-    mkdir -p -- "$CA_VOLUME_PATH" "$data"
+    mkdir -p -- "$CA_VOLUME_PATH" "$(dw_data_dir)"
+}
+
+# Check the policy with the code in the policy image, and change nothing.
+# The first argument is exec, for the running decisions container, or run,
+# for a new container that starts no other service and publishes no port.
+# The rest go to policy.check. True when the policy has no errors.
+dw_check_policy() {
+    local how=$1
+    shift
+    local check=(python -m policy.check --host-dir "$(dw_config_dir)" "$@")
+    if [ "$how" = exec ]; then
+        dw_compose exec -T decisions "${check[@]}"
+        return
+    fi
+    dw_make_dirs || return 1
+    dw_compose --progress quiet run --rm --no-deps -T --quiet-build decisions "${check[@]}"
+}
+
+# Check the policy, then start the stack and wait until every service is
+# healthy. The argument ends the count line when the policy has errors,
+# such as "daywarden was not started.".
+dw_compose_up() {
+    dw_make_dirs || return 1
+    dw_check_policy run --quiet --refused "$1" || return 1
+    dw_start_checked
+}
+
+# Start the stack once the policy has been checked, and wait until every
+# service is healthy. Name each service that is not, and show why.
+dw_start_checked() {
+    local bad="" service state failed=()
+    dw_make_dirs || return 1
     if dw_compose up -d --wait --wait-timeout 180; then
         return 0
     fi
@@ -123,6 +165,34 @@ dw_compose_up() {
         fi
     done
     return 1
+}
+
+# Print each running service whose container was created from settings
+# other than .env and docker-compose.yml give now. Compose labels each
+# container with the hash of the settings it was created from.
+dw_stale_services() {
+    local wanted service hash
+    local -A want=()
+    wanted=$(dw_compose config --hash '*' 2>/dev/null) || return 0
+    while read -r service hash; do
+        [ -n "$service" ] && want[$service]=$hash
+    done <<<"$wanted"
+    while IFS=$'\t' read -r service hash; do
+        [ -n "$service" ] || continue
+        [ "${want[$service]:-}" = "$hash" ] || printf '%s\n' "$service"
+    done < <(docker ps --filter "label=com.docker.compose.project=${DW_PROJECT:-daywarden}" \
+        --format '{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.config-hash"}}' 2>/dev/null | sort)
+}
+
+# While daywarden starts at boot, start the user service too, so it shows
+# active and dw down stops it.
+dw_track_with_user_service() {
+    if dw_user_manager && dw_enabled; then
+        if ! systemctl --user start "$DW_UNIT"; then
+            echo "dw: the daywarden user service did not start. See journalctl --user -u daywarden." >&2
+            return 1
+        fi
+    fi
 }
 
 dw_user_manager() {

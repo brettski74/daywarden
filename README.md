@@ -10,13 +10,19 @@ make up
 
 `make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
 
+`make reload`, `make restart`, and `make check` run `bin/dw reload`, `bin/dw restart`, and `bin/dw check` on this checkout. They are described under [The policy file](#the-policy-file). `make restart` also rebuilds the policy image, so it picks up changes to the code under `policy/`. `make reload` and `make check` run in the containers that are already running, so they use the code those containers were built from. `make help` lists every target and what it does.
+
 The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
 
 Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt`. The policy service classifies the URL into one site group and the source address into one client group, then walks the rule set named by `entry`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not allow, deny, or redirect, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
 ## The policy file
 
-`config/policy.yaml` is the household policy. The decisions service loads it each time it starts. Edit the file, then run `docker compose restart decisions`. The observations service reads the same file when it starts, so restart that too (`docker compose restart observations`) when an edit changes which traffic is counted. If the file is missing, the service starts with nothing loaded and denies requests. `POLICY_FILE`, set in `.env`, points both services at another file. It is the path inside the containers, where the configuration directory is `/etc/daywarden`, and it defaults to `/etc/daywarden/policy.yaml`. Its name must end in `.yaml` or `.yml`. Any other name stops both services at start with an error that names the file.
+`config/policy.yaml` is the household policy. Edit it, then run `dw reload` (`bin/dw reload` in a clone). It checks the whole policy and lists every error it finds, each with its file and line, such as `config/policy.yaml:42:5: unknown setting timezon`, and changes nothing until they are all fixed. A good policy is used for the next request through the proxy, and no container restarts. A quiz in progress, a download or video already running, a parent signed in to the parent pages, and the usage recorded so far all carry on. A running transfer keeps the deadline and byte ceiling recorded when it was allowed, and is walked again with the reloaded policy when it reaches them. `dw check` checks the policy and changes nothing. `dw up` and the start at boot check it first, so a broken policy does not start daywarden.
+
+`config/bypass.txt` is read on every request, and spelling recordings whenever a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, such as `PROXY_PORT`, `PARENT_NAMES`, or `OBSERVATION_INTERVAL`, needs `dw restart`, which checks the policy and then replaces every container. `dw reload` warns when that is needed and names the services still running with the old settings. See [Applying an edit](docs/hierarchical-policy.md#applying-an-edit) for the details.
+
+`dw check`, `dw reload`, and `dw up` refuse a missing policy file. A service started another way, such as `make up`, starts with nothing loaded and denies requests. `POLICY_FILE`, set in `.env`, points both services at another file. It is the path inside the containers, where the configuration directory is `/etc/daywarden`, and it defaults to `/etc/daywarden/policy.yaml`. Its name must end in `.yaml` or `.yml`. Any other name stops both services at start with an error that names the file.
 
 The file names client groups, site groups, time windows, quotas, and rule sets. `entry` is the rule set where a decision starts. `hostname` is the DNS name external clients use to open the policy server. It is a host, not a URL. Leave it out to use the hostname of the machine running Compose, read from that machine's `/etc/hostname`. The name inside the decisions container is not used. Set it when that name is not the one in the browser's address bar. `port` is the port those clients use. Leave it out to use `POLICY_PORT`. Set it when a reverse proxy presents the pages on a different port. A redirect to the `revision_task` token is `https://<hostname>:<port>/tasks/<name>`, and port 443 is left off. The file does not contain a `revision_task` URL. `timezone` is an IANA name. The sample sets `America/Toronto`. Delete that line to use the timezone of the machine running Compose, which is read from that machine's `/etc/localtime`.
 
@@ -258,23 +264,28 @@ On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server line
 ### Running it with dw
 
 ```sh
-dw up          # start, and wait until every service is healthy
+dw up          # check the policy, start, and wait until every service is healthy
 dw status      # version, start at boot, and each service. Exits 0 only when all are healthy
+dw reload      # check config/policy.yaml and apply it without restarting a container
+dw check       # check the policy and list every error. Changes nothing
+dw restart     # check the policy, then replace every container. Applies .env changes and a new version
 dw down        # stop and remove the containers. The CA, database, configuration, and recordings stay
 add-parent ada
 ```
+
+A broken policy stops `dw up` and `dw restart` before anything is started or stopped, with `dw: the policy has 2 errors. daywarden was not started.` (or `Nothing was restarted.`) and every error. A running daywarden keeps running with the policy it had. `dw restart` on a stopped daywarden starts it, the same as `dw up`. Whether a parent stays signed in across `dw restart` is the same as across `dw down` and `dw up`.
 
 `dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts` and `add-parent` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
 
 ### Start at boot
 
-`dw enable` writes the systemd user service `~/.config/systemd/user/daywarden.service`, enables it, and turns on lingering for this user (`loginctl enable-linger`), so daywarden starts at boot without anyone logging in. No `sudo` is needed. It does not start a stopped daywarden, and a running one keeps running and is tracked by the service. While enabled, `dw up` and `dw down` also start and stop the service. At boot the service waits up to two minutes for Docker. If Docker does not answer, `dw status` says the last start failed and `journalctl --user -u daywarden` says why. Docker itself must start at boot: `sudo systemctl enable docker.service`. A container that crashes comes back by itself, but Docker does not start daywarden on its own after a reboot: that is only up to `dw enable`.
+`dw enable` writes the systemd user service `~/.config/systemd/user/daywarden.service`, enables it, and turns on lingering for this user (`loginctl enable-linger`), so daywarden starts at boot without anyone logging in. No `sudo` is needed. It does not start a stopped daywarden, and a running one keeps running and is tracked by the service. While enabled, `dw up` and `dw restart` also start the service, and `dw down` stops it. At boot the service waits up to two minutes for Docker, then checks the policy. If Docker does not answer, or the policy has an error, `dw status` says the last start failed and `journalctl --user -u daywarden` says why. Docker itself must start at boot: `sudo systemctl enable docker.service`. A container that crashes comes back by itself, but Docker does not start daywarden on its own after a reboot: that is only up to `dw enable`.
 
 `dw disable` stops daywarden starting at boot. It does not stop a running daywarden, and it leaves lingering on, because other user services may need it. `loginctl disable-linger` turns that off. A first install asks whether to enable start at boot. An upgrade keeps the current setting.
 
 ### Upgrading
 
-Run the newer package's `./install.sh` the same way. `.env`, `policy.yaml`, and `bypass.txt` are kept byte for byte, and the new copies land beside them as `.sample` files, so `diff ~/daywarden/.env ~/daywarden/.env.sample` shows what changed. If daywarden is running, the installer asks `Daywarden is running. Restart it to finish the upgrade? [y/N]` before it changes anything. Anything but `y` stops with nothing changed. A yes installs the files, then runs `dw down` and `dw up`.
+Run the newer package's `./install.sh` the same way. `.env`, `policy.yaml`, and `bypass.txt` are kept byte for byte, and the new copies land beside them as `.sample` files, so `diff ~/daywarden/.env ~/daywarden/.env.sample` shows what changed. If daywarden is running, the installer asks `Daywarden is running. Restart it to finish the upgrade? [y/N]` before it changes anything. Anything but `y` stops with nothing changed. A yes installs the files, then runs `dw restart`. If the new version refuses the policy, the restart stops before anything is stopped, and the old version keeps running until the policy is fixed and `dw restart` is run again.
 
 ### Cutting clips on the installed machine
 

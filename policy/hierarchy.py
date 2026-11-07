@@ -18,6 +18,13 @@ A missing root file returns the previous policy unchanged. Any other problem
 raises ``ConfigError`` and leaves that previous policy untouched. Decisions
 from the loaded policy are made in ``policy.engine``. This module is the loader.
 
+The loader does not stop at the first problem. Every file is read, each item
+is parsed on its own, and an item's independent fields are each checked, so
+one ``ConfigError`` lists every problem it can find, sorted by file in the
+order the policy includes them, then by line. An item that failed still
+counts as defined, so a rule that names it gets no knock-on error. A YAML
+syntax error stops only the file it is in.
+
 The byte limit is written ``bytes``. The design names that limit in prose and
 shows ``time`` for the other one. Grace is ``time_grace`` and ``volume_grace``.
 """
@@ -38,8 +45,9 @@ import yaml
 
 from policy import arithmetic, parts_of_speech, skip_counting, spelling
 from policy.buckets import divides_day
-from policy.clients import Lookup, UnresolvedAddress, resolve_address
+from policy.clients import Lookup, UnresolvedAddress, normalize_ip, resolve_address
 from policy.clock import named_zone
+from policy.problems import Collector, Problems, problems_of
 from policy.tasks import Task
 
 # A redirect to this location goes to the task pages on the policy server.
@@ -133,10 +141,16 @@ _CONDITION_KEYS = {
     "always": {"condition", "when_true", "when_false"},
 }
 _YAML_SUFFIXES = {".yaml", ".yml"}
+_HOST_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+_HOST_NAME = re.compile(rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*\.?$")
+_POSITION = re.compile(r"^(\d+):(\d+)")
 
 
-class ConfigError(ValueError):
-    """The YAML policy could not be loaded. The previous policy stays in force."""
+class ConfigError(Problems):
+    """The YAML policy could not be loaded. The previous policy stays in force.
+
+    ``problems`` holds each problem found, and ``str`` lists them one per line.
+    """
 
 
 @dataclass(frozen=True)
@@ -224,6 +238,8 @@ class Rule:
     groups: tuple[str, ...] = ()
     required: int | None = None
     quota: str | None = None
+    # Where the rule is written, so a reference it makes can be reported there.
+    where: str = field(default="", compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -300,6 +316,40 @@ class _Build:
     rule_sets: dict[str, tuple[Rule, ...]] = field(default_factory=dict)
     ruleset_where: dict[str, str] = field(default_factory=dict)
     task_data: bool = True
+    # Each file read, in the order the policy includes it.
+    files: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)
+
+    def fail(self, error: ValueError | str, where: str = "") -> None:
+        """Note a problem. A message from outside this module is placed at ``where``."""
+        if isinstance(error, str):
+            self.problems.append(error)
+        elif isinstance(error, ConfigError):
+            self.problems.extend(error.problems)
+        else:
+            self.problems.extend(f"{where}: {problem}" for problem in problems_of(error))
+
+    def attempt(self, where: str, parse: Callable, *args) -> tuple[bool, object]:
+        """Run one item's parser. Return whether it worked and what it returned."""
+        try:
+            return True, parse(*args)
+        except ValueError as error:
+            self.fail(error, where)
+            return False, None
+
+    def sorted_problems(self) -> tuple[str, ...]:
+        """Return each problem once, by file in include order, then by line."""
+        unique = list(dict.fromkeys(self.problems))
+        return tuple(sorted(unique, key=self._place))
+
+    def _place(self, problem: str) -> tuple[int, int, int]:
+        for index, name in enumerate(self.files):
+            if problem.startswith(name + ":"):
+                found = _POSITION.match(problem[len(name) + 1 :])
+                if found is None:
+                    return index, 0, 0
+                return index, int(found.group(1)), int(found.group(2))
+        return len(self.files), 0, 0
 
 
 class _Loader(yaml.SafeLoader):
@@ -376,33 +426,35 @@ def load(
 def _load_file(path: Path, canonical: Path, seen: set[Path], build: _Build) -> None:
     if canonical in seen:
         return
-    if not canonical.is_file():
-        raise ConfigError(f"{path}: included path does not exist")
     seen.add(canonical)
+    build.files.append(str(canonical))
     try:
         text = canonical.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigError(f"{canonical}: {exc}") from exc
-    node = _compose(text, canonical)
+        build.fail(f"{canonical}: {exc}")
+        return
+    ok, node = build.attempt(str(canonical), _compose, text, canonical)
+    if not ok:
+        return
     if not isinstance(node, yaml.MappingNode):
-        raise ConfigError(f"{canonical}: the file must be a mapping")
-    includes = _absorb(node, build)
-    for raw in includes:
-        _load_included(raw, path.parent, canonical, seen, build)
+        build.fail(f"{canonical}: the file must be a mapping")
+        return
+    for raw, where in _absorb(node, build):
+        _load_included(raw, where, path.parent, seen, build)
 
 
-def _load_included(raw: str, base: Path, origin: Path, seen: set[Path], build: _Build) -> None:
+def _load_included(raw: str, where: str, base: Path, seen: set[Path], build: _Build) -> None:
     if Path(raw).is_absolute():
-        raise ConfigError(f"{origin}: included path {raw!r} must be relative to the file that names it")
+        build.fail(f"{where}: included path {raw!r} must be relative to the file that names it")
+        return
     target = base / raw
     try:
         canonical = target.resolve()
     except OSError as exc:
-        raise ConfigError(f"{origin}: included path {raw!r}: {exc}") from exc
+        build.fail(f"{where}: included path {raw!r}: {exc}")
+        return
     if canonical in seen:
         return
-    if not target.exists():
-        raise ConfigError(f"{origin}: included path {raw!r} does not exist")
     if canonical.is_dir():
         seen.add(canonical)
         children = [
@@ -416,7 +468,7 @@ def _load_included(raw: str, base: Path, origin: Path, seen: set[Path], build: _
     if canonical.is_file():
         _load_file(target, canonical, seen, build)
         return
-    raise ConfigError(f"{origin}: included path {raw!r} does not exist")
+    build.fail(f"{where}: included path {raw!r} does not exist")
 
 
 def _compose(text: str, source: Path) -> yaml.Node | None:
@@ -427,40 +479,40 @@ def _compose(text: str, source: Path) -> yaml.Node | None:
         try:
             return loader.get_single_node()
         except yaml.YAMLError as exc:
-            raise ConfigError(f"{source}: {exc}") from exc
+            mark = getattr(exc, "problem_mark", None)
+            place = str(source) if mark is None else _mark(source, mark)
+            raise ConfigError(f"{place}: {exc}") from exc
     finally:
         loader.dispose()
 
 
-def _absorb(node: yaml.MappingNode, build: _Build) -> tuple[str, ...]:
-    pairs = _pairs(node)
-    if "revision_task" in pairs:
-        raise ConfigError(
-            f"{_at(pairs['revision_task'])}: revision_task is not set in the policy file"
-        )
-    _reject_unknown(set(pairs), _TOP_KEYS, _at(node))
-    for key in _SCALARS:
-        if key not in pairs:
+def _absorb(node: yaml.MappingNode, build: _Build) -> list[tuple[str, str]]:
+    """Take one file's settings and sections. Return its includes and where each is written."""
+    pairs = _lenient_pairs(node, build)
+    for key, key_node in _key_nodes(node):
+        if key == "revision_task":
+            build.fail(f"{_at(pairs[key])}: revision_task is not set in the policy file")
+        elif key not in _TOP_KEYS:
+            build.fail(f"{_at(key_node)}: unknown setting {key}")
+    for key, value in pairs.items():
+        if key not in _SCALARS:
             continue
-        where = _at(pairs[key])
+        where = _at(value)
         if key in build.scalars:
-            raise ConfigError(f"{where}: {key} is already set at {build.scalars[key][1]}")
-        build.scalars[key] = (_scalar(key, pairs[key], where), where)
-    if "client_groups" in pairs:
-        _take_clients(pairs["client_groups"], build)
-    if "site_groups" in pairs:
-        _take_sites(pairs["site_groups"], build)
-    if "time_windows" in pairs:
-        _take_windows(pairs["time_windows"], build)
-    if "quotas" in pairs:
-        _take_quotas(pairs["quotas"], build)
-    if "rule_sets" in pairs:
-        _take_rule_sets(pairs["rule_sets"], build)
-    if "tasks" in pairs:
-        _take_tasks(pairs["tasks"], build)
+            build.fail(f"{where}: {key} is already set at {build.scalars[key][1]}")
+            continue
+        ok, scalar = build.attempt(where, _scalar, key, value, where)
+        build.scalars[key] = (scalar if ok else _BROKEN, where)
+    for key, take in _TAKERS.items():
+        if key in pairs:
+            take(pairs[key], build)
     if "include" not in pairs:
-        return ()
-    return _include_list(pairs["include"], _at(pairs["include"]))
+        return []
+    return _include_list(pairs["include"], build)
+
+
+# Stands in for a setting or an item that failed, so it still counts as written.
+_BROKEN = object()
 
 
 def _scalar(key: str, node: yaml.Node, where: str) -> object:
@@ -493,42 +545,45 @@ def _scalar(key: str, node: yaml.Node, where: str) -> object:
 
 
 def _take_clients(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "client group"):
-        _reserve(name, where, "client group")
-        _claim(build.clients, build.client_where, name, _addresses(body, where), where, "client group")
+    for name, body, where in _entities(node, "client group", build):
+        if not _reserve(name, where, "client group", build):
+            continue
+        ok, addresses = build.attempt(where, _addresses, body, where)
+        _claim(build, build.clients, build.client_where, name, addresses if ok else _BROKEN, where, "client group")
 
 
 def _take_sites(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "site group"):
-        _reserve(name, where, "site group")
-        if name in build.sites:
-            raise ConfigError(f"{where}: site group {name!r} is already defined at {build.site_where[name]}")
-        group = _site(name, body, where)
+    for name, body, where in _entities(node, "site group", build):
+        if not _reserve(name, where, "site group", build):
+            continue
+        ok, group = build.attempt(where, _site, name, body, where)
+        if not _claim(build, build.sites, build.site_where, name, group if ok else _BROKEN, where, "site group"):
+            continue
+        if not ok:
+            continue
         if group.priority in build.priorities:
             other = build.priorities[group.priority]
-            raise ConfigError(
-                f"{where}: site groups {other!r} and {name!r} both have priority {group.priority}"
-            )
-        _claim(build.sites, build.site_where, name, group, where, "site group")
-        build.priorities[group.priority] = name
+            build.fail(f"{where}: site groups {other!r} and {name!r} both have priority {group.priority}")
+        else:
+            build.priorities[group.priority] = name
 
 
 def _take_windows(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "time window"):
-        window = _window(name, body, where)
-        _claim(build.windows, build.window_where, name, window, where, "time window")
+    for name, body, where in _entities(node, "time window", build):
+        ok, window = build.attempt(where, _window, name, body, where)
+        _claim(build, build.windows, build.window_where, name, window if ok else _BROKEN, where, "time window")
 
 
 def _take_quotas(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "quota"):
-        quota = _quota(name, body, where)
-        _claim(build.quotas, build.quota_where, name, quota, where, "quota")
+    for name, body, where in _entities(node, "quota", build):
+        ok, quota = build.attempt(where, _quota, name, body, where)
+        _claim(build, build.quotas, build.quota_where, name, quota if ok else _BROKEN, where, "quota")
 
 
 def _take_tasks(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "task"):
-        task = _task(name, body, where, build.task_data)
-        _claim(build.tasks, build.task_where, name, task, where, "task")
+    for name, body, where in _entities(node, "task", build):
+        ok, task = build.attempt(where, _task, name, body, where, build.task_data)
+        _claim(build, build.tasks, build.task_where, name, task if ok else _BROKEN, where, "task")
 
 
 _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
@@ -546,47 +601,39 @@ _QUIZ_FIELDS: dict[str, Callable[[Mapping], object]] = {
 
 def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Task:
     pairs = _pairs(node)
-    _reject_unknown(set(pairs), _TASK_KEYS, where)
-    if "type" not in pairs:
-        raise ConfigError(f"{where}: type is required")
-    if "pass_cooldown" not in pairs:
-        raise ConfigError(f"{where}: pass_cooldown is required")
-    groups = _one_list(pairs, "group", "groups", where)
-    seen: set[str] = set()
-    for group in groups:
-        if group in seen:
-            raise ConfigError(f"{where}: client group {group!r} is listed twice")
-        seen.add(group)
-    failure = None
-    if "failure_cooldown" in pairs:
-        failure = _whole(pairs["failure_cooldown"], f"{where}: failure_cooldown", minimum=0)
-    available = None
-    if "available_from" in pairs:
-        available = _calendar_day(pairs["available_from"], f"{where}: available_from")
-    due = None
-    if "due_date" in pairs:
-        due = _calendar_day(pairs["due_date"], f"{where}: due_date")
-    skips = None
-    if "max_skips" in pairs:
-        skips = _whole(pairs["max_skips"], f"{where}: max_skips", minimum=0)
-    passes = None
-    if "max_passes" in pairs:
-        passes = _whole(pairs["max_passes"], f"{where}: max_passes", minimum=0)
-    document = {} if "body" not in pairs else _document(pairs["body"], f"{where}: body")
-    if not isinstance(document, dict):
-        raise ConfigError(f"{where}: body must be a mapping")
-    kind = _text(pairs["type"], f"{where}: type")
+    fields = Collector()
+    fields.take(_reject_unknown, set(pairs), _TASK_KEYS, where)
+    for key in ("type", "pass_cooldown"):
+        if key not in pairs:
+            fields.add(f"{where}: {key} is required")
+    groups = fields.take(_task_groups, pairs, where)
+
+    def optional(key: str, parse: Callable, *args, **kwargs):
+        if key not in pairs:
+            return None
+        return fields.take(parse, pairs[key], f"{_at(pairs[key])}: {key}", *args, **kwargs)
+
+    cooldown = optional("pass_cooldown", _whole, minimum=0)
+    failure = optional("failure_cooldown", _whole, minimum=0)
+    available = optional("available_from", _calendar_day)
+    due = optional("due_date", _calendar_day)
+    skips = optional("max_skips", _whole, minimum=0)
+    passes = optional("max_passes", _whole, minimum=0)
+    document = {} if "body" not in pairs else fields.take(_document, pairs["body"], f"{where}: body")
+    kind = optional("type", _text)
     parse = (_QUIZ_BODIES if task_data else _QUIZ_FIELDS).get(kind)
-    if parse is not None:
+    if parse is not None and document is not None:
         try:
             parse(document)
         except ValueError as exc:
-            raise ConfigError(f"{where}: task {name!r}: body.{exc}") from exc
+            for problem in problems_of(exc):
+                fields.add(f"{_body_at(pairs.get('body'), problem, where)}: task {name!r}: body.{problem}")
+    fields.finish(ConfigError)
     return Task(
         name,
         kind,
         groups,
-        _whole(pairs["pass_cooldown"], f"{where}: pass_cooldown", minimum=0),
+        cooldown,
         json.dumps(document, ensure_ascii=False, separators=(",", ":")),
         failure,
         available,
@@ -596,30 +643,65 @@ def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Tas
     )
 
 
+def _task_groups(pairs: Mapping[str, yaml.Node], where: str) -> tuple[str, ...]:
+    groups = _one_list(pairs, "group", "groups", where)
+    seen: set[str] = set()
+    for group in groups:
+        if group in seen:
+            raise ConfigError(f"{where}: client group {group!r} is listed twice")
+        seen.add(group)
+    return groups
+
+
+def _body_at(node: yaml.Node | None, problem: str, where: str) -> str:
+    """Return where the body field a task type's problem names is written, or ``where``."""
+    if isinstance(node, yaml.MappingNode):
+        field_name = re.split(r"[:\s.]", problem, maxsplit=1)[0]
+        for key_node, _value in node.value:
+            if isinstance(key_node, yaml.ScalarNode) and key_node.value == field_name:
+                return _at(key_node)
+    return where
+
+
 def _take_rule_sets(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "rule set"):
-        rules = _rules(body, where)
-        _claim(build.rule_sets, build.ruleset_where, name, rules, where, "rule set")
+    for name, body, where in _entities(node, "rule set", build):
+        ok, bodies = build.attempt(where, _sequence, body, where)
+        rules: list[Rule] = []
+        for number, item in enumerate(bodies if ok else (), start=1):
+            parsed, rule = build.attempt(where, _rule, item, f"{_at(item)}: rule {number}")
+            if parsed:
+                rules.append(rule)
+        # A rule set with a bad rule keeps its good rules, so their references are still checked.
+        _claim(build, build.rule_sets, build.ruleset_where, name, tuple(rules), where, "rule set")
 
 
-def _entities(node: yaml.Node, label: str):
-    pairs = _pairs(node)
-    for name, body in pairs.items():
+def _entities(node: yaml.Node, label: str, build: _Build):
+    if not isinstance(node, yaml.MappingNode):
+        build.fail(f"{_at(node)}: must be a mapping")
+        return
+    for name, body in _lenient_pairs(node, build).items():
         if not name.strip():
-            raise ConfigError(f"{_at(body)}: {label} name must not be empty")
+            build.fail(f"{_at(body)}: {label} name must not be empty")
+            continue
         yield name.strip(), body, _at(body)
 
 
-def _claim(table: dict, where_table: dict, name: str, value, where: str, label: str) -> None:
-    if name in table:
-        raise ConfigError(f"{where}: {label} {name!r} is already defined at {where_table[name]}")
-    table[name] = value
+def _claim(build: _Build, table: dict, where_table: dict, name: str, value, where: str, label: str) -> bool:
+    """Record a named item. A failed item counts as defined but is not kept. False for a duplicate."""
+    if name in where_table:
+        build.fail(f"{where}: {label} {name!r} is already defined at {where_table[name]}")
+        return False
     where_table[name] = where
+    if value is not _BROKEN:
+        table[name] = value
+    return True
 
 
-def _reserve(name: str, where: str, label: str) -> None:
+def _reserve(name: str, where: str, label: str, build: _Build) -> bool:
     if name == "default":
-        raise ConfigError(f"{where}: {label} name 'default' is reserved")
+        build.fail(f"{where}: {label} name 'default' is reserved")
+        return False
+    return True
 
 
 def _addresses(node: yaml.Node, where: str) -> tuple[str, ...]:
@@ -630,25 +712,43 @@ def _addresses(node: yaml.Node, where: str) -> tuple[str, ...]:
     values = _string_list(pairs["addresses"], f"{where}: addresses")
     if not values:
         raise ConfigError(f"{where}: addresses must list at least one address")
+    problems = Collector()
     seen: set[str] = set()
-    for address in values:
+    for item, address in zip(pairs["addresses"].value, values, strict=True):
         if address in seen:
-            raise ConfigError(f"{where}: {address!r} is listed twice in this client group")
+            problems.add(f"{_at(item)}: {address!r} is listed twice in this client group")
+        elif not _address(address):
+            problems.add(f"{_at(item)}: {address!r} is not an IP address or a host name")
         seen.add(address)
+    problems.finish(ConfigError)
     return values
+
+
+def _address(text: str) -> bool:
+    """True for an IP address, or for text that could be a DNS host name."""
+    if normalize_ip(text) is not None:
+        return True
+    if len(text) > 253 or _HOST_NAME.fullmatch(text) is None:
+        return False
+    # A name whose last label is all digits is a mistyped IPv4 address.
+    return not text.rstrip(".").rsplit(".", 1)[-1].isdigit()
 
 
 def _site(name: str, node: yaml.Node, where: str) -> SiteGroup:
     pairs = _pairs(node)
-    _reject_unknown(set(pairs), {"priority", "patterns"}, where)
-    if "priority" not in pairs:
-        raise ConfigError(f"{where}: priority is required")
-    if "patterns" not in pairs:
-        raise ConfigError(f"{where}: patterns is required")
-    patterns = _string_list(pairs["patterns"], f"{where}: patterns")
-    if not patterns:
-        raise ConfigError(f"{where}: patterns must list at least one pattern")
-    return SiteGroup(name, _whole(pairs["priority"], f"{where}: priority"), patterns)
+    fields = Collector()
+    fields.take(_reject_unknown, set(pairs), {"priority", "patterns"}, where)
+    for key in ("priority", "patterns"):
+        if key not in pairs:
+            fields.add(f"{where}: {key} is required")
+    patterns = None
+    if "patterns" in pairs:
+        patterns = fields.take(_string_list, pairs["patterns"], f"{where}: patterns")
+        if patterns == ():
+            fields.add(f"{where}: patterns must list at least one pattern")
+    priority = None if "priority" not in pairs else fields.take(_whole, pairs["priority"], f"{where}: priority")
+    fields.finish(ConfigError)
+    return SiteGroup(name, priority, patterns)
 
 
 def _window(name: str, node: yaml.Node, where: str) -> TimeWindow:
@@ -659,18 +759,25 @@ def _window(name: str, node: yaml.Node, where: str) -> TimeWindow:
     bodies = _sequence(pairs["periods"], f"{where}: periods")
     if not bodies:
         raise ConfigError(f"{where}: a time window needs at least one period")
-    periods = tuple(_period(body, f"{where}: period {number}") for number, body in enumerate(bodies, start=1))
+    fields = Collector()
+    periods = tuple(
+        fields.take(_period, body, f"{_at(body)}: period {number}") for number, body in enumerate(bodies, start=1)
+    )
+    fields.finish(ConfigError)
     return TimeWindow(name, periods)
 
 
 def _period(node: yaml.Node, where: str) -> Period:
     pairs = _pairs(node)
-    _reject_unknown(set(pairs), {"start", "end", "day", "days"}, where)
+    fields = Collector()
+    fields.take(_reject_unknown, set(pairs), {"start", "end", "day", "days"}, where)
     if "start" not in pairs or "end" not in pairs:
-        raise ConfigError(f"{where}: start and end are required")
-    start, _suffix = _clock(pairs["start"], f"{where}: start", suffix=False)
-    end, extra = _clock(pairs["end"], f"{where}: end", suffix=True)
-    return Period(start, end, extra, _days(pairs, where))
+        fields.add(f"{where}: start and end are required")
+    start = None if "start" not in pairs else fields.take(_clock, pairs["start"], f"{where}: start", suffix=False)
+    end = None if "end" not in pairs else fields.take(_clock, pairs["end"], f"{where}: end", suffix=True)
+    days = fields.take(_days, pairs, where)
+    fields.finish(ConfigError)
+    return Period(start[0], end[0], end[1], days)
 
 
 def _days(pairs: Mapping[str, yaml.Node], where: str) -> frozenset[int] | None:
@@ -764,22 +871,21 @@ def _clock(node: yaml.Node, where: str, *, suffix: bool) -> tuple[time, int]:
 
 def _quota(name: str, node: yaml.Node, where: str) -> _RawQuota:
     pairs = _pairs(node)
-    _reject_unknown(set(pairs), {"time", "bytes", "ruleset", "time_grace", "volume_grace"}, where)
+    fields = Collector()
+    fields.take(_reject_unknown, set(pairs), {"time", "bytes", "ruleset", "time_grace", "volume_grace"}, where)
     if "ruleset" not in pairs:
-        raise ConfigError(f"{where}: ruleset is required")
-    time_limit = _duration(pairs["time"], f"{where}: time") if "time" in pairs else 0
-    byte_limit = _size(pairs["bytes"], f"{where}: bytes") if "bytes" in pairs else 0
-    time_grace = (
-        _non_negative(_duration(pairs["time_grace"], f"{where}: time_grace"), f"{where}: time_grace")
-        if "time_grace" in pairs
-        else None
-    )
-    volume_grace = (
-        _non_negative(_size(pairs["volume_grace"], f"{where}: volume_grace"), f"{where}: volume_grace")
-        if "volume_grace" in pairs
-        else None
-    )
-    return _RawQuota(name, _text(pairs["ruleset"], f"{where}: ruleset"), time_limit, byte_limit, time_grace, volume_grace)
+        fields.add(f"{where}: ruleset is required")
+
+    def optional(key: str, parse: Callable):
+        return None if key not in pairs else fields.take(parse, pairs[key], f"{_at(pairs[key])}: {key}")
+
+    ruleset = optional("ruleset", _text)
+    time_limit = optional("time", _duration) or 0
+    byte_limit = optional("bytes", _size) or 0
+    time_grace = optional("time_grace", _duration)
+    volume_grace = optional("volume_grace", _size)
+    fields.finish(ConfigError)
+    return _RawQuota(name, ruleset, time_limit, byte_limit, time_grace, volume_grace)
 
 
 def _rules(node: yaml.Node, where: str) -> tuple[Rule, ...]:
@@ -816,7 +922,7 @@ def _rule(node: yaml.Node, where: str) -> Rule:
         quota = _text(pairs["quota"], f"{where}: quota")
     when_true = _action(pairs["when_true"], f"{where}: when_true") if "when_true" in pairs else CONTINUE
     when_false = _action(pairs["when_false"], f"{where}: when_false") if "when_false" in pairs else CONTINUE
-    return Rule(condition, when_true, when_false, windows, groups, required, quota)
+    return Rule(condition, when_true, when_false, windows, groups, required, quota, where)
 
 
 def _one_list(pairs: Mapping[str, yaml.Node], singular: str, plural: str, where: str) -> tuple[str, ...]:
@@ -871,8 +977,25 @@ def _action(node: yaml.Node, where: str) -> Action:
     raise ConfigError(f"{where}: unknown action {kind!r}")
 
 
-def _include_list(node: yaml.Node, where: str) -> tuple[str, ...]:
-    return _string_list(node, where)
+def _include_list(node: yaml.Node, build: _Build) -> list[tuple[str, str]]:
+    where = _at(node)
+    ok, items = build.attempt(where, _sequence, node, f"{where}: include")
+    found: list[tuple[str, str]] = []
+    for item in items if ok else ():
+        parsed, raw = build.attempt(where, _text, item, f"{_at(item)}: include")
+        if parsed:
+            found.append((raw, _at(item)))
+    return found
+
+
+_TAKERS: dict[str, Callable[[yaml.Node, _Build], None]] = {
+    "client_groups": _take_clients,
+    "site_groups": _take_sites,
+    "time_windows": _take_windows,
+    "quotas": _take_quotas,
+    "rule_sets": _take_rule_sets,
+    "tasks": _take_tasks,
+}
 
 
 def _finish(
@@ -881,8 +1004,14 @@ def _finish(
     lookup: Lookup,
     warn: Callable[[str], None],
 ) -> Policy:
+    root = build.files[0]
     if "entry" not in build.scalars:
-        raise ConfigError("entry is required")
+        build.fail(f"{root}: entry is required")
+    _check_references(build)
+    _check_cycles(build)
+    clients = _resolve_clients(build, previous, lookup, warn)
+    if build.problems:
+        raise ConfigError(*build.sorted_problems())
     entry = str(build.scalars["entry"][0])
     timezone = build.scalars["timezone"][0] if "timezone" in build.scalars else None
     hostname = build.scalars["hostname"][0] if "hostname" in build.scalars else None
@@ -898,9 +1027,6 @@ def _finish(
     volume_grace = (
         int(build.scalars["volume_grace"][0]) if "volume_grace" in build.scalars else DEFAULT_VOLUME_GRACE
     )
-    _check_references(entry, build)
-    _check_cycles(build.rule_sets)
-    clients = _resolve_clients(build.clients, previous, lookup, warn)
     quotas = tuple(
         Quota(
             raw.name,
@@ -929,77 +1055,64 @@ def _finish(
     )
 
 
-def _check_references(entry: str, build: _Build) -> None:
-    if entry not in build.rule_sets:
-        raise ConfigError(f"entry {entry!r} does not name a rule set")
-    sites = set(build.sites) | {"default"}
-    clients = set(build.clients) | {"default"}
-    windows = set(build.windows)
-    quotas = set(build.quotas)
-    rulesets = set(build.rule_sets)
+def _check_references(build: _Build) -> None:
+    """Note every name that names nothing. An item that failed to parse still counts as defined."""
+    entry, where = build.scalars.get("entry", (_BROKEN, ""))
+    if entry is not _BROKEN and entry not in build.ruleset_where:
+        build.fail(f"{where}: entry {entry!r} does not name a rule set")
+    known = {
+        "site group": set(build.site_where) | {"default"},
+        "client group": set(build.client_where) | {"default"},
+        "time window": set(build.window_where),
+        "quota": set(build.quota_where),
+        "rule set": set(build.ruleset_where),
+    }
     for name, task in build.tasks.items():
         for group in task.groups:
-            if group not in clients:
-                raise ConfigError(f"task {name!r}: unknown client group {group!r}")
+            if group not in known["client group"]:
+                build.fail(f"{build.task_where[name]}: task {name!r}: unknown client group {group!r}")
     for name, raw in build.quotas.items():
-        if raw.ruleset not in rulesets:
-            raise ConfigError(f"quota {name!r}: unknown rule set {raw.ruleset!r}")
-    for name, rules in build.rule_sets.items():
-        _check_rules(rules, f"rule set {name}", sites, clients, windows, quotas, rulesets)
+        if raw.ruleset not in known["rule set"]:
+            build.fail(f"{build.quota_where[name]}: quota {name!r}: unknown rule set {raw.ruleset!r}")
+    for rules in build.rule_sets.values():
+        _check_rules(rules, known, build)
 
 
-def _check_rules(
-    rules: tuple[Rule, ...],
-    where: str,
-    sites: set[str],
-    clients: set[str],
-    windows: set[str],
-    quotas: set[str],
-    rulesets: set[str],
-) -> None:
-    for index, rule in enumerate(rules, start=1):
-        place = f"{where} rule {index}"
+def _check_rules(rules: tuple[Rule, ...], known: Mapping[str, set[str]], build: _Build) -> None:
+    for rule in rules:
         if rule.condition == "time_window":
-            _known(rule.windows, windows, place, "time window")
-        elif rule.condition == "site_group":
-            _known(rule.groups, sites, place, "site group")
-        elif rule.condition == "client_group":
-            _known(rule.groups, clients, place, "client group")
-        elif rule.condition in {"time_remaining", "volume_remaining"} and rule.quota not in quotas:
-            raise ConfigError(f"{place}: unknown quota {rule.quota!r}")
+            _known(rule.windows, known, "time window", rule.where, build)
+        elif rule.condition in {"site_group", "client_group"}:
+            _known(rule.groups, known, rule.condition.replace("_", " "), rule.where, build)
+        elif rule.condition in {"time_remaining", "volume_remaining"}:
+            _known((rule.quota,), known, "quota", rule.where, build)
         for branch, action in (("when_true", rule.when_true), ("when_false", rule.when_false)):
             if action.kind != "evaluate":
                 continue
             if action.ruleset is not None:
-                if action.ruleset not in rulesets:
-                    raise ConfigError(f"{place} {branch}: unknown rule set {action.ruleset!r}")
+                _known((action.ruleset,), known, "rule set", f"{rule.where}: {branch}", build)
             elif action.rules is not None:
-                _check_rules(
-                    action.rules,
-                    f"{place} {branch} inline",
-                    sites,
-                    clients,
-                    windows,
-                    quotas,
-                    rulesets,
-                )
+                _check_rules(action.rules, known, build)
 
 
-def _known(names: tuple[str, ...], have: set[str], where: str, label: str) -> None:
+def _known(names: tuple[str, ...], known: Mapping[str, set[str]], label: str, where: str, build: _Build) -> None:
     for name in names:
-        if name not in have:
-            raise ConfigError(f"{where}: unknown {label} {name!r}")
+        if name not in known[label]:
+            build.fail(f"{where}: unknown {label} {name!r}")
 
 
-def _check_cycles(rule_sets: Mapping[str, tuple[Rule, ...]]) -> None:
+def _check_cycles(build: _Build) -> None:
+    """Note each evaluate cycle once, at the rule set it was first reached from."""
+    rule_sets = build.rule_sets
     done: set[int] = set()
 
-    def walk(rules: tuple[Rule, ...], label: str, labels: tuple[str, ...], ids: tuple[int, ...]) -> None:
+    def walk(rules: tuple[Rule, ...], label: str, labels: tuple[str, ...], ids: tuple[int, ...], where: str) -> None:
         node = id(rules)
         if node in ids:
             start = ids.index(node)
             cycle = " -> ".join(labels[start:] + (label,))
-            raise ConfigError(f"evaluate cycle: {cycle}")
+            build.fail(f"{where}: evaluate cycle: {cycle}")
+            return
         if node in done:
             return
         labels = labels + (label,)
@@ -1009,38 +1122,42 @@ def _check_cycles(rule_sets: Mapping[str, tuple[Rule, ...]]) -> None:
                 if action.kind != "evaluate":
                     continue
                 if action.ruleset is not None:
-                    walk(rule_sets[action.ruleset], action.ruleset, labels, ids)
+                    if action.ruleset in rule_sets:
+                        walk(rule_sets[action.ruleset], action.ruleset, labels, ids, where)
                 elif action.rules is not None:
-                    walk(action.rules, f"{label} rule {index} {branch}", labels, ids)
+                    walk(action.rules, f"{label} rule {index} {branch}", labels, ids, where)
         done.add(node)
 
     for name, rules in rule_sets.items():
-        walk(rules, name, (), ())
+        walk(rules, name, (), (), build.ruleset_where[name])
 
 
 def _resolve_clients(
-    clients: Mapping[str, tuple[str, ...]],
+    build: _Build,
     previous: Policy | None,
     lookup: Lookup,
     warn: Callable[[str], None],
 ) -> tuple[ClientGroup, ...]:
+    """Resolve each client group. Note every address that is listed twice."""
     groups: list[ClientGroup] = []
     owners: dict[str, str] = {}
-    for name, addresses in clients.items():
+    for name, addresses in build.clients.items():
+        where = build.client_where[name]
         resolved: list[tuple[str, ...]] = []
         seen_here: dict[str, str] = {}
         for address in addresses:
             ips = _resolve_one(name, address, previous, lookup, warn)
             for ip in ips:
                 if ip in seen_here:
-                    raise ConfigError(
-                        f"{ip} is listed twice in client group {name!r}, "
+                    build.fail(
+                        f"{where}: {ip} is listed twice in client group {name!r}, "
                         f"from {seen_here[ip]!r} and {address!r}"
                     )
-                if ip in owners:
-                    raise ConfigError(f"{ip} belongs to client groups {owners[ip]!r} and {name!r}")
-                seen_here[ip] = address
-                owners[ip] = name
+                elif ip in owners:
+                    build.fail(f"{where}: {ip} belongs to client groups {owners[ip]!r} and {name!r}")
+                else:
+                    seen_here[ip] = address
+                    owners[ip] = name
             resolved.append(ips)
         groups.append(ClientGroup(name, addresses, tuple(resolved)))
     return tuple(groups)
@@ -1089,6 +1206,32 @@ def _pairs(node: yaml.Node) -> dict[str, yaml.Node]:
             raise ConfigError(f"{_at(key_node)}: duplicate key {key!r}")
         found[key] = value_node
     return found
+
+
+def _lenient_pairs(node: yaml.Node, build: _Build) -> dict[str, yaml.Node]:
+    """Like ``_pairs``, but a bad or repeated key is noted and skipped, and the rest are kept."""
+    if not isinstance(node, yaml.MappingNode):
+        build.fail(f"{_at(node)}: must be a mapping")
+        return {}
+    found: dict[str, yaml.Node] = {}
+    for key_node, value_node in node.value:
+        if not isinstance(key_node, yaml.ScalarNode) or key_node.tag != _STR:
+            shown = key_node.value if isinstance(key_node, yaml.ScalarNode) else key_node.id
+            build.fail(f"{_at(key_node)}: mapping keys must be strings, not {shown!r}")
+        elif key_node.value in found:
+            build.fail(f"{_at(key_node)}: duplicate key {key_node.value!r}")
+        else:
+            found[key_node.value] = value_node
+    return found
+
+
+def _key_nodes(node: yaml.MappingNode) -> list[tuple[str, yaml.Node]]:
+    """Return each string key of a mapping with its own node, for where it is written."""
+    return [
+        (key_node.value, key_node)
+        for key_node, _value in node.value
+        if isinstance(key_node, yaml.ScalarNode) and key_node.tag == _STR
+    ]
 
 
 def _sequence(node: yaml.Node, where: str) -> list[yaml.Node]:

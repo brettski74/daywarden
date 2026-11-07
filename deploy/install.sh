@@ -453,8 +453,7 @@ status=0
 restarted=""
 if [ "$running" -eq 1 ]; then
     echo "Restarting daywarden..."
-    "$root/bin/dw" down
-    if "$root/bin/dw" up; then
+    if "$root/bin/dw" restart; then
         restarted="daywarden restarted on $version, and every service is healthy."
     else
         restarted="daywarden $version is installed, but it did not come back healthy. Fix the configuration in ~/daywarden, then run dw up again."

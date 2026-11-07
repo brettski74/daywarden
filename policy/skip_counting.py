@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
 
+from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
     INCORRECT,
@@ -147,21 +148,40 @@ def starts(difference: int, length: int, minimum: int, maximum: int, multiples_o
 def parse_settings(body: Mapping) -> Settings:
     """Check a skip counting task body and return its settings.
 
-    A problem raises ``ValueError`` whose message starts with the field.
+    Each field is checked, and every problem is raised together as
+    ``Problems``, a ``ValueError``. Each message starts with the field. The
+    checks that compare fields, and the difference list, run once the fields
+    they read are good.
     """
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
-    unknown = sorted(set(body) - _BODY_KEYS)
-    if unknown:
-        raise ValueError(f"{unknown[0]}: unknown setting")
+    fields = Collector()
+    for key in sorted(set(body) - _BODY_KEYS):
+        fields.add(f"{key}: unknown setting")
+    length = fields.take(_whole, body.get("sequence_length", 8), "sequence_length", 4, 12)
+    if length is not None:
+        fields.take(_whole, body.get("completed", 3), "completed", 2, length - 1)
+    fields.take(_flag, body.get("consecutive", True), "consecutive")
+    fields.take(_flag, body.get("multiples_only", False), "multiples_only")
+    minimum = fields.take(_whole, body.get("minimum_value", 1), "minimum_value")
+    maximum = fields.take(_whole, body.get("maximum_value", 999), "maximum_value")
+    if minimum is not None and maximum is not None and maximum <= minimum:
+        fields.add("maximum_value: must be greater than minimum_value")
+    fields.take(duration, body.get("timeout", "3m"), "timeout")
+    for field in ("maximum_questions", "minimum_questions", "correct_answers_required"):
+        fields.take(_count, body, field)
+    fields.finish()
+    return _settings(body)
+
+
+def _settings(body: Mapping) -> Settings:
+    """Check what ties the fields together, once each field on its own is good."""
     length = _whole(body.get("sequence_length", 8), "sequence_length", 4, 12)
     completed = _whole(body.get("completed", 3), "completed", 2, length - 1)
     consecutive = _flag(body.get("consecutive", True), "consecutive")
     multiples_only = _flag(body.get("multiples_only", False), "multiples_only")
     minimum = _whole(body.get("minimum_value", 1), "minimum_value")
     maximum = _whole(body.get("maximum_value", 999), "maximum_value")
-    if maximum <= minimum:
-        raise ValueError("maximum_value: must be greater than minimum_value")
     timeout = duration(body.get("timeout", "3m"), "timeout")
     most = _count(body, "maximum_questions")
     least = _count(body, "minimum_questions")

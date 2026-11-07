@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 
 import mutagen
 
+from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
     INCORRECT,
@@ -172,26 +173,35 @@ def data_root() -> Path:
 def parse_settings(body: Mapping) -> Settings:
     """Check a spelling task body's fields and return its settings.
 
-    The pool directories are not read here. A problem raises ``ValueError``
-    whose message starts with the field.
+    The pool directories are not read here. Each field is checked, and every
+    problem is raised together as ``Problems``, a ``ValueError``. Each
+    message starts with the field.
     """
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
-    unknown = sorted(set(body) - _BODY_KEYS)
-    if unknown:
-        raise ValueError(f"{unknown[0]}: unknown setting")
-    directories = {field: _directory(body.get(field, default), field) for field, default in _DIRECTORIES.items()}
+    fields = Collector()
+    for key in sorted(set(body) - _BODY_KEYS):
+        fields.add(f"{key}: unknown setting")
+    directories = {
+        field: fields.take(_directory, body.get(field, default), field) for field, default in _DIRECTORIES.items()
+    }
+    timeout = fields.take(duration, body.get("timeout", "30s"), "timeout")
+    replays = fields.take(_count, body.get("maximum_replays", 3), "maximum_replays")
+    sentence_plays = fields.take(_count, body.get("maximum_sentence_plays", 2), "maximum_sentence_plays")
+    required = {
+        field: None if field not in body else fields.take(_count, body[field], field)
+        for field in _REQUIRED_FIELDS.values()
+    }
+    pauses = {field: fields.take(duration, body.get(field, default), field, zero=True) for field, default in _PAUSES.items()}
+    fields.finish()
     return Settings(
         **directories,
-        timeout=duration(body.get("timeout", "30s"), "timeout"),
-        maximum_replays=_count(body.get("maximum_replays", 3), "maximum_replays"),
-        maximum_sentence_plays=_count(body.get("maximum_sentence_plays", 2), "maximum_sentence_plays"),
-        current_required=None if "current_required" not in body else _count(body["current_required"], "current_required"),
-        revision_required=None
-        if "revision_required" not in body
-        else _count(body["revision_required"], "revision_required"),
+        timeout=timeout,
+        maximum_replays=replays,
+        maximum_sentence_plays=sentence_plays,
+        **required,
         explicit=frozenset(field for field in _DIRECTORIES if field in body),
-        **{field: duration(body.get(field, default), field, zero=True) for field, default in _PAUSES.items()},
+        **pauses,
     )
 
 

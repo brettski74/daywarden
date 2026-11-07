@@ -1,8 +1,12 @@
 """S011: skip counting, with tries worth less each time and a pass or fail at the end."""
 
 import asyncio
+import html
 import json
 import random
+import re
+import shutil
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timedelta
@@ -38,6 +42,8 @@ START = datetime(2026, 11, 2, 16, 0, tzinfo=ZONE)
 SAMPLES = 60_000
 TOLERANCE = 0.01
 TIMEOUT_MS = 180_000
+CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+needs_chromium = pytest.mark.skipif(CHROMIUM is None, reason="needs Chromium to lay out the page")
 
 
 def _differences(*values: int, weight: int = 1) -> list[dict]:
@@ -798,6 +804,142 @@ def test_well_done_after_a_pass_counts_down_to_the_page_and_a_failure_does_not(t
     snap = next(event["elements"] for event in events if event["kind"] == "snap")
     assert snap["going-back"]["hidden"] is (verdict != "pass")
     assert [(event["at"], event["what"]) for event in events if event["kind"] == "navigate"] == gone
+
+
+_MEASURE = """\
+<script>
+const boxes = [...document.querySelectorAll(".box")].map((box) => {
+  const style = getComputedStyle(box);
+  const text = document.createElement("canvas").getContext("2d");
+  text.font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily].join(" ");
+  return {
+    value: box.value,
+    text: text.measureText(box.value).width,
+    room: box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+  };
+});
+const row = document.getElementById("row").getBoundingClientRect();
+document.getElementById("out").textContent = JSON.stringify({boxes, left: row.left, right: row.right, window: innerWidth});
+</script>
+"""
+
+
+def _installed(font: str) -> bool:
+    if shutil.which("fc-list") is None:
+        return False
+    return bool(subprocess.run(["fc-list", f"{font}:style=Bold", "family"], capture_output=True, text=True).stdout.strip())
+
+
+SANS_FONTS = [
+    pytest.param(font, marks=pytest.mark.skipif(not _installed(font), reason=f"{font} is not installed"))
+    for font in ("DejaVu Sans", "Liberation Sans", "Adwaita Sans", "Cantarell")
+]
+
+
+def _layout(tmp_path: Path, values: list[str], width: int, window: tuple[int, int], font: str) -> dict:
+    """Lay out a row of boxes with the page's own styles in headless Chromium and measure it.
+
+    The page asks only for ``sans-serif``, so the font is whatever the child's computer
+    has as its default. ``font`` stands in for that default.
+    """
+    style = re.search(r"<style>(.*?)</style>", Quiz(tmp_path, {}).open(START).body, re.S).group(1)
+    cells = "".join(f'<div class="cell"><input class="box given" value="{value}" readonly></div>' for value in values)
+    page = tmp_path / "row.html"
+    page.write_text(
+        f"<!doctype html><html><head><style>{style}body {{ font-family: '{font}'; }}</style></head><body>"
+        f'<div id="row" class="row" style="--n: {len(values)}; --w: {width}">{cells}</div>'
+        f'<pre id="out"></pre>{_MEASURE}</body></html>'
+    )
+    run = subprocess.run(
+        [
+            CHROMIUM,
+            "--headless",
+            "--disable-gpu",
+            f"--user-data-dir={tmp_path / 'chromium'}",
+            f"--window-size={window[0]},{window[1]}",
+            "--dump-dom",
+            page.as_uri(),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', run.stdout, re.S).group(1)))
+
+
+@needs_chromium
+@pytest.mark.parametrize("font", SANS_FONTS)
+@pytest.mark.parametrize(("values", "width"), [(["100", "888", "-99"], 3), (["-100", "-888", "1000"], 4)])
+def test_the_widest_numbers_fit_inside_their_boxes(tmp_path, values, width, font):
+    measured = _layout(tmp_path, values, width, (1280, 800), font)
+    for box in measured["boxes"]:
+        assert box["text"] <= box["room"], box
+
+
+@needs_chromium
+@pytest.mark.parametrize("font", SANS_FONTS)
+def test_a_long_row_of_wide_boxes_still_fits_a_narrow_window(tmp_path, font):
+    measured = _layout(tmp_path, [str(-100 - 25 * n) for n in range(12)], 4, (420, 800), font)
+    assert measured["left"] >= 0 and measured["right"] <= measured["window"], measured
+    for box in measured["boxes"]:
+        assert box["text"] <= box["room"], box
+
+
+_MEASURE_HEADER = """\
+<script>
+const place = (id) => {
+  const box = document.getElementById(id).getBoundingClientRect();
+  return {left: box.left, right: box.right};
+};
+document.getElementById("out").textContent = JSON.stringify(
+  {progress: place("progress"), number: place("number"), giveUp: place("give-up"), window: innerWidth}
+);
+</script>
+"""
+
+
+def _header(tmp_path: Path, *, asking: bool) -> dict:
+    """Lay out the page's header in headless Chromium, as on the start screen or while a question is up."""
+    body = Quiz(tmp_path, {}).open(START).body
+    if asking:
+        body = body.replace('<span id="progress" hidden>', '<span id="progress">')
+        body = body.replace('<span id="number" hidden>', '<span id="number">')
+    page = tmp_path / "header.html"
+    page.write_text(body.replace("</body>", f'<pre id="out"></pre>{_MEASURE_HEADER}</body>'), encoding="utf-8")
+    run = subprocess.run(
+        [
+            CHROMIUM,
+            "--headless",
+            "--disable-gpu",
+            f"--user-data-dir={tmp_path / 'chromium'}",
+            "--window-size=1280,800",
+            "--dump-dom",
+            page.as_uri(),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', run.stdout, re.S).group(1)))
+
+
+@needs_chromium
+@pytest.mark.parametrize("asking", [False, True])
+def test_try_a_different_task_sits_at_the_top_right(tmp_path, asking):
+    measured = _header(tmp_path, asking=asking)
+    assert measured["giveUp"]["left"] > measured["window"] / 2, measured
+    assert measured["window"] - measured["giveUp"]["right"] < 40, measured
+
+
+@needs_chromium
+def test_the_question_number_stays_midway_between_the_progress_and_try_a_different_task(tmp_path):
+    measured = _header(tmp_path, asking=True)
+    before = measured["number"]["left"] - measured["progress"]["right"]
+    after = measured["giveUp"]["left"] - measured["number"]["right"]
+    assert measured["progress"]["left"] < 40, measured
+    assert abs(before - after) < 2, measured
 
 
 # Resume, give-up, and record

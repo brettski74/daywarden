@@ -9,33 +9,58 @@ closed until a parent account is added, and they are served only over
 HTTPS. The quiz sound sets are read once at start, from SOUND_DIR or the
 image's policy/static/sounds. Spelling words are read from
 DAYWARDEN_DATA_DIR each time a run starts.
+
+POST /v1/reload loads POLICY_FILE again and swaps the new policy in whole,
+so a request is decided by the old policy or the new one, never a mix. A
+policy with errors is refused and the one in force stays. Only a plain HTTP
+request from inside this container is accepted. Any other peer gets 404,
+because the proxy can reach this port on the compose network.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
+from policy.check import household_zone, load_required, summary_lines
 from policy.clients import normalize_ip
-from policy.clock import HouseholdClock, machine_zone, named_zone
+from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
-from policy.hierarchy import Policy, load as load_hierarchy, require_yaml
+from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy.report import parse_form, respond
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
-from policy.selection import picker_url
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.store import PolicyStore
 from policy.task_page import respond_task, task_media
 from policy.tasks import AttemptStore
 from policy.usage import UsageStore
+
+LOOPBACK = frozenset({"127.0.0.1", "::1"})
+
+
+@dataclass(frozen=True)
+class Loaded:
+    """The policy in force and the household clock it sets."""
+
+    policy: Policy | None
+    clock: HouseholdClock
+    source: str
+
+
+class Holder:
+    """Holds the policy in force. A reload replaces ``loaded`` in one assignment."""
+
+    def __init__(self, loaded: Loaded) -> None:
+        self.loaded = loaded
 
 
 def create_app() -> FastAPI:
@@ -46,27 +71,51 @@ def create_app() -> FastAPI:
 
     database.parent.mkdir(parents=True, exist_ok=True)
     idle, lifetime = session_limits(os.environ)
-    hierarchy_policy, clock, source = _load_policy(policy_file, localtime)
+    holder = Holder(_load_policy(policy_file, localtime))
     store = PolicyStore(database)
     accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
     attempts = AttemptStore(connection=store.connection)
     returns = ReturnPages(store.connection)
     usage_store = UsageStore(connection=store.connection)
-    if hierarchy_policy is not None:
-        usage_store.install_length(hierarchy_policy.bucket_length, clock.local())
-    _announce_policy(hierarchy_policy, clock, source)
+    if holder.loaded.policy is not None:
+        usage_store.install_length(holder.loaded.policy.bucket_length, holder.loaded.clock.local())
+    _announce(summary_lines(holder.loaded.policy, holder.loaded.clock, holder.loaded.source))
     _announce_parents(accounts)
     sounds = load_sounds(Path(os.environ.get("SOUND_DIR", str(SOUND_DIR))))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.idle = accounts.idle
     app.state.lifetime = accounts.lifetime
+    app.state.holder = holder
 
     @app.get("/health")
     def health() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
+    @app.post("/v1/reload")
+    async def reload(request: Request) -> Response:
+        # Stays on the event-loop thread, where this process's SQLite connection lives.
+        peer = request.client.host if request.client is not None else ""
+        if request.url.scheme != "http" or peer not in LOOPBACK:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        warnings: list[str] = []
+        try:
+            policy = load_required(policy_file, holder.loaded.policy, warn=warnings.append)
+        except ConfigError as error:
+            print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
+            _announce(error.problems)
+            return JSONResponse({"reloaded": False, "errors": list(error.problems), "warnings": warnings})
+        zone, source = household_zone(policy.timezone, localtime)
+        clock = HouseholdClock(zone)
+        usage_store.install_length(policy.bucket_length, clock.local())
+        holder.loaded = Loaded(policy, clock, source)
+        summary = summary_lines(policy, clock, source)
+        print(f"reloaded {policy_file}", flush=True)
+        _announce([*summary, *warnings])
+        return JSONResponse({"reloaded": True, "summary": summary, "warnings": warnings})
+
     @app.post("/v1/decisions")
     async def decisions(request: Request) -> Response:
+        now = holder.loaded
         raw = await request.body()
         try:
             document = json.loads(raw)
@@ -77,9 +126,9 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             decision_log.append(log_entry(document))
             return PlainTextResponse(str(exc), status_code=400)
-        at = clock.local(parsed.occurred_at)
+        at = now.clock.local(parsed.occurred_at)
         trace, assumption = _judge_for(
-            hierarchy_policy,
+            now.policy,
             usage_store,
             parsed.client_ip,
             parsed.url,
@@ -94,9 +143,9 @@ def create_app() -> FastAPI:
                 parsed.url,
                 assumption,
             )
-        if hierarchy_policy is not None:
+        if now.policy is not None:
             returns.note(
-                hierarchy_policy,
+                now.policy,
                 trace,
                 client_ip=parsed.client_ip,
                 method=parsed.method,
@@ -144,36 +193,36 @@ def create_app() -> FastAPI:
         return FileResponse(found, media_type=media_type(name), headers={"cache-control": "max-age=3600"})
 
     def _task_audio(request: Request, path: str) -> Response:
-        policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
+        now = holder.loaded
         found = task_media(
-            policy,
+            now.policy if now.policy is not None else _empty_policy(),
             attempts,
             path=path,
-            client_ip=_client_address(request, hierarchy_policy),
-            now=clock.local(),
+            client_ip=_client_address(request, now.policy),
+            now=now.clock.local(),
         )
         if found is None:
             return PlainTextResponse("not found", status_code=404)
         return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, max-age=3600"})
 
     async def _task_page(request: Request, path: str) -> Response:
+        now = holder.loaded
         raw = await request.body() if request.method == "POST" else b""
-        policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
-        client_ip = _client_address(request, hierarchy_policy)
+        client_ip = _client_address(request, now.policy)
 
         def back() -> str | None:
-            if hierarchy_policy is None:
+            if now.policy is None:
                 return None
-            return way_back(hierarchy_policy, returns, usage_store, client_ip, clock.local())
+            return way_back(now.policy, returns, usage_store, client_ip, now.clock.local())
 
         page = respond_task(
-            policy,
+            now.policy if now.policy is not None else _empty_policy(),
             attempts,
             method=request.method,
             path=path,
             client_ip=client_ip,
             cookie=request.headers.get("cookie"),
-            now=clock.local(),
+            now=now.clock.local(),
             query=_query(request, ("do",)),
             body=raw,
             sounds=sounds,
@@ -201,8 +250,8 @@ def create_app() -> FastAPI:
 
     @app.api_route("/attempts/{attempt_id}", methods=["GET", "POST"])
     async def attempt_page(request: Request, attempt_id: str) -> Response:
-        def render(request: Request, raw: bytes) -> object:
-            return _attempt_page(request, raw, attempt_id)
+        def render(request: Request, raw: bytes, now: Loaded) -> object:
+            return _attempt_page(request, raw, now, attempt_id)
 
         return await _parent_page(request, render)
 
@@ -218,8 +267,9 @@ def create_app() -> FastAPI:
             )
             refused.headers["cache-control"] = "no-store"
             return refused
+        now = holder.loaded
         raw = await request.body() if request.method == "POST" else b""
-        page = render(request, raw)
+        page = render(request, raw, now)
         response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
         for name, value in page.headers:
             if name == "set-cookie":
@@ -228,32 +278,32 @@ def create_app() -> FastAPI:
                 response.headers[name] = value
         return response
 
-    def _usage_page(request: Request, raw: bytes):
+    def _usage_page(request: Request, raw: bytes, now: Loaded):
         cookie = cookie_value(request.headers.get("cookie"), COOKIE_NAME)
         return respond(
-            hierarchy_policy,
+            now.policy,
             usage_store,
             accounts,
             method=request.method,
             query=_query(request, ("view", "client", "site", "quota")),
             cookie=cookie,
             form=parse_form(raw),
-            now=clock.local(),
+            now=now.clock.local(),
         )
 
-    def _attempts_page(request: Request, raw: bytes):
+    def _attempts_page(request: Request, raw: bytes, now: Loaded):
         return respond_attempts(
             accounts,
             method=request.method,
             query=_query(request, ("client",)),
             cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
             form=parse_form(raw),
-            now=clock.local(),
+            now=now.clock.local(),
             attempts=attempts,
-            clients=_client_names(hierarchy_policy),
+            clients=_client_names(now.policy),
         )
 
-    def _attempt_page(request: Request, raw: bytes, attempt_id: str):
+    def _attempt_page(request: Request, raw: bytes, now: Loaded, attempt_id: str):
         return respond_attempt(
             accounts,
             attempt_id=attempt_id,
@@ -261,19 +311,19 @@ def create_app() -> FastAPI:
             query={},
             cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
             form=parse_form(raw),
-            now=clock.local(),
+            now=now.clock.local(),
             attempts=attempts,
         )
 
-    def _parent_check_page(request: Request, raw: bytes):
+    def _parent_check_page(request: Request, raw: bytes, now: Loaded):
         return respond_parent_check(
             accounts,
             cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
             form=parse_form(raw),
-            now=clock.local(),
-            tasks=() if hierarchy_policy is None else hierarchy_policy.tasks,
+            now=now.clock.local(),
+            tasks=() if now.policy is None else now.policy.tasks,
             attempts=attempts,
-            clients=_client_names(hierarchy_policy),
+            clients=_client_names(now.policy),
         )
 
     return app
@@ -288,6 +338,11 @@ def _query(request: Request, keys: tuple[str, ...]) -> dict[str, str]:
     return found
 
 
+def _announce(lines) -> None:
+    for line in lines:
+        print(line, flush=True)
+
+
 def _announce_parents(accounts: Accounts) -> None:
     if accounts.count():
         print("usage report is /usage", flush=True)
@@ -295,36 +350,22 @@ def _announce_parents(accounts: Accounts) -> None:
         print("usage report is closed until a parent account is added", flush=True)
 
 
-def _load_policy(policy_file: Path, localtime: Path):
+def _load_policy(policy_file: Path, localtime: Path) -> Loaded:
     """Load the household policy. A missing file leaves the service with nothing to decide."""
     require_yaml(policy_file)
     if policy_file.is_file():
         print(f"loading {policy_file}", flush=True)
     else:
         print(f"{policy_file} not found; no policy is loaded", flush=True)
-    policy = load_hierarchy(policy_file)
+    try:
+        policy = load_hierarchy(policy_file)
+    except ConfigError as error:
+        print(f"the policy has {len(error.problems)} errors", flush=True)
+        _announce(error.problems)
+        raise
     timezone = None if policy is None else policy.timezone
-    zone, source = _household_zone(timezone, localtime)
-    return policy, HouseholdClock(zone), source
-
-
-def _announce_policy(policy: Policy | None, clock: HouseholdClock, source: str) -> None:
-    print(f"household {source}; local time is {clock.local().isoformat(timespec='seconds')}", flush=True)
-    if policy is None:
-        print("no policy loaded", flush=True)
-        return
-    print(f"task pages are {picker_url(policy)}", flush=True)
-    print(f"usage buckets are {_span(policy.bucket_length)}", flush=True)
-    print(f"entry {policy.entry}", flush=True)
-    for group in policy.client_groups:
-        print(f"client group {group.name}: {', '.join(group.ips) or 'no address'}", flush=True)
-    print("client group default: addresses in no configured group", flush=True)
-    for group in sorted(policy.site_groups, key=lambda item: item.priority):
-        print(
-            f"site group {group.name}: priority {group.priority}, {len(group.patterns)} patterns",
-            flush=True,
-        )
-    print("site group default: urls that match no configured group", flush=True)
+    zone, source = household_zone(timezone, localtime)
+    return Loaded(policy, HouseholdClock(zone), source)
 
 
 def _empty_policy() -> Policy:
@@ -369,19 +410,3 @@ def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, 
         )
         return trace, Assumption()
     return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger, attempts=attempts)
-
-
-def _household_zone(timezone: str | None, localtime: Path):
-    """Return the zone for timezone, or the machine zone, and a phrase for the log."""
-    if timezone:
-        return named_zone(timezone), f"timezone {timezone}"
-    return machine_zone(localtime=localtime), "timezone of this machine"
-
-
-def _span(seconds: int) -> str:
-    """Return a short duration such as 2h, 5m, or 90s."""
-    if seconds % 3600 == 0:
-        return f"{seconds // 3600}h"
-    if seconds % 60 == 0:
-        return f"{seconds // 60}m"
-    return f"{seconds}s"

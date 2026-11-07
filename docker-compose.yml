@@ -3,7 +3,8 @@
 # Hosts that skip authorization are listed in config/bypass.txt.
 # The decisions service is the policy service. The household policy is
 # config/policy.yaml. Client groups, site groups, and rule sets are loaded
-# from that file each time the service starts. POLICY_FILE must name a
+# from that file each time the service starts, and again on dw reload,
+# which restarts no container. POLICY_FILE must name a
 # .yaml or .yml file. An address or a URL in no configured group is the
 # implicit group default.
 # The observations service writes POST /v1/observations into the usage ledger

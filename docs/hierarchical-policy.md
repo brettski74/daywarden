@@ -716,6 +716,21 @@ Paths are relative to the file that contains the `include`. A directory include 
 
 The load is atomic. Every file is parsed, the namespaces are merged, and references are checked. Any error rejects the whole load and leaves the policy already loaded in force. A missing root file also keeps the policy already loaded. At start there is none, so nothing is allowed until the file is there. A missing included path, when the root file is present, is an error. The root file's name must end in `.yaml` or `.yml`. Any other name is a load error that names the file, whether or not it exists.
 
+A load that fails lists every error it can find, not only the first, so every mistake can be fixed in one pass. Every file is read. Each top-level setting, client group, site group, time window and each of its periods, quota, rule set and each of its rules, and task is checked on its own, and a mistake in one does not hide a mistake in another. Within a period or a task, each field is checked on its own too, so a bad start clock and a bad weekday, or a bad `timeout` and a bad question count, are both listed. An item with an error still counts as defined, so a rule that names it does not get a second "unknown" error. Every instance of a whole-policy problem is listed: each pair of site groups that share a priority, each address in two client groups, each `evaluate` cycle, and a missing `entry` beside the rest. A YAML syntax error stops only the file it is in. Includes named only in that file cannot be found, so they are not read. Each error appears once, starts with its file and line, such as `config/policy.yaml:42:5:`, and the errors are sorted by file, in the order the policy includes them, then by line. A DNS name that does not resolve is a warning, listed after the errors. It is not an error.
+
+## Applying an edit
+
+`dw reload` applies an edit to the running decisions and observations services, without restarting a container. It checks the policy first, with the same code the services run, and changes nothing while there is an error. A good policy is used for the next request through the proxy. That covers every setting in the policy files: time windows, rules, site group patterns, client group addresses, quotas, tasks, `hostname`, `timezone`, and `bucket_length`. A reload keeps:
+
+- **Attempts in progress.** A quiz run keeps the questions, words, deadlines, and tries it started with, and it is scored and recorded as it would be after `dw down` and `dw up` with the same edit. The next attempt that starts uses the new task settings. A task the edit adds can be started, and one it removes is no longer offered.
+- **Transfers already running.** A download or video keeps the deadline and byte ceiling recorded when it was allowed. A reload does not make it walk the rules early. When it reaches them, it is walked again with the reloaded policy, using the client group and site group from its approval.
+- **Sessions.** A parent signed in to the parent pages stays signed in.
+- **Usage.** Usage recorded before the reload counts against the reloaded limits. A new `bucket_length` closes the buckets open at the moment of the reload, as a restart with the new length would.
+
+A DNS name that does not resolve keeps the addresses it had before the reload. A missing `policy.yaml` is refused, as any other error is. `dw check` runs the same check and changes nothing. `dw up`, `dw restart`, and the start at boot run it before they start anything, so a broken policy cannot start daywarden into a crash loop.
+
+`config/bypass.txt` is read by the proxy on every request, and spelling recordings when a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, and a newly installed version, change the containers themselves, and they need `dw restart`. `dw reload` names the services still running with the old settings.
+
 # Usage report
 
 The report can be sliced by site group, by client group, or by quota. A quota slice is still per client group, because that is whose balance it is. Selecting a quota without a client group shows each client group's balance for it, including `default`.

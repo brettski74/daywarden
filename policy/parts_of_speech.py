@@ -34,6 +34,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
+from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
     INCORRECT,
@@ -156,30 +157,36 @@ def default_required(count: int) -> int:
 def parse_settings(body: Mapping) -> Settings:
     """Check a parts of speech task body and return its settings.
 
-    A problem raises ``ValueError`` whose message starts with the field.
+    Each field, and each sentence, is checked, and every problem is raised
+    together as ``Problems``, a ``ValueError``. Each message starts with the
+    field.
     """
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
-    unknown = sorted(set(body) - _BODY_KEYS)
-    if unknown:
-        raise ValueError(f"{unknown[0]}: unknown setting")
-    timeout = duration(body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    fields = Collector()
+    for key in sorted(set(body) - _BODY_KEYS):
+        fields.add(f"{key}: unknown setting")
+    timeout = fields.take(duration, body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    listed = body.get("sentences")
     if "sentences" not in body:
-        raise ValueError("sentences: required; list one or more sentences, each with sentence and parts")
-    listed = body["sentences"]
+        fields.add("sentences: required; list one or more sentences, each with sentence and parts")
+    elif not isinstance(listed, list) or not listed:
+        fields.add("sentences: must be a list of one or more sentences, each with sentence and parts")
     if not isinstance(listed, list) or not listed:
-        raise ValueError("sentences: must be a list of one or more sentences, each with sentence and parts")
+        fields.finish()
     sentences = tuple(
-        _sentence(item, timeout, f"sentences entry {number}") for number, item in enumerate(listed, 1)
+        fields.take(_sentence, item, timeout or 0, f"sentences entry {number}")
+        for number, item in enumerate(listed, 1)
     )
     required = default_required(len(sentences))
     if "correct_answers_required" in body:
         required = body["correct_answers_required"]
         if not is_whole(required) or not 1 <= required <= len(sentences):
-            raise ValueError(
+            fields.add(
                 f"correct_answers_required: must be a whole number from 1 to {len(sentences)}, "
                 "the number of sentences"
             )
+    fields.finish()
     return Settings(sentences, timeout, required)
 
 

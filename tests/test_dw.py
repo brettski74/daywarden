@@ -31,6 +31,29 @@ def _systemctl_user(host):
     return [call[2:] for call in host.calls("systemctl") if call[1:2] == ["--user"]]
 
 
+UP = ["up", "-d", "--wait", "--wait-timeout", "180"]
+DOWN_FOR_RESTART = ["down", "--remove-orphans"]
+CHECK = ["python", "-m", "policy.check", "--host-dir", "config"]
+
+
+def _run_check(*extra):
+    """The policy check in a new container, as dw runs it while daywarden is down or about to start."""
+    return ["--progress", "quiet", "run", "--rm", "--no-deps", "-T", "--quiet-build", "decisions", *CHECK, *extra]
+
+
+def _exec_check(*extra):
+    return ["exec", "-T", "decisions", *CHECK, *extra]
+
+
+def _reload(service):
+    return ["exec", "-T", service, "python", "-m", "policy.reload", "--service", service, "--host-dir", "config"]
+
+
+CHECK_BEFORE_UP = _run_check("--quiet", "--refused", "daywarden was not started.")
+CHECK_BEFORE_RESTART = _run_check("--quiet", "--refused", "Nothing was restarted.")
+BROKEN = ["config/policy.yaml:3:1: unknown setting timezon", "config/policy.yaml:9:5: site groups 'a' and 'b' both have priority 1"]
+
+
 # Usage
 
 
@@ -38,7 +61,7 @@ def _systemctl_user(host):
 def test_the_usage_lists_every_command(host, args):
     done = host.dw(*args)
     assert done.returncode == 0
-    for command in ("up", "down", "status", "enable", "disable"):
+    for command in ("up", "down", "reload", "restart", "check", "status", "enable", "disable"):
         assert f"\n  {command} " in done.stdout
     assert host.calls("docker") == []
 
@@ -51,10 +74,12 @@ def test_an_unknown_command_prints_the_usage_to_stderr_with_status_2(host):
     assert "usage: dw COMMAND" in done.stderr
 
 
-def test_an_extra_argument_is_a_usage_error(host):
-    done = host.dw("up", "--now")
+@pytest.mark.parametrize("command", ["up", "reload", "restart", "check"])
+def test_an_extra_argument_is_a_usage_error(host, command):
+    host.all_running()
+    done = host.dw(command, "--now")
     assert done.returncode == 2
-    assert "dw: up takes no arguments." in done.stderr
+    assert f"dw: {command} takes no arguments." in done.stderr
     assert _compose(host) == []
 
 
@@ -75,7 +100,7 @@ def test_up_creates_the_directories_and_waits_for_health_from_any_directory(host
     done = host.dw("up", cwd=host.elsewhere)
     assert done.returncode == 0, done.stderr
     assert (host.root / "ca").is_dir() and (host.root / "data").is_dir()
-    assert _compose(host) == [["up", "-d", "--wait", "--wait-timeout", "180"]]
+    assert _compose(host) == [CHECK_BEFORE_UP, UP]
     assert list(host.elsewhere.iterdir()) == []
     assert _systemctl_user(host) == [["show-environment"], ["is-enabled", "daywarden.service"]]
 
@@ -117,7 +142,7 @@ def test_up_on_a_running_enabled_daywarden_brings_back_a_stopped_service(host):
     host.state["running"] = {"decisions": "healthy", "observations": "healthy"}
     done = host.dw("up")
     assert done.returncode == 0, done.stderr
-    assert _compose(host) == [["up", "-d", "--wait", "--wait-timeout", "180"]]
+    assert _compose(host) == [CHECK_BEFORE_UP, UP]
     assert host.state["running"]["proxy"] == "healthy"
 
 
@@ -267,8 +292,17 @@ def test_the_service_starts_and_stops_the_stack_directly(host):
     service = host.root / "bin" / "daywarden-service"
     assert host.run(service, "start").returncode == 0
     assert host.run(service, "stop").returncode == 0
-    assert _compose(host) == [["up", "-d", "--wait", "--wait-timeout", "180"], ["down", "--timeout", "20"]]
+    assert _compose(host) == [CHECK_BEFORE_UP, UP, ["down", "--timeout", "20"]]
     assert _systemctl_user(host) == []
+
+
+def test_the_service_start_refuses_a_broken_policy_so_the_start_fails(host):
+    host.state["policy_errors"] = BROKEN
+    done = host.run(host.root / "bin" / "daywarden-service", "start")
+    assert done.returncode == 1
+    assert "dw: the policy has 2 errors. daywarden was not started.\n" + "\n".join(BROKEN) in done.stderr
+    assert _compose(host) == [CHECK_BEFORE_UP]
+    assert host.state["running"] == {}
 
 
 def test_a_service_stop_without_docker_does_nothing_and_succeeds(host):
@@ -301,3 +335,200 @@ def test_a_container_command_says_when_daywarden_is_not_running(host, command):
     assert done.returncode == 1
     assert done.stderr == "daywarden is not running. Start it with dw up.\n"
     assert _compose(host) == []
+
+
+# check
+
+
+def test_check_on_a_stopped_daywarden_runs_in_a_new_container_and_starts_nothing(host):
+    done = host.dw("check", cwd=host.elsewhere)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "household timezone Australia/Sydney\n"
+    assert _compose(host) == [_run_check()]
+    assert host.state["running"] == {}
+    assert host.dw("status").stdout.splitlines()[-3:] == [
+        "  decisions     not running",
+        "  observations  not running",
+        "  proxy         not running",
+    ]
+
+
+def test_check_on_a_running_daywarden_uses_the_decisions_container_and_changes_nothing(host):
+    host.all_running()
+    done = host.dw("check")
+    assert done.returncode == 0, done.stderr
+    assert _compose(host) == [_exec_check()]
+    assert host.state.get("recreated") is None and host.state.get("reloaded") is None
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_check_lists_every_error_and_exits_1(host, running):
+    if running:
+        host.all_running()
+    host.state["policy_errors"] = BROKEN
+    done = host.dw("check")
+    assert done.returncode == 1
+    assert done.stderr == "dw: the policy has 2 errors.\n" + "\n".join(BROKEN) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("config_dir", "shown"),
+    [("./config", "config"), ("conf.d", "conf.d"), ("{root}/mine", "mine"), ("/srv/daywarden", "/srv/daywarden")],
+)
+def test_check_names_the_configuration_directory_as_the_parent_writes_it(host, config_dir, shown):
+    done = host.dw("check", env={"DAYWARDEN_CONFIG_DIR": config_dir.format(root=host.root)})
+    assert done.returncode == 0, done.stderr
+    assert _compose(host)[-1][-2:] == ["--host-dir", shown]
+
+
+# up with a broken policy
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_up_with_a_broken_policy_starts_nothing(host, running):
+    if running:
+        host.all_running()
+    before = dict(host.state["running"])
+    host.state["policy_errors"] = BROKEN
+    done = host.dw("up")
+    assert done.returncode == 1
+    assert done.stderr == "dw: the policy has 2 errors. daywarden was not started.\n" + "\n".join(BROKEN) + "\n"
+    assert _compose(host) == [CHECK_BEFORE_UP]
+    assert host.state["running"] == before
+
+
+# restart
+
+
+def test_restart_checks_then_replaces_every_container_and_waits_for_health(host):
+    host.all_running()
+    done = host.dw("restart")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "daywarden restarted.\n"
+    assert _compose(host) == [CHECK_BEFORE_RESTART, DOWN_FOR_RESTART, UP]
+    assert host.state["recreated"] == {"decisions": 1, "observations": 1, "proxy": 1}
+
+
+def test_restart_with_a_broken_policy_stops_nothing(host):
+    host.all_running()
+    host.state["policy_errors"] = BROKEN
+    done = host.dw("restart")
+    assert done.returncode == 1
+    assert done.stderr.startswith("dw: the policy has 2 errors. Nothing was restarted.\n")
+    assert _compose(host) == [CHECK_BEFORE_RESTART]
+    assert host.state.get("recreated") is None
+    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+
+
+def test_restart_starts_a_stopped_daywarden_and_says_it_was_not_running(host):
+    done = host.dw("restart")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "daywarden was not running, so it was started. daywarden is up.\n"
+    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+
+
+def test_restart_brings_back_a_service_stopped_by_hand(host):
+    host.state["running"] = {"decisions": "healthy", "proxy": "healthy"}
+    done = host.dw("restart")
+    assert done.returncode == 0, done.stderr
+    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+
+
+def test_restart_reports_a_service_that_does_not_become_healthy_as_up_does(host):
+    host.all_running()
+    host.state["up_fails"] = {"proxy": "unhealthy"}
+    host.state["logs"] = {"proxy": "address already in use"}
+    done = host.dw("restart")
+    assert done.returncode == 1
+    assert "dw: these services did not become healthy: proxy (unhealthy)" in done.stderr
+    assert "The last lines proxy logged:\n  address already in use\n" in done.stderr
+
+
+def test_restart_while_enabled_leaves_the_user_service_active_and_down_still_stops_it(host):
+    host.state["systemd"].update(enabled=True, active="failed")
+    host.all_running()
+    done = host.dw("restart")
+    assert done.returncode == 0, done.stderr
+    assert ["start", "daywarden.service"] in _systemctl_user(host)
+    assert "Last start through the user service: no failure" in host.dw("status").stdout
+    host.forget_calls()
+    assert host.dw("down").returncode == 0
+    assert _compose(host) == [["down"]]
+    assert host.state["running"] == {}
+
+
+# reload
+
+
+def test_reload_checks_then_reloads_both_services_without_touching_a_container(host):
+    host.all_running()
+    done = host.dw("reload")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == (
+        "household timezone Australia/Sydney\n"
+        "The decisions and observations services are using the reloaded policy.\n"
+    )
+    assert _compose(host) == [
+        _exec_check("--quiet", "--refused", "Nothing was reloaded."),
+        _reload("decisions"),
+        _reload("observations"),
+        ["config", "--hash", "*"],
+    ]
+    assert host.state["reloaded"] == ["decisions", "observations"]
+    assert host.state.get("recreated") is None
+
+
+def test_reload_with_a_broken_policy_reloads_nothing(host):
+    host.all_running()
+    host.state["policy_errors"] = BROKEN
+    done = host.dw("reload")
+    assert done.returncode == 1
+    assert done.stderr == "dw: the policy has 2 errors. Nothing was reloaded.\n" + "\n".join(BROKEN) + "\n"
+    assert host.state.get("reloaded") is None
+
+
+@pytest.mark.parametrize(
+    ("refusing", "said", "reloaded"),
+    [
+        ("decisions", "", []),
+        ("observations", "the decisions service is using the reloaded policy, and the observations service is not", ["decisions"]),
+    ],
+)
+def test_a_service_that_refuses_the_reload_is_named_and_dw_exits_1(host, refusing, said, reloaded):
+    host.all_running()
+    host.state["reload_refused"] = {refusing: f"dw: the policy has 1 error. The {refusing} service did not reload."}
+    done = host.dw("reload")
+    assert done.returncode == 1
+    assert f"The {refusing} service did not reload." in done.stderr
+    assert said in done.stderr
+    assert host.state.get("reloaded", []) == reloaded
+
+
+def test_reload_names_the_services_a_changed_env_would_change_and_restarts_nothing(host):
+    host.all_running()
+    host.state["config_hash"] = {"proxy": "new-proxy", "decisions": "new-decisions"}
+    done = host.dw("reload")
+    assert done.returncode == 0, done.stderr
+    assert "Warning: .env or docker-compose.yml has changed since these containers were created" in done.stdout
+    assert "Still running with the old settings: decisions, proxy. Run dw restart to apply the changes." in done.stdout
+    assert host.state.get("recreated") is None
+    assert not any(call[0] in ("up", "down", "restart") for call in _compose(host))
+
+
+@pytest.mark.parametrize(("errors", "said"), [([], "dw up will use this policy."), (BROKEN, "once these errors are fixed")])
+def test_reload_on_a_stopped_daywarden_checks_says_so_and_starts_nothing(host, errors, said):
+    host.state["policy_errors"] = errors
+    done = host.dw("reload")
+    assert done.returncode == 1
+    assert "daywarden is not running, so nothing was reloaded." in done.stderr
+    assert said in done.stderr
+    assert _compose(host) == [_run_check("--quiet", "--refused", "Nothing was reloaded.")]
+    assert host.state["running"] == {}
+
+
+def test_reload_with_the_observations_service_stopped_says_so(host):
+    host.state["running"] = {"decisions": "healthy", "proxy": "healthy"}
+    done = host.dw("reload")
+    assert done.returncode == 1
+    assert "The observations service is not running. dw up starts it with this policy." in done.stderr
+    assert host.state["reloaded"] == ["decisions"]

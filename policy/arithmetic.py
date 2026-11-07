@@ -18,6 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
     EXPIRY,
@@ -106,29 +107,32 @@ class Settings:
 def parse_settings(body: Mapping) -> Settings:
     """Check an arithmetic task body and return its settings.
 
-    A problem raises ``ValueError`` whose message starts with the field.
+    Each field is checked, and every problem is raised together as
+    ``Problems``, a ``ValueError``. Each message starts with the field.
     """
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
-    unknown = sorted(set(body) - _BODY_KEYS)
-    if unknown:
-        raise ValueError(f"{unknown[0]}: unknown setting")
+    fields = Collector()
+    for key in sorted(set(body) - _BODY_KEYS):
+        fields.add(f"{key}: unknown setting")
     for key in _REQUIRED_KEYS:
         if key not in body:
-            raise ValueError(f"{key}: is required")
-    name = body["operation"]
-    if not isinstance(name, str) or name not in OPERATIONS:
+            fields.add(f"{key}: is required")
+    name = body.get("operation")
+    if "operation" in body and (not isinstance(name, str) or name not in OPERATIONS):
         known = ", ".join(sorted(OPERATIONS))
-        raise ValueError(f"operation: {name!r} is not an operation this service has; use {known}")
-    longest = duration(body["max_timeout"], "max_timeout")
-    shortest = duration(body["min_timeout"], "min_timeout")
-    if shortest > longest:
-        raise ValueError("min_timeout: must be no longer than max_timeout")
-    required = body["correct_answers_required"]
-    if not is_whole(required) or required < 1:
-        raise ValueError("correct_answers_required: must be a whole number, 1 or more")
-    first = None if "first" not in body else weighted(body["first"], "first", _operand)
-    return Settings(OPERATIONS[name], longest, shortest, required, weighted(body["operands"], "operands", _operand), first)
+        fields.add(f"operation: {name!r} is not an operation this service has; use {known}")
+    longest = fields.take(duration, body["max_timeout"], "max_timeout") if "max_timeout" in body else None
+    shortest = fields.take(duration, body["min_timeout"], "min_timeout") if "min_timeout" in body else None
+    if longest is not None and shortest is not None and shortest > longest:
+        fields.add("min_timeout: must be no longer than max_timeout")
+    required = body.get("correct_answers_required")
+    if "correct_answers_required" in body and (not is_whole(required) or required < 1):
+        fields.add("correct_answers_required: must be a whole number, 1 or more")
+    first = fields.take(weighted, body["first"], "first", _operand) if "first" in body else None
+    operands = fields.take(weighted, body["operands"], "operands", _operand) if "operands" in body else None
+    fields.finish()
+    return Settings(OPERATIONS[name], longest, shortest, required, operands, first)
 
 
 def draw(settings: Settings, recent: Sequence[tuple[int, int]], rng: random.Random) -> tuple[int, int]:

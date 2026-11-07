@@ -14,6 +14,12 @@ it. Any other answer leaves the transfer running.
 
 A POLICY_FILE that does not end in .yaml or .yml stops the service.
 
+POST /v1/reload loads POLICY_FILE again and swaps it in whole. Each report
+reads the policy once, so it is filed and judged under one policy. Running
+transfers keep the deadline and the ceiling recorded when they were allowed.
+A policy with errors is refused and the one in force stays. Only a request
+from inside this container is accepted. Any other peer gets 404.
+
 Run with: python -m policy.observations
 """
 from __future__ import annotations
@@ -26,8 +32,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from policy.check import load_required
 from policy.clock import HouseholdClock, machine_zone, named_zone
-from policy.hierarchy import Policy, load as load_hierarchy, require_yaml
+from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy.store import PolicyStore
 from policy.usage import UsageStore, cut_required, file_report
 
@@ -36,6 +43,7 @@ CUT_BODY = b'{"action":"cut"}'
 
 LOG_PATH = Path(os.environ.get("OBSERVATION_LOG", "/tmp/observations.jsonl"))
 PORT = int(os.environ.get("OBSERVATION_PORT", "8091"))
+LOOPBACK = frozenset({"127.0.0.1", "::1"})
 _LOG_LOCK = threading.Lock()
 
 
@@ -68,10 +76,15 @@ def listen(
     host: str = "0.0.0.0",
     port: int = PORT,
     log_path: Path | None = None,
+    policy_file: Path | None = None,
 ) -> ThreadingHTTPServer:
-    """Serve /health and /v1/observations. The returned server is not started."""
+    """Serve /health, /v1/observations, and /v1/reload. The returned server is not started.
+
+    Without ``policy_file`` there is nothing to reload, and /v1/reload is 404.
+    """
     destination = log_path if log_path is not None else LOG_PATH
     lock = threading.Lock()
+    current = {"policy": policy}
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -86,8 +99,12 @@ def listen(
             length = int(self.headers.get("Content-Length", "0") or "0")
             raw = self.rfile.read(length) if length else b""
             path = self.path.split("?", 1)[0]
+            if path == "/v1/reload":
+                self._reload()
+                return
             recorded = _document(raw)
             with lock:
+                policy = current["policy"]
                 _append_log(destination, recorded)
                 url = recorded.get("url", "?")
                 nbytes = recorded.get("bytes", "?")
@@ -108,11 +125,27 @@ def listen(
                             print(f"observation cut {url}", flush=True)
             self._send(code, payload)
 
-        def _send(self, status: int, body: bytes) -> None:
-            if body == CUT_BODY:
-                content_type = "application/json"
-            else:
-                content_type = "text/plain; charset=utf-8"
+        def _reload(self) -> None:
+            if policy_file is None or self.client_address[0] not in LOOPBACK:
+                self._send(404, b"not found")
+                return
+            warnings: list[str] = []
+            with lock:
+                try:
+                    current["policy"] = load_required(
+                        policy_file, current["policy"], warn=warnings.append, task_data=False
+                    )
+                except ConfigError as error:
+                    print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
+                    answer = {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
+                else:
+                    print(f"reloaded {policy_file}", flush=True)
+                    answer = {"reloaded": True, "warnings": warnings}
+            self._send(200, json.dumps(answer).encode(), "application/json")
+
+        def _send(self, status: int, body: bytes, content_type: str | None = None) -> None:
+            if content_type is None:
+                content_type = "application/json" if body == CUT_BODY else "text/plain; charset=utf-8"
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -127,10 +160,11 @@ def listen(
 
 def main() -> None:
     database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
-    policy = _load_policy(Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml")))
+    policy_file = Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml"))
+    policy = _load_policy(policy_file)
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database, check_same_thread=False)
-    server = listen(policy, UsageStore(connection=store.connection))
+    server = listen(policy, UsageStore(connection=store.connection), policy_file=policy_file)
     # Exit 0 on docker stop. A container that exits non-zero when Docker
     # shuts down is started again by an on-failure restart policy at boot.
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
@@ -149,7 +183,13 @@ def _load_policy(path: Path) -> Policy | None:
         print(f"{path} not found; observations are not recorded", flush=True)
         return None
     print(f"loading {path}", flush=True)
-    return load_hierarchy(path, task_data=False)
+    try:
+        return load_hierarchy(path, task_data=False)
+    except ConfigError as error:
+        print(f"the policy has {len(error.problems)} errors", flush=True)
+        for problem in error.problems:
+            print(problem, flush=True)
+        raise
 
 
 def _clock_for(policy: Policy) -> HouseholdClock:
