@@ -5,8 +5,10 @@ Each quiz page is one document with a start screen, a question screen, a
 confirmation. A browser ``confirm()`` would freeze the timer. The shared
 script reads the page's config, posts ``?do=`` requests to the task URL,
 plays one sound at a time, and shows an end screen with "Next task" or "All
-done for now". Tab and Shift+Tab cycle through the page's own visible,
-usable controls and wrap round, instead of leaving for the browser's
+done for now". When a pass comes with the page he was sent away from, the
+"Well done" screen says it is going back there, and opens it after
+``BACK_DELAY_MS``, or at once on "Go now" or Enter. "Next task" stops that.
+Tab and Shift+Tab cycle through the page's own visible, usable controls and wrap round, instead of leaving for the browser's
 toolbar. Landing in a text box selects what is in it, so typing replaces it. The quiz's own script defines ``refocus()``, which is called
 when the confirmation is cancelled.
 """
@@ -14,17 +16,20 @@ when the confirmation is cancelled.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from policy.hierarchy import Policy
 from policy.report import PageResponse, _e, _response
 from policy.selection import choose_task, picker_url
-from policy.tasks import AttemptStore, household_day
+from policy.tasks import PASS, AttemptStore, household_day
 
 VISIT = "visit"
 QUESTION = "question"
 ANSWER = "answer"
+BACK_DELAY_MS = 5000
+
+Back = Callable[[], str | None]
 
 
 def next_task_url(policy: Policy, store: AttemptStore, client_group: str, now: datetime) -> str | None:
@@ -33,6 +38,24 @@ def next_task_url(policy: Policy, store: AttemptStore, client_group: str, now: d
     if chosen is None:
         return None
     return picker_url(policy)
+
+
+def ending(
+    policy: Policy | None,
+    store: AttemptStore,
+    client_group: str,
+    now: datetime,
+    verdict: str,
+    back: Back | None,
+) -> dict:
+    """Return where the end screen leads: ``next`` is the next task, ``back`` the page he was sent away from.
+
+    ``back`` is only asked after a pass, once the pass is stored.
+    """
+    return {
+        "next": None if policy is None else next_task_url(policy, store, client_group, now),
+        "back": back() if verdict == PASS and back is not None else None,
+    }
 
 
 def reload() -> PageResponse:
@@ -98,7 +121,10 @@ def document(
 </section>
 <section id="done" class="screen end" hidden>
 <h1>Well done</h1>
-{end_links()}
+<p id="going-back" hidden>Going back to <span id="back-host"></span></p>
+<button type="button" id="go-now" class="big" hidden>Go now</button>
+<p class="all-done" hidden>All done for now</p>
+<a class="big next-task" id="next-task" href="#" hidden>Next task</a>
 </section>
 {ends}</main>
 <div id="timer" hidden><div id="bar"></div></div>
@@ -127,6 +153,7 @@ main { flex: 1; display: flex; flex-direction: column; align-items: center; just
 .screen p { font-size: 1.8rem; margin: 0 0 2rem; }
 .note { color: #b42318; }
 .big { font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: #2f6fd6; color: #fff; cursor: pointer; text-decoration: none; }
+#go-now { margin-right: 0.6rem; }
 #feedback { min-height: 3rem; font-size: 2.2rem; margin-top: 1.5rem; font-weight: bold; }
 #feedback.correct { color: #1a7f37; }
 #feedback.incorrect, #feedback.timeout { color: #b42318; }
@@ -138,7 +165,9 @@ main { flex: 1; display: flex; flex-direction: column; align-items: center; just
 [hidden] { display: none !important; }
 """
 
-SHELL_SCRIPT = """\
+SHELL_SCRIPT = f"""\
+  const BACK_DELAY = {BACK_DELAY_MS};
+""" + """\
   const config = JSON.parse(document.getElementById("quiz-config").textContent);
   const $ = (id) => document.getElementById(id);
   const startScreen = $("start"), askScreen = $("ask"), doneScreen = $("done");
@@ -187,9 +216,27 @@ SHELL_SCRIPT = """\
     return response.json();
   }
 
-  function finish(next, screen) {
+  const goNow = $("go-now"), nextTask = $("next-task");
+  let backTo = null;
+  let backTimer = null;
+
+  function goBack() {
+    if (!backTo) return;
+    const target = backTo;
+    backTo = null;
+    clearTimeout(backTimer);
+    window.location.assign(target);
+  }
+
+  function stayHere() {
+    backTo = null;
+    clearTimeout(backTimer);
+  }
+
+  function finish(next, screen, back) {
     state = "done";
     screen = screen || doneScreen;
+    const returning = Boolean(back) && screen === doneScreen;
     for (const section of document.querySelectorAll("main > section")) section.hidden = section !== screen;
     timer.hidden = true;
     giveUp.hidden = true;
@@ -199,10 +246,26 @@ SHELL_SCRIPT = """\
       link.href = next;
       link.hidden = false;
       link.focus();
-    } else {
+    } else if (!returning) {
       screen.querySelector(".all-done").hidden = false;
     }
+    if (returning) {
+      backTo = back;
+      $("back-host").textContent = new URL(back).host;
+      $("going-back").hidden = false;
+      goNow.hidden = false;
+      goNow.focus();
+      backTimer = setTimeout(goBack, BACK_DELAY);
+    }
   }
+
+  goNow.addEventListener("click", goBack);
+  nextTask.addEventListener("click", stayHere);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || !backTo || event.repeat || document.activeElement === nextTask) return;
+    event.preventDefault();
+    goBack();
+  });
 
   function land(element) {
     element.focus();

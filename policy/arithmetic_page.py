@@ -26,7 +26,9 @@ from policy.quiz_page import (
     ANSWER,
     QUESTION,
     VISIT,
+    Back,
     document,
+    ending,
     json_response,
     next_task_url,
     note_html,
@@ -55,12 +57,14 @@ def show(
     policy: Policy | None = None,
     note: str = "",
     record: bool = False,
+    back: Back | None = None,
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
 
     Nothing is stored unless ``record`` is set, which is how a refused
     give-up closes the question that was showing. Otherwise the script's
-    visit request records the page load.
+    visit request records the page load. Closing a question never passes
+    an arithmetic attempt, so ``back`` is not asked here.
     """
     session = Session(attempt.detail, task.document())
     session.visit(now)
@@ -95,12 +99,13 @@ def respond_api(
     now: datetime,
     sounds: SoundSets | None = None,
     rng: random.Random | None = None,
+    back: Back | None = None,
 ) -> PageResponse:
     """Record a page load, issue a question, or judge an answer, and answer with JSON.
 
     A visit is the page running in a tab. A question that was showing when
     the page was left is a timeout. Coming back more than an hour after the
-    last activity starts a new run.
+    last activity starts a new run. ``back`` names the page a pass returns to.
     """
     attempt = store.in_progress(client_group, task.name)
     if attempt is None:
@@ -141,10 +146,10 @@ def respond_api(
         return reload()
     except ValueError as exc:
         return json_response(400, {"error": str(exc)})
-    following = None
+    ended = {"next": None, "back": None}
     if judged.finished:
         store.finish(attempt.id, PASS, now, detail=session.detail)
-        following = next_task_url(policy, store, client_group, now)
+        ended = ending(policy, store, client_group, now, PASS, back)
     else:
         store.save(attempt.id, session.detail)
     question = judged.question
@@ -156,7 +161,7 @@ def respond_api(
             "correct": judged.correct,
             "required": judged.required,
             "finished": judged.finished,
-            "next": following,
+            **ended,
             "sound": (sounds or _NO_SOUNDS).choose(judged.outcome),
         },
     )
@@ -259,7 +264,7 @@ _SCRIPT = """\
       feedback.textContent = result.outcome === "timeout" ? "Time ran out" : "Not quite";
     }
     const pause = result.outcome === "correct" ? config.correctPause : config.wrongPause;
-    setTimeout(() => (result.finished ? finish(result.next) : ask()), pause);
+    setTimeout(() => (result.finished ? finish(result.next, null, result.back) : ask()), pause);
   }
 
   box.addEventListener("keydown", (event) => {

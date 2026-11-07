@@ -95,6 +95,7 @@ class Quiz:
         self.saved = PolicyStore(":memory:")
         self.store = AttemptStore(connection=self.saved.connection)
         self.sounds = load_sounds(_sound_dir(directory / "sounds"), warn=lambda message: None)
+        self.back = None
         self.rng = random.Random(seed)
         self.now = START
 
@@ -113,6 +114,7 @@ class Quiz:
                 query=query,
                 body=body,
                 sounds=self.sounds,
+                back=self.back,
             )
         finally:
             parts_of_speech_page._RNG = saved
@@ -535,6 +537,31 @@ def test_finishing_with_the_pass_mark_passes_and_counts_toward_today(tmp_path):
     assert (final["finished"], final["result"], final["points"]) == (True, "pass", 7)
     assert quiz.attempt().outcome == "pass"
     assert quiz.store.passes_on("younger", household_day(START)) == 1
+
+
+BACK = "https://www.youtube.com/watch?v=abc123"
+
+
+def test_a_pass_carries_the_page_to_go_back_to_and_a_failure_does_not(tmp_path):
+    for name, plan, verdict, back in (("a", ["1"] * 10, "pass", BACK), ("b", ["x"] * 10, "failure", None)):
+        quiz = Quiz(tmp_path / name, _ten(7))
+        quiz.back = lambda: BACK
+        quiz.open(START)
+        final = _play(quiz, plan)[-1]
+        assert (final["result"], final["back"]) == (verdict, back)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+@pytest.mark.parametrize(("verdict", "gone"), [("pass", [(5000, BACK)]), ("failure", [])])
+def test_well_done_after_a_pass_counts_down_to_the_page_and_a_failure_does_not(tmp_path, verdict, gone):
+    quiz = Quiz(tmp_path, _ten(7))
+    page = quiz.open(START).body
+    ended = {"points": 7, "total": 10, "required": 7, "number": 10, "finished": True}
+    replies = {"visit": [{**ended, "result": verdict, "next": None, "back": BACK if verdict == "pass" else None}]}
+    events = _harness(page, replies, steps=[{"snap": ["going-back", "back-host"]}, {"wait": 10_000}])
+    snap = next(event["elements"] for event in events if event["kind"] == "snap")
+    assert snap["going-back"]["hidden"] is (verdict != "pass")
+    assert [(event["at"], event["what"]) for event in events if event["kind"] == "navigate"] == gone
 
 
 # Record

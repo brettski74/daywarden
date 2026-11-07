@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from conftest import needs_node, run_page  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
@@ -775,6 +776,30 @@ def test_the_end_offers_the_next_task_only_when_one_is_eligible(tmp_path):
     assert result["next"] is None
 
 
+BACK = "https://www.youtube.com/watch?v=abc123"
+
+
+def test_a_pass_carries_the_page_to_go_back_to_and_a_failure_does_not(tmp_path):
+    for name, entries, verdict, back in (("a", "1", "pass", BACK), ("b", "x", "failure", None)):
+        quiz = Quiz(tmp_path / name, {"maximum_questions": 8})
+        quiz.back = lambda: BACK
+        quiz.open(START)
+        result = quiz.play([entries] * 8)[-1]
+        assert (result["result"], result["back"]) == (verdict, back)
+
+
+@needs_node
+@pytest.mark.parametrize(("verdict", "gone"), [("pass", [(5000, BACK)]), ("failure", [])])
+def test_well_done_after_a_pass_counts_down_to_the_page_and_a_failure_does_not(tmp_path, verdict, gone):
+    page = Quiz(tmp_path, {}).open(START).body
+    ended = {"points": 8, "required": 8, "number": 8, "maximum": None, "finished": True}
+    replies = {"visit": [{**ended, "result": verdict, "next": None, "back": BACK if verdict == "pass" else None}]}
+    events = run_page(page, replies, steps=[{"snap": ["going-back", "back-host"]}, {"wait": 10_000}])
+    snap = next(event["elements"] for event in events if event["kind"] == "snap")
+    assert snap["going-back"]["hidden"] is (verdict != "pass")
+    assert [(event["at"], event["what"]) for event in events if event["kind"] == "navigate"] == gone
+
+
 # Resume, give-up, and record
 
 
@@ -1000,6 +1025,7 @@ class Quiz:
         self.saved = PolicyStore(":memory:")
         self.store = AttemptStore(connection=self.saved.connection)
         self.sounds = load_sounds(_sound_dir(directory / "sounds"), warn=lambda message: None)
+        self.back = None
         self.now = START
         self.answered = None
 
@@ -1015,6 +1041,7 @@ class Quiz:
             query=query,
             body=body,
             sounds=self.sounds,
+            back=self.back,
         )
 
     def fetch(self, now):

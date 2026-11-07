@@ -1,31 +1,10 @@
 # Hierarchical policy
 
-Status: agreed on 2026-10-26. Nothing here is implemented yet. [S008](../stories/S008-hierarchical-policy.md) is the work that brings the running policy service up to this design. Nothing in this design is constrained by an existing deployment. The first household to run it is this one, and the examples in this workspace are rewritten as part of S008. A translator from the current TOML file is not a deliverable.
+Status: agreed on 2026-10-26 and built by [S008](../stories/done/S008-hierarchical-policy.md).
 
-This note answers why `config/policy.toml` uses `[[groups.rules.windows]]` and `[[groups.rules.weekdays]]`, then describes the replacement.
+This note describes the household policy model.
 
-# What those labels mean today
-
-`[[groups.rules.windows]]` and `[[groups.rules.weekdays]]` are not conditions, and they do not change any rule that follows them. They are TOML's way of hanging a list of child tables off the rule defined immediately above.
-
-A `[[groups]]` table starts a site group. Each `[[groups.rules]]` under it appends one rule to that group. Each `[[groups.rules.windows]]` appends one time period to that rule's `windows` list. Each `[[groups.rules.weekdays]]` appends one weekday override to that rule's `weekdays` list. The next `[[groups.rules]]` starts a new rule with empty lists of its own.
-
-| Child table | Used by | What it holds |
-| --- | --- | --- |
-| `[[groups.rules.windows]]` | `time_window` | One period: `start`, `end`, and optional `days`. |
-| `[[groups.rules.weekdays]]` | `tasks_complete` | A different required count for one named weekday. |
-
-A `time_window` rule is true when the household-local time falls inside any period attached to that rule. The Monday-to-Thursday bedtime block and the Friday-to-Sunday bedtime block in the sample are two periods on the first entertainment rule. Later rules do not inherit them. A `tasks_complete` rule does not read those periods. Its weekday rows, when present, only replace `required` on the named weekdays.
-
-# Why that shape runs out
-
-A request is placed in exactly one site group, and that group owns the only rule list the request will see. The list is the same for every source address. A client record supplies a name, a revision count, and a usage ledger. It does not supply rules.
-
-A time check can pick an action for the sites already in the group. It cannot pick a different set of sites at a different time. Reading sites and YouTube can share a rule list only by living in one group, in which case they are treated the same at 07:30 and at 16:00. They can be treated differently only by living in two groups, in which case each group has one list that applies all day.
-
-The quota size lives on the site group as well. Each client has a separate balance against that shared size. The size does not vary by client.
-
-# Proposed model
+# Model
 
 Rules are the structure. Site groups, client groups, time windows, and quotas are named values a rule can test. A rule does not belong to a site group. Nesting has no required order. The engine walks the list it was given.
 
@@ -175,7 +154,7 @@ These clock assumptions are the ones the walk actually evaluated:
 
 The stored time is the earliest of those. A `volume_remaining` check that was true stores the quota and the byte balance at its limit plus its volume grace. Bytes are not turned into a time, because they depend on how fast the transfer runs. The ceiling is the client group's balance, shared with its other transfers. A check whose true branch was not taken is not recorded. A quota the transfer accrues to, and that the access path did not require, does not cut it. A limit of zero never makes `time_remaining` or `volume_remaining` true, so that side is not a deadline and not a ceiling.
 
-The access rules run when the request starts. They run again only when an observation finds the clock at the stored time, or a stored ceiling already reached. The re-walk uses the client group and the site group from the approval, and the policy loaded at that moment. The URL stays on the record. Allow replaces the time and the ceilings, and the transfer continues. Deny or redirect cuts. A redirect cannot be applied to a body that is already streaming, so it is a cut. A missing record is not a cut: a bypass, a report with no flow id, and the TOML ledger all leave the transfer running.
+The access rules run when the request starts. They run again only when an observation finds the clock at the stored time, or a stored ceiling already reached. The re-walk uses the client group and the site group from the approval, and the policy loaded at that moment. The URL stays on the record. Allow replaces the time and the ceilings, and the transfer continues. Deny or redirect cuts. A redirect cannot be applied to a body that is already streaming, so it is a cut. A missing record is not a cut: a bypass and a report with no flow id both leave the transfer running.
 
 The addon posts observations while bytes move, about once a minute and again when the flow ends. The observation response carries the cut. The service answers `{"action":"cut"}` on HTTP 200. The addon stops that transfer. The report sent as the flow ends can still say cut, and the addon does not tear down a transfer that has already finished. A timeout, a connection error, an empty body, or any response that is not that instruction leaves the transfer running. Failure is not a cut. A failed observation never changes a decision already taken. The decision path fails closed, and metering fails open.
 
@@ -183,13 +162,50 @@ A policy edit does not disturb a transfer until that stored time or a volume cei
 
 ## Tasks
 
-A task has a name, unique in the task namespace, a `type`, a `pass_cooldown` in whole household days, and one or more client groups. `group` names one. `groups` names several. The name `default` is allowed here and means the implicit client group. An unknown client group is a load error.
-
-`failure_cooldown`, `available_from`, `due_date`, `max_skips`, and `max_passes` are optional. Leaving one out leaves that rule off. An omitted failure cooldown does not make a failure wait. Dates are household dates written `2026-10-31`. Cooldowns, skip limits, and pass caps are whole numbers, zero or more. `body` is a mapping of whatever the quiz type needs. This layer stores it and does not interpret it.
+A task has a name, unique in the task namespace, the common attributes below, and a `body` with the settings its type needs. Each type's subsection after this one describes its body.
 
 The same type may appear on more than one task. `parts-of-speech-1` and `parts-of-speech-2` keep separate sentences, dates, and attempt history. Attempts are rows, not part of this file. Editing a task does not delete them. S003.1 is the catalogue. S009 moves the household day off local midnight. Until then the day starts at midnight.
 
-`available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`.
+### Common task attributes
+
+Every task takes these fields, whatever its type. Any other field on a task fails the load, and the previous policy stays in force.
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `type` | Required | The kind of task: `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`. |
+| `group` or `groups` | Required | The client group the task is assigned to with `group`, or a list of one or more with `groups`. Use one of the two, not both. `default` means the implicit client group. |
+| `pass_cooldown` | Required | Household days after a pass before the task is offered again. |
+| `failure_cooldown` | No wait | Household days after a failure before the task is offered again. |
+| `available_from` | Available now | The first household day the task can be offered in yyyy-mm-dd format. |
+| `due_date` | No due date | The household day from which the task is required, until the group has passed it once. Use yyyy-mm-dd format |
+| `max_skips` | No limit | The number of times the task may be skipped before becoming a required task. A skip is counted at most once per day. |
+| `max_passes` | No limit | The maximum number of times that the task may be successfully completed by the group. Once the task has been completed enough times, it's educational value is assumed to have diminished to the point that it is not worth the child repeating it again. |
+| `body` | `{}` | The settings for the task's type. A mapping. |
+
+Dates are household dates written `2026-10-31`. Cooldowns, `max_skips`, and `max_passes` are whole numbers, zero or more. Leaving out an optional field leaves that rule off. The load fails for a missing required field, an unknown client group, a group listed twice, a date in another form, and a negative or fractional number. The error names the task and the field.
+
+A cooldown of N days ends N day boundaries after the household day the attempt finished. 0 is the same day, and 1 is the next day. Only the group's last finished attempt counts. A pass starts `pass_cooldown`, a failure starts `failure_cooldown`, and an abandonment starts neither.
+
+A skip day is a household day on which the group failed or abandoned the task. Several failures or abandonments on one day are one skip day. The count starts again from zero after each pass. The task becomes required once the skip days before today reach `max_skips`, so a skip earlier today does not count until tomorrow. A `max_skips` of 0 makes the task required on every day it is offered.
+
+A task is offered to a group only when it is assigned to that group, today is on or after `available_from`, the group has fewer than `max_passes` passes, and the cooldown has ended. A task that is not offered is never required, so a task at its pass limit, or still cooling down, is not required by its due date or its skip days. A pass that finishes after `max_passes` was lowered is still recorded. A `max_passes` of 0 never offers the task.
+
+`available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`. That type is never required. Assignment and cooldowns still apply to it.
+
+```yaml
+tasks:
+  term-4-spelling:
+    type: spelling
+    groups: [younger, older]
+    pass_cooldown: 1
+    failure_cooldown: 0
+    available_from: 2026-10-05
+    due_date: 2026-12-11
+    max_skips: 2
+    max_passes: 20
+```
+
+This spelling task is first offered on 5 October. After a pass it rests until the next day. After a failure it can be tried again at once. Two skip days since the last pass make it required, and from 11 December it is required until the group has passed it. After 20 passes it is not offered again. `younger` and `older` each keep their own cooldowns, skip days, and passes, so a pass by `older` does nothing for `younger`.
 
 The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass counts toward `tasks_required` and is listed with the group's other attempts. The child has no request that records one.
 
@@ -477,6 +493,23 @@ An inline list has no name of its own. Logs identify it by the path of the rule 
 
 `revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. The scheme is always `https`. The host is the household `hostname`, or the hostname of the machine running Compose when that is left out. That name is read from the machine's `/etc/hostname`, not from the container's own hostname. The port is the household `port`, or the published policy port (`POLICY_PORT`) when that is left out. Port 443 is left off the URL. When a revision task is eligible for the classified client group, the URL is `https://<hostname>:<port>/tasks/<name>` for the chosen task. When nothing is eligible, the URL is `https://<hostname>:<port>/tasks/next`, and that page says there is nothing to revise. A request for a task the child is not meant to open is sent to one he is. The addon sees only `allow`, `deny`, or `redirect`. The policy file does not set a `revision_task` URL. A file that still sets one fails to load. Rules still redirect to the token `revision_task`.
 
+### Back to the page he was sent away from
+
+The proxy sends the request's `Sec-Fetch-Dest` and `Accept` headers with each decision request, as `sec_fetch_dest` and `accept`, when the browser sent them. The decision log records them with the rest of the request.
+
+A request is remembered for its source address when all of these hold:
+
+- The rule that decided it redirected to `revision_task`. A redirect to an absolute URL written in the policy file, an allow, and a deny are not remembered and do not change what is remembered.
+- The method is `GET`.
+- It is a page load. `Sec-Fetch-Dest: document` is a page load, and any other `Sec-Fetch-Dest`, such as `image`, `script`, `empty`, or `iframe`, is not. A request with no `Sec-Fetch-Dest` is a page load when its `Accept` header includes `text/html`. Browsers leave `Sec-Fetch-Dest` off plain `http` requests, so those are judged by `Accept`.
+- The URL is not on the policy server, so the task pages and `/tasks/next` are never remembered, even when one task page is redirected to another.
+
+The address is normalized the way client groups are matched, and each address keeps one URL: a later remembered request replaces it. The client group does not matter, so two computers in one group, or a computer in the `default` group, each have their own. The URL, the household day it was remembered on, and the time are stored in the policy database (`return_pages`), so a restart does not lose them. Hosts on the proxy bypass list never reach the policy service, so they are never remembered.
+
+When an attempt passes on a quiz page, the service takes the URL remembered for the address the task page sees, which is `X-Daywarden-Client` when the proxy forwarded the page. A URL remembered on an earlier household day is not used. It decides that URL for that address with the same rules the proxy would use at that moment. An allow is sent back with the pass, and the "Well done" screen shows "Going back to <host>", a "Go now" button, and "Next task" when another task is eligible. The page opens the URL in the same tab after 5 seconds, or at once on "Go now" or Enter. "Next task" stops the countdown. When the URL would be redirected or denied, or nothing is remembered, "Well done" is unchanged. On a spelling pass with missed words, the countdown starts when "Continue" brings up "Well done". A failure, a give-up, and a `parent_check` pass forward nothing, and they leave the URL in place.
+
+The return is an ordinary request through the proxy, decided like any other. When the proxy allows exactly the remembered URL for that address, by the forward or because he opened it himself, the URL is forgotten. Opening it from "Well done" again needs a new redirect.
+
 ### Conditions
 
 | Condition | Parameters | True when |
@@ -493,7 +526,7 @@ An inline list has no name of its own. Logs identify it by the path of the rule 
 
 `tasks_required` is a count of passes. One stored pass scores one point. The count is the attempt rows for this client group whose outcome is `pass` and whose finish falls on the household day. A different scoring system is out of scope. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
 
-Weekday overrides on the old `tasks_complete` condition are not part of this model. A different count on a different day is a different rule under a different window. Per-weekday targets inside a spelling task stay on that task.
+There is no per-weekday count. A different count on a different day is a different rule under a different window. Per-weekday targets inside a spelling task stay on that task.
 
 A parameter that belongs to another condition is a load error. An unknown condition is a load error. An unknown name is a load error.
 
@@ -689,16 +722,14 @@ The report can be sliced by site group, by client group, or by quota. A quota sl
 
 `default` is a real slice for both kinds of group. Traffic that matched no configured group is visible there. An observation still answers success when the policy service is only recording it. Metering does not turn into a refusal.
 
-The current report is one client and one site group. This view is wider. The report is expected to change to match.
+# Other fixed rules
 
-# What this keeps
-
-- The decision API stays `allow`, `deny` with `403` and a message, or `redirect` with `302` and an absolute URL.
+- The decision API is `allow`, `deny` with `403` and a message, or `redirect` with `302` and an absolute URL.
 - Glob matching, as listed under site groups.
 - The household timezone, local midnight, and DNS resolution at load time.
 - Start-inclusive, end-exclusive periods, including the one-midnight rule for an end clock that is earlier than the start.
 - One completion, one point, for the classified client group and the local date.
-- Bucket length, ended buckets for time, stored bytes for volume, and no banking across midnight. Byte suffixes in this design are `b`, `k`, `M`, `G`, and `T`. The older `KB` / `MB` spelling is not the spelling of this file.
+- Bucket length, ended buckets for time, stored bytes for volume, and no banking across midnight. Byte suffixes are `b`, `k`, `M`, `G`, and `T`.
 - A policy file that fails to load does not replace the stored policy.
 - Unknown keys are rejected.
 
@@ -712,8 +743,6 @@ The current report is one client and one site group. This view is wider. The rep
 
 # Where the work lives
 
-[S008](../stories/S008-hierarchical-policy.md) replaces the policy loader, the rule engine, the usage ledger, the usage report, and the household sample. [S008.6](../stories/S008.6-cut-transfer.md) is the live-transfer cut. It is not required for the rule engine.
+[S008](../stories/done/S008-hierarchical-policy.md) built the policy loader, the rule engine, the usage ledger, the usage report, and the household sample. [S008.6](../stories/S008.6-cut-transfer.md) is the live-transfer cut. It is not required for the rule engine.
 
 [S003](../stories/S003-revision-tasks.md) assigns tasks to a client group and feeds `tasks_required`. [S007.2](../stories/S007.2-edit-policy.md) edits these entities and rule sets. [S007.3](../stories/S007.3-edit-tasks.md) assigns tasks to a client group.
-
-No compatibility layer is required for the current TOML shape, the current rule rows, or the current report. S001 and S002 stay the record of what was built. They are not the model to extend.

@@ -28,9 +28,10 @@ from policy.quiz_page import (
     ANSWER,
     QUESTION,
     VISIT,
+    Back,
     document,
+    ending,
     json_response,
-    next_task_url,
     note_html,
     reload,
 )
@@ -77,6 +78,7 @@ def show(
     policy: Policy | None = None,
     note: str = "",
     record: bool = False,
+    back: Back | None = None,
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
 
@@ -92,7 +94,7 @@ def show(
         if verdict is None:
             store.save(attempt.id, session.detail)
         else:
-            ended = _conclude(policy, store, attempt, session, verdict, now)
+            ended = _conclude(policy, store, attempt, session, verdict, now, back)
     config = {
         "action": path,
         **session.progress(),
@@ -126,6 +128,7 @@ def respond_api(
     now: datetime,
     sounds: SoundSets | None = None,
     rng: random.Random | None = None,
+    back: Back | None = None,
 ) -> PageResponse:
     """Record a page load, issue a word, record a replay, or judge a spelling, and answer with JSON."""
     attempt = store.in_progress(client_group, task.name)
@@ -137,7 +140,7 @@ def respond_api(
         session.visit(now)
         verdict = session.verdict()
         if verdict is not None:
-            ended = _conclude(policy, store, attempt, session, verdict, now)
+            ended = _conclude(policy, store, attempt, session, verdict, now, back)
             return json_response(200, {**session.progress(), "finished": True, **ended})
         if action == VISIT:
             store.save(attempt.id, session.detail)
@@ -176,11 +179,11 @@ def respond_api(
         return json_response(
             200, {"word_replays": played["word_replays"], "sentence_plays": played["sentence_plays"]}
         )
-    ended = {"result": None, "next": None, "missed": []}
+    ended = {"result": None, "next": None, "back": None, "missed": []}
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
-        ended = _conclude(policy, store, attempt, session, judged.verdict, now)
+        ended = _conclude(policy, store, attempt, session, judged.verdict, now, back)
     return json_response(
         200,
         {
@@ -317,10 +320,15 @@ def _practice_word(
     return {"word": word["word"], "steps": steps}
 
 
-def _conclude(policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime) -> dict:
+def _conclude(
+    policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime, back: Back | None
+) -> dict:
     store.finish(attempt.id, verdict, now, detail=session.detail)
-    following = None if policy is None else next_task_url(policy, store, attempt.client_group, now)
-    return {"result": verdict, "next": following, "missed": missed_words(session.detail)}
+    return {
+        "result": verdict,
+        **ending(policy, store, attempt.client_group, now, verdict, back),
+        "missed": missed_words(session.detail),
+    }
 
 
 def progress_text(progress: Mapping) -> str:
@@ -425,6 +433,7 @@ _SCRIPT = """\
   let expiry = null;
   let listening = 0;
   let afterMissed = null;
+  let afterBack = null;
   let inflight = Promise.resolve();
   let attemptOver = false;
   let entering = false;
@@ -515,7 +524,7 @@ _SCRIPT = """\
     practiceBox.hidden = true;
     const missed = result.missed || [];
     if (!missed.length) {
-      finish(result.next);
+      finish(result.next, null, result.back);
       return;
     }
     state = "missed";
@@ -531,11 +540,12 @@ _SCRIPT = """\
       missedList.appendChild(item);
     }
     afterMissed = result.next;
+    afterBack = result.back;
     missedContinue.focus();
   }
 
   function onward() {
-    if (state === "missed") finish(afterMissed);
+    if (state === "missed") finish(afterMissed, null, afterBack);
   }
 
   const visited = config.ended

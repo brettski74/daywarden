@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from conftest import needs_node, run_page  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
 from policy.arithmetic import (  # noqa: E402
     NETWORK_ALLOWANCE_MS,
@@ -508,6 +509,102 @@ def test_well_done_offers_the_next_task_only_when_one_is_eligible(tmp_path):
     assert result["next"] is None
 
 
+# Back to the page he was sent away from (S015)
+
+BACK = "https://www.youtube.com/watch?v=abc123"
+GOING_BACK = ["going-back", "back-host", "go-now"]
+
+
+def test_only_the_answer_that_passes_carries_the_page_to_go_back_to(tmp_path):
+    quiz = Quiz(tmp_path, _body(correct_answers_required=2))
+    asked = []
+    quiz.back = lambda: asked.append(True) or BACK
+    quiz.open(START)
+    question = quiz.ask(START)
+    first = quiz.answer(START, question["id"], str(quiz.expected()))
+    assert (first["finished"], first["back"]) == (False, None)
+    assert asked == []
+    question = quiz.ask(START)
+    final = quiz.answer(START, question["id"], str(quiz.expected()))
+    assert (final["finished"], final["back"]) == (True, BACK)
+    assert len(asked) == 1
+
+
+def _well_done(tmp_path, *, back, next_task=None, leave=()):
+    """Pass the one-question quiz in the page script, then do what ``leave`` lists on "Well done"."""
+    sums = _body(correct_answers_required=1, first=[{"value": 6, "weight": 1}], operands=[{"value": 7, "weight": 1}])
+    page = Quiz(tmp_path, sums).open(START).body
+    replies = {
+        "visit": [{"correct": 0, "required": 1}],
+        "question": [{"id": 0, "question": "6 + 7 =", "allowed_ms": 10_000, "correct": 0, "required": 1}],
+        "answer": [
+            {
+                "outcome": "correct",
+                "full": "6 + 7 = 13",
+                "correct": 1,
+                "required": 1,
+                "finished": True,
+                "next": next_task,
+                "back": back,
+                "sound": None,
+            }
+        ],
+    }
+    steps = [
+        {"click": "start-button"},
+        {"type": ["answer", "13"]},
+        {"key": ["answer", "Enter"]},
+        {"wait": 1000},
+        {"snap": GOING_BACK, "label": "well done"},
+        *leave,
+    ]
+    events = run_page(page, replies, steps=steps)
+    snaps = {event["what"]: event["elements"] for event in events if event["kind"] == "snap"}
+    gone = [(event["at"], event["what"]) for event in events if event["kind"] == "navigate"]
+    return snaps["well done"], gone
+
+
+@needs_node
+def test_well_done_says_where_he_is_going_and_opens_it_five_seconds_later(tmp_path):
+    shown, gone = _well_done(tmp_path, back=BACK, leave=[{"wait": 4999}, {"wait": 1}])
+    assert shown["going-back"]["hidden"] is False
+    assert shown["back-host"]["text"] == "www.youtube.com"
+    assert shown["go-now"]["hidden"] is False
+    assert shown["go-now"]["focused"] is True
+    assert gone == [(6000, BACK)]
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "leave",
+    [[{"click": "go-now"}], [{"key": ["go-now", "Enter"]}]],
+    ids=["go now", "enter"],
+)
+def test_go_now_and_enter_open_the_page_straight_away(tmp_path, leave):
+    _shown, gone = _well_done(tmp_path, back=BACK, leave=[*leave, {"wait": 10_000}])
+    assert gone == [(1000, BACK)]
+
+
+@needs_node
+def test_choosing_next_task_stops_the_countdown(tmp_path):
+    shown, gone = _well_done(
+        tmp_path,
+        back=BACK,
+        next_task="https://tasks.example/tasks/next",
+        leave=[{"wait": 2000}, {"click": "next-task"}, {"wait": 10_000}],
+    )
+    assert shown["going-back"]["hidden"] is False
+    assert gone == []
+
+
+@needs_node
+def test_without_a_page_to_go_back_to_well_done_is_unchanged(tmp_path):
+    shown, gone = _well_done(tmp_path, back=None, leave=[{"key": ["answer", "Enter"]}, {"wait": 10_000}])
+    assert shown["going-back"]["hidden"] is True
+    assert shown["go-now"]["hidden"] is True
+    assert gone == []
+
+
 def test_the_only_required_task_keeps_its_progress_when_he_tries_to_give_up(tmp_path):
     quiz = Quiz(tmp_path, _body(), due="2026-11-01")
     quiz.open(START)
@@ -789,6 +886,7 @@ class Quiz:
         self.saved = PolicyStore(":memory:")
         self.store = AttemptStore(connection=self.saved.connection)
         self.sounds = sounds or load_sounds(_sound_dir(directory / "sounds"), warn=lambda message: None)
+        self.back = None
 
     def use(self, body: dict) -> None:
         self.policy = _policy(self.directory, body, **self.house)
@@ -805,6 +903,7 @@ class Quiz:
             query=query,
             body=body,
             sounds=self.sounds,
+            back=self.back,
         )
 
     def fetch(self, now):

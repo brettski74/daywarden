@@ -690,6 +690,7 @@ class Quiz:
         self.saved = PolicyStore(":memory:")
         self.store = AttemptStore(connection=self.saved.connection)
         self.sounds = load_sounds(_sound_dir(directory / "sounds"), warn=lambda message: None)
+        self.back = None
         self.now = START
 
     def _respond(self, now, method, query=None, body=b""):
@@ -704,6 +705,7 @@ class Quiz:
             query=query,
             body=body,
             sounds=self.sounds,
+            back=self.back,
         )
 
     def open(self, now):
@@ -857,6 +859,42 @@ def test_passing_reports_each_missed_word_once_and_counts_the_pass(tmp_path, dat
     assert sorted(last["missed"]) == ["cat", "read"]
     assert quiz.attempt().outcome == "pass"
     assert quiz.store.passes_on("younger", START.date()) == 1
+
+
+BACK = "https://www.youtube.com/watch?v=abc123"
+
+
+def test_a_pass_carries_the_page_to_go_back_to(tmp_path, data):
+    _words(data, "spelling/current", "rope")
+    quiz = Quiz(tmp_path)
+    quiz.back = lambda: BACK
+    quiz.open(START)
+    first = quiz.spell(False)
+    assert (first["finished"], first["back"]) == (False, None)
+    for _ in range(5):
+        last = quiz.spell(True)
+        if last["finished"]:
+            break
+    assert (last["result"], last["back"], last["missed"]) == ("pass", BACK, ["rope"])
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+@pytest.mark.parametrize(
+    ("missed", "steps", "gone"),
+    [
+        ([], [{"wait": 10_000}], [(5000, BACK)]),
+        (["rope"], [{"wait": 10_000}, {"click": "missed-continue"}, {"wait": 10_000}], [(15_000, BACK)]),
+        (["rope"], [{"wait": 10_000}, {"key": ["missed-continue", "Enter"]}, {"wait": 10_000}], [(15_000, BACK)]),
+    ],
+    ids=["clean pass", "continue", "enter on continue"],
+)
+def test_the_countdown_starts_when_well_done_shows(tmp_path, data, missed, steps, gone):
+    _words(data, "spelling/current", "rope")
+    page = Quiz(tmp_path).open(START).body
+    progress = {"current": 1, "current_required": 1, "revision": 0, "revision_required": 0}
+    replies = {"visit": [{**progress, "finished": True, "result": "pass", "next": None, "back": BACK, "missed": missed}]}
+    events = _harness(page, replies, steps=steps)
+    assert [(event["at"], event["what"]) for event in events if event["kind"] == "navigate"] == gone
 
 
 def test_a_clean_pass_has_no_missed_words(tmp_path, data):

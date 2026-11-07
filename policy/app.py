@@ -36,6 +36,7 @@ from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_c
 from policy.groups import SiteGroups
 from policy.hierarchy import Policy, load as load_hierarchy
 from policy.report import format_byte_limit, parse_form, respond, respond_hierarchy
+from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
 from policy.selection import picker_url
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     store = PolicyStore(database)
     accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
     attempts = AttemptStore(connection=store.connection)
+    returns = ReturnPages(store.connection)
     # YAML is the household policy. A .toml path is the previous engine.
     yaml_mode = policy_file.suffix.lower() in {".yaml", ".yml"}
     hierarchy_policy: Policy | None = None
@@ -127,6 +129,17 @@ def create_app() -> FastAPI:
                     trace.site_group,
                     parsed.url,
                     assumption,
+                )
+            if hierarchy_policy is not None:
+                returns.note(
+                    hierarchy_policy,
+                    trace,
+                    client_ip=parsed.client_ip,
+                    method=parsed.method,
+                    url=parsed.url,
+                    sec_fetch_dest=parsed.sec_fetch_dest,
+                    accept=parsed.accept,
+                    at=at,
                 )
             decision = json.dumps(trace.decision).encode()
             decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
@@ -204,17 +217,25 @@ def create_app() -> FastAPI:
     async def _task_page(request: Request, path: str) -> Response:
         raw = await request.body() if request.method == "POST" else b""
         policy = hierarchy_policy if hierarchy_policy is not None else _empty_policy()
+        client_ip = _client_address(request, hierarchy_policy)
+
+        def back() -> str | None:
+            if hierarchy_policy is None:
+                return None
+            return way_back(hierarchy_policy, returns, ledger, client_ip, clock.local())
+
         page = respond_task(
             policy,
             attempts,
             method=request.method,
             path=path,
-            client_ip=_client_address(request, hierarchy_policy),
+            client_ip=client_ip,
             cookie=request.headers.get("cookie"),
             now=clock.local(),
             query=_query(request, ("do",)),
             body=raw,
             sounds=sounds,
+            back=back,
         )
         response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
         for name, value in page.headers:

@@ -9,7 +9,7 @@
 // {click: id}, {wait: ms}, {type: [id, text]}, {key: [id, key]}, and
 // {snap: [id, ...], label}. A snap records whether each element is hidden,
 // disabled, and focused, and its text. Prints the posts, plays, and snaps it
-// saw, each with the fake time it happened. With `bodies`, each post also
+// saw, and each window.location.assign as a navigate, each with the fake time it happened. With `bodies`, each post also
 // carries the JSON it sent. `calls` is a list of [name, ...args] run after the
 // steps against the functions a page exposes as `window.partsOfSpeech`, each
 // printed with its result.
@@ -173,7 +173,12 @@ async function fetch(url, options) {
   };
 }
 
-const window = { location: { reload: () => events.push({ at: now, kind: "reload" }) } };
+const window = {
+  location: {
+    reload: () => events.push({ at: now, kind: "reload" }),
+    assign: (url) => events.push({ at: now, kind: "navigate", what: url }),
+  },
+};
 
 vm.runInNewContext(code, {
   document,

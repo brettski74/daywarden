@@ -45,6 +45,8 @@ class Trace:
     ``rule_set`` is a rule-set name, or the path of an inline list. ``rule_index``
     counts from 1 in that list. Both are None when a top-level continue became
     the deny in ``decision``. ``continued`` is true only in that case.
+    ``revision`` is true when the deciding rule redirected to ``revision_task``,
+    whatever task selection made of that redirect afterwards.
     """
 
     client_group: str
@@ -53,6 +55,7 @@ class Trace:
     rule_index: int | None
     continued: bool
     decision: dict
+    revision: bool = False
 
 
 class Ledger:
@@ -285,6 +288,7 @@ def judge_frozen(
         hit.rule_index,
         False,
         _answered(hit.action, policy),
+        hit.action.kind == "redirect" and hit.action.location == REVISION_TASK,
     )
     if trace.decision.get("action") != "allow":
         return trace, Assumption()

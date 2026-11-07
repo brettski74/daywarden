@@ -23,10 +23,11 @@ from policy.quiz_page import (
     ANSWER,
     QUESTION,
     VISIT,
+    Back,
     document,
     end_links,
+    ending,
     json_response,
-    next_task_url,
     note_html,
     reload,
 )
@@ -55,6 +56,7 @@ def show(
     policy: Policy | None = None,
     note: str = "",
     record: bool = False,
+    back: Back | None = None,
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
 
@@ -70,7 +72,7 @@ def show(
         if verdict is None:
             store.save(attempt.id, session.detail)
         else:
-            ended = _conclude(policy, store, attempt, session, verdict, now)
+            ended = _conclude(policy, store, attempt, session, verdict, now, back)
     config = {
         "action": path,
         **_progress(session),
@@ -105,6 +107,7 @@ def respond_api(
     now: datetime,
     sounds: SoundSets | None = None,
     rng: random.Random | None = None,
+    back: Back | None = None,
 ) -> PageResponse:
     """Record a page load, issue a question, or judge a try, and answer with JSON."""
     attempt = store.in_progress(client_group, task.name)
@@ -115,7 +118,7 @@ def respond_api(
         session.visit(now)
         verdict = session.verdict()
         if verdict is not None:
-            ended = _conclude(policy, store, attempt, session, verdict, now)
+            ended = _conclude(policy, store, attempt, session, verdict, now, back)
             return json_response(200, {**_progress(session), "finished": True, **ended})
         if action == VISIT:
             store.save(attempt.id, session.detail)
@@ -155,11 +158,11 @@ def respond_api(
         return reload()
     except ValueError as exc:
         return json_response(400, {"error": str(exc)})
-    ended = {"result": None, "next": None}
+    ended = {"result": None, "next": None, "back": None}
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
-        ended = _conclude(policy, store, attempt, session, judged.verdict, now)
+        ended = _conclude(policy, store, attempt, session, judged.verdict, now, back)
     question = judged.question
     sound = "incorrect" if judged.outcome == WRONG else judged.outcome
     return json_response(
@@ -179,10 +182,11 @@ def respond_api(
     )
 
 
-def _conclude(policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime) -> dict:
+def _conclude(
+    policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime, back: Back | None
+) -> dict:
     store.finish(attempt.id, verdict, now, detail=session.detail)
-    following = None if policy is None else next_task_url(policy, store, attempt.client_group, now)
-    return {"result": verdict, "next": following}
+    return {"result": verdict, **ending(policy, store, attempt.client_group, now, verdict, back)}
 
 
 def _progress(session: Session) -> dict:
@@ -289,7 +293,7 @@ _SCRIPT = """\
 
   function end(result) {
     if (result.result === "pass") {
-      finish(result.next);
+      finish(result.next, null, result.back);
       return;
     }
     $("failed-points").textContent = pointsText(result.points, result.required);

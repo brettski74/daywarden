@@ -36,6 +36,8 @@ class DecisionRequest:
     url: str
     occurred_at: datetime | None
     flow_id: str | None = None
+    sec_fetch_dest: str | None = None
+    accept: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,13 @@ def parse_request(document: object) -> DecisionRequest:
     flow_id = document.get("flow_id")
     if flow_id is not None and (not isinstance(flow_id, str) or not flow_id):
         raise ValueError("flow_id must be a string")
-    return DecisionRequest(client_ip, document["method"], document["url"], moment, flow_id)
+    headers = {}
+    for key in ("sec_fetch_dest", "accept"):
+        value = document.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        headers[key] = value
+    return DecisionRequest(client_ip, document["method"], document["url"], moment, flow_id, **headers)
 
 
 def context_for(
