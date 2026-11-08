@@ -1,4 +1,4 @@
-# Local stack. The listen port and the CA directory come from .env.
+# Local stack. The ports and the CA directory come from .env.
 # A value already in the environment wins. .env fills in the rest.
 # Sourcing .env over the top would drop a prefix such as
 # PARENT_NAMES=... make up. PARENT_PASSWORD used to survive that
@@ -15,13 +15,14 @@ DIST_DIR := dist
 
 # make help lists each target that has a "## description" on its line.
 
-up: ## Start the local stack and wait until every service is healthy
-	$(load_env); mkdir -p "$$CA_VOLUME_PATH" "$${DAYWARDEN_DATA_DIR:-$$HOME/daywarden}" && docker compose up -d --wait
+# bin/dw loads .env the same way as load_env, so an exported value still wins.
+# It also works out the ports from PORT_BASE, which Compose cannot do.
+up: ## Check the policy, start the local stack, and wait until every service is healthy
+	@bin/dw up
 
 down: ## Stop the local stack and remove its containers
-	docker compose down
+	@bin/dw down
 
-# bin/dw loads .env the same way as load_env, so an exported value still wins.
 reload: ## Check the policy and apply it without restarting a container
 	@bin/dw reload
 

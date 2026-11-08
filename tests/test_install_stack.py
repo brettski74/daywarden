@@ -59,7 +59,7 @@ class Installed:
         for name, text in (("systemctl", FAKE_SYSTEMCTL), ("loginctl", FAKE_LOGINCTL)):
             (fakes / name).write_text(text, encoding="utf-8")
             (fakes / name).chmod(0o755)
-        self.proxy_port, self.policy_port = _free_port(), _free_port()
+        self.proxy_port, self.policy_port, self.config_port = _free_port(), _free_port(), _free_port()
         env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "DAYWARDEN_DATA_DIR", "VIRTUAL_ENV")}
         real_home = Path(os.environ["HOME"])
         env.update(
@@ -68,6 +68,7 @@ class Installed:
             COMPOSE_PROJECT_NAME=project,
             PROXY_PORT=str(self.proxy_port),
             POLICY_PORT=str(self.policy_port),
+            PROXY_CONFIG_PORT=str(self.config_port),
             PIP_CACHE_DIR=str(real_home / ".cache" / "pip"),
         )
         if (real_home / ".docker").is_dir():
@@ -159,9 +160,18 @@ def test_make_dist_builds_a_package_that_installs_and_runs(installed):
         write_wav(spelling / "revision" / f"{word}.wav")
     write_alphabet(spelling / "alphabet")
 
-    installed.command("dw", "up")
+    up = installed.command("dw", "up")
+    assert up.stdout.splitlines()[-1].endswith(f":{installed.config_port}/proxy.pac")
     status = installed.command("dw", "status")
-    assert status.stdout.splitlines()[-3:] == ["  decisions     healthy", "  observations  healthy", "  proxy         healthy"]
+    assert status.stdout.splitlines()[-4:] == [
+        "  decisions     healthy",
+        "  observations  healthy",
+        "  proxy         healthy",
+        "  autoconfig    healthy",
+    ]
+    with urllib.request.urlopen(f"http://127.0.0.1:{installed.config_port}/wpad.dat", timeout=10) as response:
+        assert response.headers["Content-Type"] == "application/x-ns-proxy-autoconfig"
+        assert f":{installed.proxy_port}\"" in response.read().decode()
 
     proxy = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{installed.proxy_port}"}))
     with pytest.raises(urllib.error.HTTPError) as denied:

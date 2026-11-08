@@ -222,7 +222,7 @@ def test_a_running_daywarden_is_not_touched_unless_the_restart_is_accepted(host,
     assert (host.root / "docker-compose.yml").read_bytes() == compose_file
     assert all(call[1] != "load" for call in host.calls("docker"))
     assert _compose_calls(host, "down") == [] and _compose_calls(host, "up") == []
-    assert set(host.state["running"]) == {"decisions", "observations", "proxy"}
+    assert set(host.state["running"]) == {"decisions", "observations", "proxy", "autoconfig"}
 
 
 def test_accepting_the_restart_installs_then_restarts_the_stack(host, package, newer):
@@ -234,7 +234,7 @@ def test_accepting_the_restart_installs_then_restarts_the_stack(host, package, n
     assert (host.root / "VERSION").read_text(encoding="utf-8").strip() == NEWER
     assert [verb for verb in _compose_verbs(host) if verb in ("run", "up", "down")] == ["run", "down", "up"]
     assert f"daywarden restarted on {NEWER}, and every service is healthy." in done.stdout
-    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy", "autoconfig": "healthy"}
 
 
 def test_a_restart_that_does_not_come_back_healthy_fails_with_the_new_files_in_place(host, package, newer):
@@ -327,15 +327,56 @@ def test_warnings_are_given_with_advice_and_the_install_finishes(host, package):
 
 def test_the_ports_come_from_the_installed_env_and_a_running_daywarden_is_not_reported(host, package, newer):
     assert host.install(package).returncode == 0
-    (host.root / ".env").write_text((host.root / ".env").read_text(encoding="utf-8").replace("PROXY_PORT=8080", "PROXY_PORT=3128"), encoding="utf-8")
+    env = host.root / ".env"
+    env.write_text(env.read_text(encoding="utf-8").replace("PORT_BASE=8080", "PORT_BASE=9080") + "PROXY_PORT=3128\n", encoding="utf-8")
     host.all_running()
-    host.state["ports"] = {"proxy": "0.0.0.0:3128->8080/tcp", "decisions": "0.0.0.0:8090->8443/tcp"}
-    host.state["listening"] = [3128, 8090]
+    host.state["ports"] = {"proxy": "0.0.0.0:3128->8080/tcp", "decisions": "0.0.0.0:9084->8443/tcp", "autoconfig": ""}
+    host.state["listening"] = [3128, 9084, 9088]
     done = host.install(newer, input="n\n")
     assert "already in use" not in done.stdout
     host.state["running"] = {}
     done = host.install(newer)
     assert "Port 3128 (PROXY_PORT) is already in use" in done.stdout
+    assert "Port 9084 (POLICY_PORT) is already in use" in done.stdout
+    assert "Port 9088 (PROXY_CONFIG_PORT) is already in use" in done.stdout
+    assert "change PORT_BASE or PROXY_CONFIG_PORT in ~/daywarden/.env" in done.stdout
+
+
+def test_a_new_install_sets_port_base_and_not_the_three_ports(host, package):
+    assert host.install(package).returncode == 0
+    assert _env_value(host.root / ".env", "PORT_BASE") == "8080"
+    lines = (host.root / ".env").read_text(encoding="utf-8").splitlines()
+    assert not [line for line in lines if line.startswith(("PROXY_PORT=", "POLICY_PORT=", "PROXY_CONFIG_PORT="))]
+
+
+def test_a_first_install_warns_about_each_default_port_in_use(host, package):
+    host.state["listening"] = [8084, 8088]
+    done = host.install(package)
+    assert done.returncode == 0, done.stderr
+    assert "Port 8080" not in done.stdout
+    assert "Port 8084 (POLICY_PORT) is already in use" in done.stdout
+    assert "Port 8088 (PROXY_CONFIG_PORT) is already in use" in done.stdout
+
+
+def test_an_upgrade_leaves_the_port_settings_of_an_existing_env_alone(host, package, newer):
+    assert host.install(package).returncode == 0
+    env = host.root / ".env"
+    old = env.read_text(encoding="utf-8").replace("PORT_BASE=8080\n", "PROXY_PORT=8080\nPOLICY_PORT=8090\n")
+    env.write_text(old, encoding="utf-8")
+    host.state["listening"] = [8090]
+    done = host.install(newer)
+    assert done.returncode == 0, done.stderr
+    assert env.read_text(encoding="utf-8") == old
+    assert "Port 8090 (POLICY_PORT) is already in use" in done.stdout
+
+
+def test_ports_that_cannot_be_used_are_a_warning(host, package):
+    assert host.install(package).returncode == 0
+    env = host.root / ".env"
+    env.write_text(env.read_text(encoding="utf-8").replace("PORT_BASE=8080", "PORT_BASE=65530"), encoding="utf-8")
+    done = host.install(package)
+    assert done.returncode == 0, done.stderr
+    assert "PORT_BASE 65530 puts PROXY_CONFIG_PORT at 65530+8 = 65538, above 65535. dw up will refuse to start." in done.stdout
 
 
 def test_a_command_in_bin_that_daywarden_did_not_install_stops_the_install(host, package):

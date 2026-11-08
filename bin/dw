@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run daywarden on this machine.
-#   dw up        check the policy, start it, and wait until every service is healthy
+#   dw up        check the policy, start it, wait until every service is healthy,
+#                and print the proxy configuration URL
 #   dw down      stop it and remove its containers
 #   dw reload    check the policy and apply it without restarting a container
 #   dw restart   check the policy, then replace every container
@@ -35,10 +36,12 @@ Commands:
   reload   check config/policy.yaml and apply it, without restarting any
            container. Quizzes, transfers, and sign-ins carry on
   restart  check the policy, then replace every container and wait until
-           every service is healthy. Applies changes to .env
+           every service is healthy. Applies changes to .env, such as
+           PORT_BASE
   check    check the policy and list every error. Changes nothing
-  status   show the version, whether daywarden starts at boot, and the
-           health of each service. Exits 0 only when all are healthy
+  status   show the version, whether daywarden starts at boot, the proxy
+           configuration URL, and the health of each service. Exits 0 only
+           when all are healthy
   enable   start daywarden at boot, without anyone logging in
   disable  do not start daywarden at boot. A running daywarden keeps running
   help     show this help
@@ -65,6 +68,7 @@ cmd_up() {
     dw_compose_up "daywarden was not started." || exit 1
     dw_track_with_user_service || exit 1
     echo "daywarden is up."
+    echo "Proxy configuration URL: $(dw_config_url)"
 }
 
 # compose up --force-recreate measured slower than down and up, so a restart
@@ -74,6 +78,7 @@ cmd_restart() {
     dw_prepare dw
     local was_running=0
     dw_running && was_running=1
+    dw_require_ports "Nothing was restarted." || exit 1
     dw_make_dirs || exit 1
     dw_check_policy run --quiet --refused "Nothing was restarted." || exit 1
     dw_compose down --remove-orphans
@@ -84,6 +89,7 @@ cmd_restart() {
     else
         echo "daywarden was not running, so it was started. daywarden is up."
     fi
+    echo "Proxy configuration URL: $(dw_config_url)"
 }
 
 cmd_check() {
@@ -118,7 +124,15 @@ cmd_reload() {
         echo "dw: the decisions service is using the reloaded policy, and the observations service is not." >&2
         exit 1
     fi
-    echo "The decisions and observations services are using the reloaded policy."
+    if ! dw_running autoconfig; then
+        echo "dw: the decisions and observations services are using the reloaded policy. The autoconfig service is not running. dw up starts it with this policy." >&2
+        exit 1
+    fi
+    if ! dw_compose exec -T autoconfig python -m policy.reload --service autoconfig --host-dir "$(dw_config_dir)"; then
+        echo "dw: the decisions and observations services are using the reloaded policy, and the autoconfig service is not." >&2
+        exit 1
+    fi
+    echo "The decisions, observations, and autoconfig services are using the reloaded policy."
     while read -r service; do
         [ -n "$service" ] && stale+=("$service")
     done < <(dw_stale_services)
@@ -161,6 +175,7 @@ cmd_status() {
     if ! docker info >/dev/null 2>&1; then
         echo "The Docker daemon is not answering."
     fi
+    echo "Proxy configuration URL: $(dw_config_url)"
     while IFS=$'\t' read -r service state; do
         printf '  %-13s %s\n' "$service" "$state"
         [ "$state" = healthy ] && healthy=$((healthy + 1))

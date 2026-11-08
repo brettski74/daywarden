@@ -1,8 +1,8 @@
 Ticket: S019
 Title: Proxy Configuration URL
-Status: Refined
+Status: Done
 Story Points: 21
-Last Updated: 2026-11-08 09:10:00
+Last Updated: 2026-11-08 12:10:00
 ---
 
 # User Voice
@@ -108,133 +108,133 @@ part of this story.
 
 ## The configuration file
 
-- [ ] `http://<server>:<PROXY_CONFIG_PORT>/proxy.pac` and `http://<server>:<PROXY_CONFIG_PORT>/wpad.dat` return the
+- [x] `http://<server>:<PROXY_CONFIG_PORT>/proxy.pac` and `http://<server>:<PROXY_CONFIG_PORT>/wpad.dat` return the
   same proxy auto-config file, with content type `application/x-ns-proxy-autoconfig`. Any other path returns 404.
-- [ ] The file is served over plain HTTP, needs no sign-in, and is returned to any computer that can reach the port,
+- [x] The file is served over plain HTTP, needs no sign-in, and is returned to any computer that can reach the port,
   including one in no client group. Its content does not depend on who asks or on the `Host` header.
-- [ ] Every URL that is not in a direct entry gets `PROXY <hostname>:<PROXY_PORT>`, where `<hostname>` is the policy's
+- [x] Every URL that is not in a direct entry gets `PROXY <hostname>:<PROXY_PORT>`, where `<hostname>` is the policy's
   `hostname`, or the server's own hostname when that is left out. The same rule as the task page redirects. That
   covers `http`, `https`, `ws`, and `wss` URLs.
-- [ ] The file has no `DIRECT` fallback after the proxy. It names one proxy and nothing else for every URL that is
+- [x] The file has no `DIRECT` fallback after the proxy. It names one proxy and nothing else for every URL that is
   not a direct entry. What a browser does when it cannot fetch the file at all is described under "What a browser does
   when the file cannot be fetched" in the notes. This criterion does not cover it.
-- [ ] A host that looks local but is not in any direct entry goes through the proxy, such as `garden.example.com` when
+- [x] A host that looks local but is not in any direct entry goes through the proxy, such as `garden.example.com` when
   `example.com` is not a search domain, or a host name that resolves to a LAN address but is not under a local domain.
-- [ ] The file is ES5 JavaScript using only the standard PAC functions, so Firefox, Chromium, Chrome, and Edge all
+- [x] The file is ES5 JavaScript using only the standard PAC functions, so Firefox, Chromium, Chrome, and Edge all
   read it.
 
 ## Firefox and Chromium
 
-- [ ] Firefox with "Automatic proxy configuration URL" set to `/proxy.pac`: an `https` page appears in
+- [x] Firefox with "Automatic proxy configuration URL" set to `/proxy.pac`: an `https` page appears in
   `docker compose logs decisions`, a site the policy denies is denied, and a site the policy redirects goes to the
   task picker.
-- [ ] From that Firefox, the task picker and a quiz open directly, without the proxy, and the quiz is for the child's
+- [x] From that Firefox, the task picker and a quiz open directly, without the proxy, and the quiz is for the child's
   client group. The usage page opens directly too.
-- [ ] Chromium started with `--proxy-pac-url=http://<server>:<PROXY_CONFIG_PORT>/proxy.pac` behaves the same as
+- [x] Chromium started with `--proxy-pac-url=http://<server>:<PROXY_CONFIG_PORT>/proxy.pac` behaves the same as
   Firefox in the two cases above.
-- [ ] With Firefox and Chromium open and browsing through the proxy, run `dw restart`. Once it prints
+- [x] With Firefox and Chromium open and browsing through the proxy, run `dw restart`. Once it prints
   `daywarden restarted.`, the next page each browser loads goes through the proxy and appears in
   `docker compose logs decisions`, without restarting the browser or reloading its proxy settings.
 
 ## Direct entries
 
-- [ ] `localhost`: `localhost`, any name ending in `.localhost`, `127.0.0.0/8`, and `::1` go direct.
-- [ ] `plain_host_names`: a host name with no dot goes direct, such as `printer` or `garden`. This is Firefox's
+- [x] `localhost`: `localhost`, any name ending in `.localhost`, `127.0.0.0/8`, and `::1` go direct.
+- [x] `plain_host_names`: a host name with no dot goes direct, such as `printer` or `garden`. This is Firefox's
   `<local>`.
-- [ ] `policy_server`: every name in `PARENT_NAMES` except `localhost`, `127.0.0.1`, and `::1`, the policy `hostname`,
+- [x] `policy_server`: every name in `PARENT_NAMES` except `localhost`, `127.0.0.1`, and `::1`, the policy `hostname`,
   the server's own hostname, and every address on the server's real interfaces go direct.
-- [ ] `local_subnets`: an IP address URL inside the subnet of any real interface that is up and has an address goes
+- [x] `local_subnets`: an IP address URL inside the subnet of any real interface that is up and has an address goes
   direct, with the subnet taken from that interface's address and prefix length. Host names are not looked up for
   this entry.
-- [ ] A real interface is a physical network interface, or a bridge, bond, or VLAN built on one. Loopback, Docker
+- [x] A real interface is a physical network interface, or a bridge, bond, or VLAN built on one. Loopback, Docker
   bridges (`docker0`, `br-*`), `veth` interfaces, libvirt bridges, and `tun`, `tap`, and WireGuard interfaces are not
   real interfaces. Interfaces that are down or have no address are left out.
-- [ ] IPv4 and IPv6 subnets are both covered. An IPv6 link-local subnet, `fe80::/10`, is left out. An IPv6 URL host
+- [x] IPv4 and IPv6 subnets are both covered. An IPv6 link-local subnet, `fe80::/10`, is left out. An IPv6 URL host
   matches with or without its square brackets.
-- [ ] `local_domains`: for each search domain in the server's resolver configuration, the domain itself and every name
+- [x] `local_domains`: for each search domain in the server's resolver configuration, the domain itself and every name
   under it go direct. With `search bakuna.net`, `bakuna.net`, `nas.bakuna.net`, and `a.b.bakuna.net` go direct, and
   `notbakuna.net` does not.
-- [ ] Host matching ignores case and a trailing dot, the same as `config/bypass.txt`.
-- [ ] The interfaces, their addresses, and the search domains are read each time the file is fetched. A new address or
+- [x] Host matching ignores case and a trailing dot, the same as `config/bypass.txt`.
+- [x] The interfaces, their addresses, and the search domains are read each time the file is fetched. A new address or
   search domain on the server appears in the next fetch without `dw reload` or `dw restart`.
-- [ ] When daywarden starts at boot before the server's network is up, the file fetched after the network comes up
+- [x] When daywarden starts at boot before the server's network is up, the file fetched after the network comes up
   includes its subnets and search domains.
 
 ## proxy_configuration in the policy
 
-- [ ] `config/policy.yaml` accepts an optional `proxy_configuration` section with a `direct` mapping. It holds the
+- [x] `config/policy.yaml` accepts an optional `proxy_configuration` section with a `direct` mapping. It holds the
   switches `localhost`, `plain_host_names`, `policy_server`, `local_subnets`, and `local_domains`, and an `extra` list.
   It can be in an included file.
-- [ ] With the section, or any switch, left out, every switch is on and `extra` is empty.
-- [ ] Each switch set to `false` removes only that entry from the file. Every other entry stays the same.
-- [ ] Each `extra` item is one of: a host name, a host glob with `*` and `?` as in `config/bypass.txt`, a domain
+- [x] With the section, or any switch, left out, every switch is on and `extra` is empty.
+- [x] Each switch set to `false` removes only that entry from the file. Every other entry stays the same.
+- [x] Each `extra` item is one of: a host name, a host glob with `*` and `?` as in `config/bypass.txt`, a domain
   written with a leading dot that matches the domain and every name under it, an IPv4 or IPv6 address, or an IPv4 or
   IPv6 subnet in CIDR form. Each goes direct. `extra` items are added even when every switch is off.
-- [ ] `dw check` reports each mistake in the section, each with its file and line, alongside any other errors in the
+- [x] `dw check` reports each mistake in the section, each with its file and line, alongside any other errors in the
   policy: an unknown key, a switch that is not `true` or `false`, and an `extra` item that is none of the forms above,
   such as `10.8.0.0/33` or `http://nas/`.
-- [ ] The summary that `dw check` and `dw reload` print includes the configuration URL, which direct entries are on,
+- [x] The summary that `dw check` and `dw reload` print includes the configuration URL, which direct entries are on,
   and the `extra` items.
-- [ ] After `dw reload`, the next fetch of the file uses the reloaded section, and no container restarts. A refused
+- [x] After `dw reload`, the next fetch of the file uses the reloaded section, and no container restarts. A refused
   reload leaves the file as it was.
-- [ ] `config/bypass.txt` does not change the file, and `extra` does not change what the proxy forwards without a
+- [x] `config/bypass.txt` does not change the file, and `extra` does not change what the proxy forwards without a
   decision.
 
 ## The auto-configuration service
 
-- [ ] `dw up` starts the auto-configuration service with the others and waits until it is healthy. `dw status` lists
+- [x] `dw up` starts the auto-configuration service with the others and waits until it is healthy. `dw status` lists
   it. `dw down` stops it. `dw restart` replaces it. Starting at boot starts it.
-- [ ] `dw up` and `dw status` print the configuration URL, `http://<hostname>:<PROXY_CONFIG_PORT>/proxy.pac`.
-- [ ] When `PROXY_CONFIG_PORT` is already in use on the server, `dw up` names the auto-configuration service as not
+- [x] `dw up` and `dw status` print the configuration URL, `http://<hostname>:<PROXY_CONFIG_PORT>/proxy.pac`.
+- [x] When `PROXY_CONFIG_PORT` is already in use on the server, `dw up` names the auto-configuration service as not
   healthy and shows why, as it does for the other services.
-- [ ] With the auto-configuration service stopped, the proxy and the policy pages keep working. A running browser that
+- [x] With the auto-configuration service stopped, the proxy and the policy pages keep working. A running browser that
   already has the file keeps using it until something makes it fetch the file again.
-- [ ] A request to the auto-configuration port cannot trigger a reload or change anything, including a request that
+- [x] A request to the auto-configuration port cannot trigger a reload or change anything, including a request that
   reaches it through a reverse proxy on the server.
-- [ ] `make up` and `make down` start and stop the auto-configuration service as `dw up` and `dw down` do.
+- [x] `make up` and `make down` start and stop the auto-configuration service as `dw up` and `dw down` do.
 
 ## Ports
 
-- [ ] `.env` has `PORT_BASE`, which is 8080 when it is left out. `PROXY_PORT` is `PORT_BASE`, `POLICY_PORT` is
+- [x] `.env` has `PORT_BASE`, which is 8080 when it is left out. `PROXY_PORT` is `PORT_BASE`, `POLICY_PORT` is
   `PORT_BASE+4`, and `PROXY_CONFIG_PORT` is `PORT_BASE+8`. With the defaults, every port daywarden publishes on the
   server is in 8080 to 8089.
-- [ ] Each of the three ports can still be set on its own in `.env` or the environment, and that value wins over the one
+- [x] Each of the three ports can still be set on its own in `.env` or the environment, and that value wins over the one
   worked out from `PORT_BASE`.
-- [ ] An upgrade with `install.sh` does not add, remove, or change port settings in an existing `.env`. After deleting
+- [x] An upgrade with `install.sh` does not add, remove, or change port settings in an existing `.env`. After deleting
   `PROXY_PORT` and `POLICY_PORT` from it and running `dw restart`, the proxy is on `PORT_BASE`, the policy pages on
   `PORT_BASE+4`, and the auto-configuration file on `PORT_BASE+8`.
-- [ ] A bare `docker compose up`, without `dw` or `make`, publishes the policy pages on 8084, the same as `dw up` with
+- [x] A bare `docker compose up`, without `dw` or `make`, publishes the policy pages on 8084, the same as `dw up` with
   the defaults.
-- [ ] `dw up`, `dw restart`, `make up`, and the start at boot all publish the same ports from the same `.env`.
-- [ ] A `PORT_BASE` that is not a whole number, or that puts a port above 65535, and two of the three ports set to the
+- [x] `dw up`, `dw restart`, `make up`, and the start at boot all publish the same ports from the same `.env`.
+- [x] A `PORT_BASE` that is not a whole number, or that puts a port above 65535, and two of the three ports set to the
   same number, are refused by `dw up` and `dw restart` with a message naming the setting. Nothing starts or stops.
-- [ ] Changing `PORT_BASE` and running `dw reload` warns that `dw restart` is needed and names the services. After
+- [x] Changing `PORT_BASE` and running `dw reload` warns that `dw restart` is needed and names the services. After
   `dw restart`, the proxy, the file, and the policy pages are on the new ports. The file names the new proxy port, and
   task page redirects use the new policy port.
-- [ ] `install.sh` warns about each of the three ports that another program is already using, using `PORT_BASE` the
+- [x] `install.sh` warns about each of the three ports that another program is already using, using `PORT_BASE` the
   same way `dw` does. A new install's `.env` sets `PORT_BASE` and not the three ports.
 
 ## Documentation
 
-- [ ] `docs/child-computer.md` shows how to set the configuration URL in Firefox, in Arch's Chromium, and in Windows
+- [x] `docs/child-computer.md` shows how to set the configuration URL in Firefox, in Arch's Chromium, and in Windows
   for Chrome and Edge. It keeps the manual settings as an alternative, and says how to make a browser fetch the file
   again after a change, such as restarting Firefox or pressing Reload in its Connection Settings.
-- [ ] `docs/child-computer.md` says when each browser fetches the file, and what happens when the fetch fails: both
+- [x] `docs/child-computer.md` says when each browser fetches the file, and what happens when the fetch fails: both
   go direct, Firefox retries within 5 minutes, and Chromium's retries back off to every 4 hours. It also says that
   Chromium always connects directly to `localhost` and link-local addresses, whatever the file says.
-- [ ] `docs/child-computer.md` describes optional browser policies for a managed child computer, without any tool to
+- [x] `docs/child-computer.md` describes optional browser policies for a managed child computer, without any tool to
   deploy them. For Firefox, a `policies.json` `Proxy` policy with `"Mode": "autoConfig"`, the `AutoConfigURL`, and
   `"Locked": true`, and the `Preferences` for `network.proxy.autoconfig_retry_interval_min` and
   `network.proxy.autoconfig_retry_interval_max`. For Chromium, a managed policy file with `ProxySettings` set to
   `"ProxyMode": "pac_script"`, the `ProxyPacUrl`, and `"ProxyPacMandatory": true`. It says what each one changes, and
   that Chromium's retry and failed-proxy timings cannot be changed.
-- [ ] The documentation describes auto-detection without daywarden listening on port 80. It covers a `wpad` DNS host
+- [x] The documentation describes auto-detection without daywarden listening on port 80. It covers a `wpad` DNS host
   override in OPNsense that points at a reverse proxy, a sample reverse proxy setting that forwards
   `http://wpad.<domain>/wpad.dat` to `PROXY_CONFIG_PORT`, the Firefox and Chromium auto-detect settings, and DHCP
   option 252 as the Windows alternative that needs no port 80.
-- [ ] `README.md` describes `PORT_BASE` and `PROXY_CONFIG_PORT` in the `.env` table and the `proxy_configuration`
+- [x] `README.md` describes `PORT_BASE` and `PROXY_CONFIG_PORT` in the `.env` table and the `proxy_configuration`
   section, and explains the difference between direct entries and `config/bypass.txt`.
-- [ ] The documentation warns that a direct entry takes a LAN site outside the policy, and that the firewall rule in
+- [x] The documentation warns that a direct entry takes a LAN site outside the policy, and that the firewall rule in
   `docs/child-computer.md` is still what stops a child going direct to the internet.
 
 # Notes
@@ -371,3 +371,155 @@ The parts add up to about 18, which rounds up to 21. The design depends on the h
 some risk. The story has 48 acceptance criteria, which is near the guide of about 50. `PORT_BASE` could be split out as
 a 3-point story. It was kept here because the new port is what prompts it, and they share the `dw` and `install.sh`
 tests.
+
+# Implementation
+
+## Files Added/Changed/Removed
+
+Added:
+
+- `policy/pac.py`: builds the proxy auto-config file. It checks each `extra` item, splits `PARENT_NAMES` and the
+  server's host names into names and addresses, and renders ES5 JavaScript. That JavaScript uses
+  `dnsDomainIs`, `shExpMatch`, string tests, and a small IPv4 and IPv6 parser, and names one proxy with no `DIRECT`
+  fallback. IPv6 link-local subnets are left out.
+- `policy/autoconfig.py`: the `autoconfig` service, `python -m policy.autoconfig`. It finds the real interfaces that
+  are up from `/sys/class/net`, using the physical device path and the `lower_*` and `brif` links of bridges, bonds,
+  and VLANs. It reads addresses and prefix lengths with `psutil` and the search domains from the mounted resolver
+  directory, all on every fetch. It serves `/proxy.pac` and `/wpad.dat` over IPv4 and IPv6, and everything else is
+  404. `reload` and `url` go through a Unix socket inside the container. `--url` prints the configuration URL of the
+  running service. A busy port is logged with the reason, and the service exits 1.
+- `tests/pac_harness.js`: runs a generated file in `node` with the standard PAC functions as Firefox defines them.
+  Every function that would look a name up throws.
+- `tests/test_pac.py`, `tests/test_autoconfig.py`, `tests/test_proxy_configuration.py`: the file's matching for each
+  kind of host, the switches, and `extra`. Interface discovery against a fake sysfs, search domains, and the HTTP
+  service. Reload over the socket, and the `proxy_configuration` section, its errors, and its summary.
+
+Changed:
+
+- `policy/hierarchy.py`: the optional `proxy_configuration` section, in any file and once only. Every mistake is listed
+  with its file and line. `Policy.proxy_configuration` holds the switches and the `extra` items.
+- `policy/check.py`: the summary names the configuration URL, the direct entries that are on, and the `extra` items.
+- `policy/selection.py`: the policy-page default is 8084. Adds `proxy_port`, `proxy_config_port`, and
+  `proxy_config_url`.
+- `policy/reload.py`: `--service autoconfig` reloads through the service's Unix socket.
+- `policy/requirements.txt`: adds `psutil==7.2.2`.
+- `docker-compose.yml`: the `autoconfig` service uses the host's network, runs as `nobody`, mounts the resolver
+  directory read-only, and has a HEAD health check. The compose defaults are now 8080, 8084, and 8088. The decisions
+  service gets `PROXY_CONFIG_PORT` for its summary.
+- `bin/daywarden-lib.sh`: `dw_ports` works out and exports the three ports from `PORT_BASE`, and `dw_require_ports`
+  refuses bad ones. `dw_resolver` exports the directory that holds `resolv.conf`, following a symlink.
+  `dw_config_url` asks the running service for the URL, or falls back to this machine's hostname. `autoconfig` is one
+  of the services.
+- `bin/dw`: `up`, `restart`, and `status` print the configuration URL. `restart` refuses bad ports before it stops
+  anything. `reload` reloads `autoconfig` after observations.
+- `Makefile`: `make up` and `make down` run `bin/dw up` and `bin/dw down`.
+- `deploy/install.sh`: the port check uses `dw_ports`. It warns about each of the three ports, warns about ports that
+  cannot be used, and leaves out the auto-configuration port while daywarden's own `autoconfig` service runs.
+- `deploy/build.py`: every service built from `./policy`, including `autoconfig`, runs the packaged policy image.
+- `.env`: `PORT_BASE=8080` replaces `PROXY_PORT` and `POLICY_PORT`, so a new install's `.env` sets only `PORT_BASE`.
+- `README.md`, `docs/child-computer.md`, `docs/hierarchical-policy.md`: the configuration URL for Firefox, Chromium,
+  and Windows, and when browsers fetch it and what a failed fetch does. Also the optional browser policies, WPAD
+  through a reverse proxy and DHCP option 252, `PORT_BASE`, the `proxy_configuration` section, direct entries against
+  `bypass.txt`, the warning about LAN sites and the firewall rule, and the 8084 examples.
+- `tests/hostfakes.py`: the fake host knows the `autoconfig` service and `--url`, records the ports `dw` exports, and
+  hashes them as Compose would.
+- `tests/test_dw.py`, `tests/test_install.py`, `tests/test_make_targets.py`, `tests/test_dist_build.py`,
+  `tests/test_reload_stack.py`, `tests/test_install_stack.py`, `tests/test_run_proxy.py`: the fourth service, the URL,
+  `PORT_BASE`, the reload, and the bare `docker compose up` defaults.
+- `tests/test_child_computer.py`, `tests/test_cut_transfer.py`, `tests/test_enforce_decisions.py`,
+  `tests/test_policy_service.py`, `tests/test_report_observations.py`: each test stack gets its own
+  `PROXY_CONFIG_PORT`.
+
+Removed: nothing.
+
+## Change Summary
+
+A new `autoconfig` service serves a proxy auto-config file at `http://<server>:<PROXY_CONFIG_PORT>/proxy.pac`, and the
+same file at `/wpad.dat`. Firefox, Chromium, Chrome, and Edge can be pointed at that one URL instead of manual proxy
+settings. The file sends every URL to the proxy except the direct entries: `localhost`, plain host names, the policy
+server's names and addresses, the subnets of the server's real interfaces (IP address URLs only), and the server's
+search domains. Each entry can be switched off, and more can be added under `extra`, in a new `proxy_configuration`
+section of the policy that `dw check` checks and `dw reload` applies. The service runs with the host's network, so it
+reads the server's real interfaces, addresses, and search domains on every fetch. A new DHCP lease, or a network that
+comes up after boot, shows in the next fetch. Reload uses a Unix socket inside the container, so no HTTP request can
+trigger it, including one from a reverse proxy on the server.
+
+Ports now come from one `PORT_BASE`, 8080 by default: the proxy on `+0`, the policy pages on `+4`, and the file on `+8`.
+`dw` works them out and exports them for Compose, and `make up`, the start at boot, and `install.sh` use the same
+function. Each port can still be set on its own. The policy-page default moves from 8090 to 8084, including for a bare
+`docker compose up`.
+
+Real browsers were checked against a throwaway stack with `PORT_BASE=18080`. Headless Chromium with `--proxy-pac-url`
+and headless Firefox with the autoconfig URL both sent an internet URL through the proxy, where it showed in the
+decisions log and got the deny page. Both opened a web server on the server's LAN address directly, with no decision.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S019
+
+1. Run `dw restart`. It prints `daywarden restarted.` and `Proxy configuration URL: http://garden:8088/proxy.pac`. `dw status`
+   prints the same URL and lists `autoconfig    healthy` beside the other three services. The policy pages are now at
+   `https://garden:8084/usage`. The `.env` in this checkout sets only `PORT_BASE=8080`.
+2. On a child's Firefox, open Settings, then Network Settings, choose "Automatic proxy configuration URL", and enter
+   `http://garden:8088/proxy.pac`. Open an `https` site and confirm it appears in `docker compose logs decisions`.
+   Open a site the policy denies and see the deny page, and one it redirects and land on the task picker.
+3. From that Firefox, open the task picker and a quiz. They open directly, with no line in the decisions log, and the
+   quiz is for that child's client group. The usage page opens directly too.
+4. Put `--proxy-pac-url=http://garden:8088/proxy.pac` in `~/.config/chromium-flags.conf` on an Arch machine, restart
+   Chromium, and repeat cases 2 and 3.
+5. With Firefox and Chromium both browsing through the proxy, run `dw restart`. Once it prints `daywarden restarted.`,
+   load a new page in each browser without touching its settings. It appears in `docker compose logs decisions`.
+6. Run `curl -i http://garden:8088/proxy.pac` and `curl -i http://garden:8088/wpad.dat`. Both return the same file with
+   `Content-Type: application/x-ns-proxy-autoconfig`, and `PROXY garden:8080` with no `DIRECT` after it.
+   `curl -i http://garden:8088/anything` returns 404, and `curl -i -X POST http://garden:8088/proxy.pac` changes
+   nothing.
+7. Read the file. `DIRECT_HOSTS` holds `garden` and `garden.bakuna.net`, `DIRECT_DOMAINS` holds `localhost` and
+   `bakuna.net`, and `DIRECT_NETS` holds `192.168.12.0/24` and the server's own addresses, with no `172.x` Docker
+   subnet and no `fe80::/64`.
+8. Add this to `config/policy.yaml` and run `dw reload`:
+   ```yaml
+   proxy_configuration:
+     direct:
+       local_subnets: false
+       local_domains: false
+       extra: ["*.home.arpa", 10.8.0.0/16]
+   ```
+   The summary shows the configuration URL, `direct entries: localhost, plain_host_names, policy_server`, and
+   `extra direct entries: *.home.arpa, 10.8.0.0/16`, and no container restarts. Fetch the file again with `curl`. It
+   no longer has `192.168.12.0/24` or `bakuna.net`, and it has `*.home.arpa` and `10.8.0.0/16`. In Firefox press
+   Reload in Connection Settings, then open a LAN site by its IP address. It now shows in the decisions log.
+9. Move the `proxy_configuration` section into a file named in `include` and run `dw reload`. It is used the same way.
+10. Write `localhost: maybe`, `lan: true`, and an `extra` item `10.8.0.0/33` or `http://nas/` into the section, and
+    add a mistake elsewhere in the policy. Run `dw check`. Every error is listed with its file and line. `dw reload`
+    refuses it, and `curl` shows the file unchanged.
+11. Turn each switch off in turn and fetch the file. Only that entry's lines go. Turn every switch off with an `extra`
+    item left, and the `extra` item is still in the file.
+12. Set `PORT_BASE=9080` in `.env` and run `dw reload`. It warns that `autoconfig`, `decisions`, and `proxy` are
+    still running with the old settings. Run `dw restart`. The proxy is on 9080, the policy pages on 9084, and the
+    file on 9088. The file names `PROXY garden:9080`, and a task page redirect goes to `https://garden:9084/tasks/next`.
+    Put `PORT_BASE` back afterwards.
+13. Set `PORT_BASE=80x`, then `PORT_BASE=65530`, then `PORT_BASE=8080` with `PROXY_PORT=8088`. Each time,
+    `dw up` and `dw restart` refuse with a message naming the setting, and nothing starts or stops.
+14. Set `POLICY_PORT=8090` beside `PORT_BASE=8080` and run `dw restart`. The policy pages are on 8090, and the proxy
+    and the file stay on 8080 and 8088.
+15. Start something else on port 8088, for example `python -m http.server 8088`, and run `dw up` or `dw restart`. The
+    `autoconfig` service is named as not healthy, with its log line saying the port is already in use.
+16. Run `docker compose stop autoconfig`. Browsing through the proxy and the policy pages still work, and a running
+    browser keeps its file. `dw reload` says the `autoconfig` service is not running. `dw up` brings it back.
+17. Run `make down` and `make up`. All four services stop and start, and `make up` prints the configuration URL.
+18. Run `docker compose config` with no `PORT_BASE` or port variables exported. It publishes the proxy on 8080 and the
+    policy pages on 8084, and `autoconfig` has `PROXY_CONFIG_PORT` 8088.
+19. Build a package with `make dist` and install it on a fresh machine. The new `~/daywarden/.env` sets `PORT_BASE`
+    and none of the three ports. With something listening on 8084 or 8088, `install.sh` warns about that port by name.
+20. On an install whose `.env` still sets `PROXY_PORT=8080` and `POLICY_PORT=8090`, run the new `install.sh`. The
+    `.env` is unchanged. Delete those two lines and run `dw restart`, and the policy pages move to 8084.
+21. Change the server's search domain or LAN address, for example with a new DHCP lease, and fetch the file again. It
+    shows the change with no `dw reload` or `dw restart`.
+22. Follow the auto-detection steps in `docs/child-computer.md`: a `wpad` host override in OPNsense, and the nginx
+    block forwarding `/wpad.dat` to port 8088. Choose "Auto-detect proxy settings for this network" in Firefox, and it
+    behaves as in case 2.
+23. Read `docs/child-computer.md` and `README.md`. They cover the configuration URL for Firefox, Arch's Chromium, and
+    Windows. They say when each browser fetches the file and what happens when the fetch fails, and give the optional
+    Firefox and Chromium policies. They describe auto-detection and DHCP option 252, `PORT_BASE` and
+    `PROXY_CONFIG_PORT`, and direct entries against `bypass.txt`. They also warn that a direct entry takes a LAN site
+    outside the policy, and that the firewall rule is what stops a child going direct.

@@ -31,11 +31,16 @@ REAL_TOOLS = (
     "sed", "awk", "grep", "tr", "cut", "sort", "head", "tail", "date", "sha256sum", "timeout", "sleep",
     "chmod", "mktemp", "touch", "wc", "uname", "tee", "stat", "ls", "cmp", "realpath", "printf", "true",
 )
-SERVICES = ("decisions", "observations", "proxy")
+SERVICES = ("decisions", "observations", "proxy", "autoconfig")
 
 FAKE = r'''
 import json, os, sys, time
 from pathlib import Path
+
+SERVICES = ("decisions", "observations", "proxy", "autoconfig")
+# The host ports each service is created with, as Compose would hash them.
+HASHED = {"decisions": ("POLICY_PORT", "PROXY_CONFIG_PORT"), "proxy": ("PROXY_PORT",), "autoconfig": ("PROXY_PORT", "PROXY_CONFIG_PORT")}
+DEFAULT_PORTS = {"PROXY_PORT": "8080", "POLICY_PORT": "8084", "PROXY_CONFIG_PORT": "8088"}
 
 state_path = Path(os.environ["FAKE_STATE"])
 state = json.loads(state_path.read_text())
@@ -48,6 +53,15 @@ with open(str(state_path) + ".calls", "a") as log:
 
 def save():
     state_path.write_text(json.dumps(state))
+
+
+def config_hash(service):
+    if service in state.get("config_hash", {}):
+        return state["config_hash"][service]
+    ports = [os.environ.get(key, DEFAULT_PORTS[key]) for key in HASHED.get(service, ())]
+    if ports == [DEFAULT_PORTS[key] for key in HASHED.get(service, ())]:
+        return "hash-" + service
+    return "hash-" + service + "-" + "-".join(ports)
 
 
 def in_container(sub, rest):
@@ -82,6 +96,8 @@ def in_container(sub, rest):
         save()
         if reloading == "decisions":
             print("household timezone Australia/Sydney")
+    elif command[:4] == ["python", "-m", "policy.autoconfig", "--url"]:
+        print(state.get("config_url", f"http://tundra:{os.environ.get('PROXY_CONFIG_PORT', '8088')}/proxy.pac"))
 
 
 def compose(args):
@@ -93,18 +109,19 @@ def compose(args):
     elif sub == "up":
         failing = state.get("up_fails", {})
         recreated = state.setdefault("recreated", {})
-        for service in ("decisions", "observations", "proxy"):
+        for service in SERVICES:
             if service not in state["running"]:
                 recreated[service] = recreated.get(service, 0) + 1
-                state.setdefault("running_hash", {}).pop(service, None)
-        state["running"] = {service: failing.get(service, "healthy") for service in ("decisions", "observations", "proxy")}
+                state.setdefault("running_hash", {})[service] = config_hash(service)
+        state["up_env"] = {key: os.environ.get(key) for key in (*DEFAULT_PORTS, "RESOLV_CONF_DIR", "RESOLV_CONF_NAME")}
+        state["running"] = {service: failing.get(service, "healthy") for service in SERVICES}
         save()
         if failing:
             print("container is unhealthy", file=sys.stderr)
             sys.exit(1)
     elif sub == "config" and rest[:1] == ["--hash"]:
-        for service in ("decisions", "observations", "proxy"):
-            print(f"{service} {state.get('config_hash', {}).get(service, 'hash-' + service)}")
+        for service in SERVICES:
+            print(f"{service} {config_hash(service)}")
     elif sub in ("exec", "run"):
         in_container(sub, rest)
     elif sub == "down":

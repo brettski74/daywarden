@@ -125,23 +125,35 @@ env_file() {
     fi
 }
 
+# The ports come from PORT_BASE the way dw works them out. The
+# autoconfig service uses the host's network, so it publishes nothing that
+# docker ps shows. While it runs, its port is daywarden's own.
 check_ports() {
-    local listening published key port
+    local listening published key port autoconfig=0
     command -v ss >/dev/null 2>&1 || return 0
     listening=$(ss -Hltn 2>/dev/null | awk '{ print $4 }') || return 0
     published=""
     if [ "$docker_ok" -eq 1 ]; then
         published=$(docker ps --filter "label=com.docker.compose.project=$DW_PROJECT" --format '{{.Ports}}' 2>/dev/null || true)
+        dw_running autoconfig && autoconfig=1
     fi
     while read -r key port; do
+        if [ "$key" = unusable ]; then
+            warning "$port dw up will refuse to start." "fix the ports in ~/daywarden/.env"
+            continue
+        fi
         [ -n "$port" ] || continue
+        [ "$key" = PROXY_CONFIG_PORT ] && [ "$autoconfig" -eq 1 ] && continue
         if grep -qE "[:.]$port\$" <<<"$listening" && [[ $published != *":$port->"* ]]; then
             warning "Port $port ($key) is already in use by another program, so dw up would fail." \
-                "stop that program, or change $key in ~/daywarden/.env before dw up"
+                "stop that program, or change PORT_BASE or $key in ~/daywarden/.env before dw up"
         fi
     done < <(
         dw_load_env "$(env_file)"
-        printf 'PROXY_PORT %s\nPOLICY_PORT %s\n' "${PROXY_PORT:-}" "${POLICY_PORT:-8090}"
+        dw_ports || printf 'unusable %s\n' "${DW_PORT_PROBLEMS[@]}"
+        for key in "${DW_PORT_KEYS[@]}"; do
+            printf '%s %s\n' "$key" "${!key:-}"
+        done
     )
 }
 

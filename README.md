@@ -1,6 +1,6 @@
 # daywarden
 
-Household explicit proxy. `make up` starts mitmproxy with a certificate authority that stays on disk across container restarts.
+Household explicit proxy. `make up` starts mitmproxy with a certificate authority that stays on disk across container restarts, the policy service, and the proxy auto-configuration file that browsers fetch.
 
 ## Start
 
@@ -8,11 +8,11 @@ Household explicit proxy. `make up` starts mitmproxy with a certificate authorit
 make up
 ```
 
-`make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
+`make up` and `make down` run `bin/dw up` and `bin/dw down` on this checkout, so they check the policy first and use the same ports. `make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
 
 `make reload`, `make restart`, and `make check` run `bin/dw reload`, `bin/dw restart`, and `bin/dw check` on this checkout. They are described under [The policy file](#the-policy-file). `make restart` also rebuilds the policy image, so it picks up changes to the code under `policy/`. `make reload` and `make check` run in the containers that are already running, so they use the code those containers were built from. `make help` lists every target and what it does.
 
-The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` from `.env` on the machine that is running Compose.
+The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` on the machine that is running Compose, `PORT_BASE` from `.env`, 8080 by default. A browser can be given the configuration URL, `http://<this machine>:<PROXY_CONFIG_PORT>/proxy.pac`, instead, such as `http://garden:8088/proxy.pac`. `dw up` and `dw status` print it. See [docs/child-computer.md](docs/child-computer.md) for each browser.
 
 Every request is sent to the policy service (the Compose service `decisions`) as `POST /v1/decisions`, unless the host is listed in `config/bypass.txt` or is one of the policy server's own names in `PARENT_NAMES`. The policy service classifies the URL into one site group and the source address into one client group, then walks the rule set named by `entry`. A deny becomes a small HTML page with status `403`. A redirect becomes status `302` with a `Location` header. If the policy service is down, or its answer is not allow, deny, or redirect, the proxy responds `403`. Hosts on the bypass list are forwarded either way.
 
@@ -20,7 +20,7 @@ Every request is sent to the policy service (the Compose service `decisions`) as
 
 `config/policy.yaml` is the household policy. Edit it, then run `dw reload` (`bin/dw reload` in a clone). It checks the whole policy and lists every error it finds, each with its file and line, such as `config/policy.yaml:42:5: unknown setting timezon`, and changes nothing until they are all fixed. A good policy is used for the next request through the proxy, and no container restarts. A quiz in progress, a download or video already running, a parent signed in to the parent pages, and the usage recorded so far all carry on. A running transfer keeps the deadline and byte ceiling recorded when it was allowed, and is walked again with the reloaded policy when it reaches them. `dw check` checks the policy and changes nothing. `dw up` and the start at boot check it first, so a broken policy does not start daywarden.
 
-`config/bypass.txt` is read on every request, and spelling recordings whenever a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, such as `PROXY_PORT`, `PARENT_NAMES`, or `OBSERVATION_INTERVAL`, needs `dw restart`, which checks the policy and then replaces every container. `dw reload` warns when that is needed and names the services still running with the old settings. See [Applying an edit](docs/hierarchical-policy.md#applying-an-edit) for the details.
+`config/bypass.txt` is read on every request, and spelling recordings whenever a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, such as `PORT_BASE`, `PARENT_NAMES`, or `OBSERVATION_INTERVAL`, needs `dw restart`, which checks the policy and then replaces every container. `dw reload` warns when that is needed and names the services still running with the old settings. See [Applying an edit](docs/hierarchical-policy.md#applying-an-edit) for the details.
 
 Apply policy changes and upgrades overnight, while the child is not using the computer. A reload partway through the day can make a task required after he has already started his revision, and his passes since then can then wait on that task before they count. An upgrade restarts the services, and a quiz on the screen reloads.
 
@@ -72,7 +72,7 @@ The three answers the proxy sees are:
 ```json
 { "action": "allow" }
 { "action": "deny", "status": 403, "message": "Time is up for today." }
-{ "action": "redirect", "status": 302, "location": "https://garden:8090/tasks/next" }
+{ "action": "redirect", "status": 302, "location": "https://garden:8084/tasks/next" }
 ```
 
 That location is the task picker. It opens the task chosen for the client group, at `https://<hostname>:<port>/tasks/<name>`, or says "There is nothing to revise right now." The proxy forwards every request for the policy server's names in `PARENT_NAMES` without asking the rules, and sends the child's address with it, so the task pages, the picker, and the parent pages open at any time, including at bedtime. Any task assigned to his client group opens from a bookmark, even one that is not on offer. "Try a different task" opens the task selector at `/tasks/choose`, which lists the tasks on offer. Going back to a task he gave up, within the hour, carries on where he left it.
@@ -103,7 +103,7 @@ An allow remembers that flow. A later report cuts it only when a clock assumptio
 
 ## Usage report
 
-A parent opens `https://<this machine>:8090/usage` in a browser. The port is `POLICY_PORT` in `.env`. The same port serves the attempt review and the task pages. The page is HTTPS. The certificate is signed by the household CA below, for the names in `PARENT_NAMES`, and it lasts 30 days. It is replaced on the next start when 3 days or less remain, or when a configured name is missing from it. A browser that does not trust the CA gets a warning. Plain HTTP does not return the page.
+A parent opens `https://<this machine>:8084/usage` in a browser. The port is `POLICY_PORT`, `PORT_BASE+4`. The same port serves the attempt review and the task pages. The page is HTTPS. The certificate is signed by the household CA below, for the names in `PARENT_NAMES`, and it lasts 30 days. It is replaced on the next start when 3 days or less remain, or when a configured name is missing from it. A browser that does not trust the CA gets a warning. Plain HTTP does not return the page.
 
 Choose a site group, a client group, or a quota. `default` is in both group lists. A site group also needs a client group, and shows the last 14 household-local days for that pair: the clock times each bucket covered, the time that bucket represents, and the bytes. A bucket that has not ended is listed and left out of the counted time. A day with no traffic says no usage. School traffic, which the entertainment quota does not accept, is listed the same way. A client-group view shows those buckets for every site group. A quota view is today's balance for one client group: ended time against the time limit, and stored bytes against the byte limit. A limit of zero is shown as zero. Leave the client group on "All client groups" and the page lists each client group that has a balance, including `default`. The clock is the household timezone.
 
@@ -133,12 +133,14 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 ## Configuration
 
-`.env` sets the listen port, the policy-page port, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
+`.env` sets the ports, the policy server's names, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
 
 | Variable | Meaning |
 | --- | --- |
-| `PROXY_PORT` | Port on this machine that clients use |
-| `POLICY_PORT` | Port on this machine for the policy pages, over HTTPS. The container still binds HTTPS on 8443 |
+| `PORT_BASE` | The first of a block of 10 ports on this machine, 8080 when it is left out. The proxy is on `PORT_BASE`, the policy pages on `PORT_BASE+4`, and the auto-configuration file on `PORT_BASE+8`, so the defaults are 8080, 8084, and 8088 |
+| `PROXY_PORT` | Port on this machine that clients use for the proxy. Leave it out to use `PORT_BASE`. Set, it wins over `PORT_BASE` |
+| `POLICY_PORT` | Port on this machine for the policy pages, over HTTPS. Leave it out to use `PORT_BASE+4`. The container still binds HTTPS on 8443 |
+| `PROXY_CONFIG_PORT` | Port on this machine for the proxy auto-configuration file, `/proxy.pac` and `/wpad.dat`, over plain HTTP. Leave it out to use `PORT_BASE+8` |
 | `PARENT_NAMES` | DNS names and IP addresses on the parent certificate. They are also the policy server's names that the proxy forwards without a decision, other than `localhost`, `127.0.0.1`, and `::1`. The proxy reads them on `dw restart` |
 | `PARENT_IDLE` | Idle limit for a parent session. Defaults to `15m` |
 | `PARENT_LIFETIME` | Lifetime of a parent session from sign-in. Defaults to `180m` |
@@ -146,10 +148,39 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it before the first start, so the certificate is readable by you.
 
+`dw up` and `dw restart` work out the three ports from `PORT_BASE`, and so do `make up` and the start at boot, because Compose cannot add numbers. A bare `docker compose up` uses the ports for `PORT_BASE` 8080. `dw up` and `dw restart` refuse a `PORT_BASE` that is not a whole number, one that puts a port above 65535, and two ports set to the same number, and start or stop nothing. A change to `PORT_BASE` needs `dw restart`. `install.sh` warns about each of the three ports that another program is using, and leaves the port settings in an existing `.env` alone. An install from before `PORT_BASE` that sets `PROXY_PORT=8080` and `POLICY_PORT=8090` keeps those ports. Delete both lines and run `dw restart` to move the policy pages to 8084.
+
 | File | Meaning |
 | --- | --- |
-| `config/policy.yaml` | Household policy: client groups, site groups, windows, quotas, and rule sets. `default` is the implicit group for an address or a URL that matches nothing configured |
+| `config/policy.yaml` | Household policy: client groups, site groups, windows, quotas, rule sets, and which hosts the proxy auto-configuration file sends direct. `default` is the implicit group for an address or a URL that matches nothing configured |
 | `config/bypass.txt` | Host globs that are forwarded without asking, including while the policy service is down. It is for other hosts, such as the school hosts in the sample, but list the policy server's names here as well: this file is read on every request, while `PARENT_NAMES` applies only after a restart. `dw check` warns about a name in `PARENT_NAMES` this file does not match |
+
+### Direct entries and bypass.txt
+
+The proxy auto-configuration file, `http://<this machine>:<PROXY_CONFIG_PORT>/proxy.pac`, tells a browser which hosts to open directly, without the proxy. Those are the direct entries. `config/bypass.txt` is different: it lists hosts that the browser does send to the proxy, and that the proxy forwards without asking the policy. A direct entry never reaches the proxy at all, so nothing is logged or decided for it. A host in `bypass.txt` is still seen by the proxy.
+
+The direct entries are on by default. The `proxy_configuration` section of `config/policy.yaml` turns each one off, and adds more under `extra`:
+
+```yaml
+proxy_configuration:
+  direct:
+    localhost: true          # localhost, *.localhost, 127.0.0.0/8, and ::1
+    plain_host_names: true   # a host name with no dot, such as printer
+    policy_server: true      # PARENT_NAMES, hostname, and this machine's own names and addresses
+    local_subnets: true      # an IP address inside a subnet of this machine's real interfaces
+    local_domains: true      # each search domain of this machine, and every name under it
+    extra:
+      - "*.home.arpa"        # a host glob, with * and ? as in bypass.txt
+      - .lan.example         # a domain, and every name under it
+      - nas.example.net      # one host name
+      - 10.8.0.0/16          # an IPv4 or IPv6 subnet, or one address
+```
+
+A switch left out is on. `extra` items go direct even when every switch is off. Neither the switches nor `extra` change `bypass.txt`, and the proxy treats a host in `extra` like any other if a browser sends it anyway. `dw check` lists each mistake in the section with its file and line, and the summary that `dw check` and `dw reload` print names the configuration URL, the switches that are on, and the `extra` items. `dw reload` applies a change to the next fetch of the file, and no container restarts. A browser fetches the file again only when it starts or is told to. See [docs/child-computer.md](docs/child-computer.md#when-a-browser-fetches-the-file).
+
+**A direct entry takes a site outside the policy.** A LAN site that a browser opens directly is not decided, and bedtime and quotas do not apply to it. Turn off `local_subnets` and `local_domains` to keep a LAN media server under the policy. The direct entries do not stop a child going direct to the internet: the firewall rule in [docs/child-computer.md](docs/child-computer.md#opnsense-rule-tips) does.
+
+The `autoconfig` service serves the file. It uses the host's network, so it sees this machine's own interfaces, and reads them and the search domains on every fetch. With it stopped, the proxy and the policy pages keep working, and a browser that already has the file keeps using it.
 
 ## Maintenance
 
@@ -247,7 +278,7 @@ cd daywarden-20261105-184500
 ./install.sh
 ```
 
-The installer checks everything first and changes nothing if something it needs is missing. Docker, the `docker compose` plugin, a running Docker daemon this user can reach without `sudo`, a package built for this machine's CPU architecture, and no file of its own in `~/bin` named like one of the commands below are required. Each problem is printed with the command that fixes it, such as `sudo pacman -S docker-compose`. Docker not enabled at boot, no user systemd manager (in a `su` session), a port from `.env` already in use, `~/bin` missing from the `PATH`, and a missing `python3` or Opus-capable `ffmpeg` are warnings: the install carries on. It never edits `~/.bashrc`. It then loads the images and lays out:
+The installer checks everything first and changes nothing if something it needs is missing. Docker, the `docker compose` plugin, a running Docker daemon this user can reach without `sudo`, a package built for this machine's CPU architecture, and no file of its own in `~/bin` named like one of the commands below are required. Each problem is printed with the command that fixes it, such as `sudo pacman -S docker-compose`. Docker not enabled at boot, no user systemd manager (in a `su` session), a port from `.env` already in use, worked out from `PORT_BASE` as `dw` does, `~/bin` missing from the `PATH`, and a missing `python3` or Opus-capable `ffmpeg` are warnings: the install carries on. It never edits `~/.bashrc`. It then loads the images and lays out:
 
 | Path | On install |
 | --- | --- |
@@ -261,14 +292,14 @@ The installer checks everything first and changes nothing if something it needs 
 | `~/daywarden/venv/` | The `cut-clips` environment, built from PyPI |
 | `~/bin/dw`, `rm-attempts`, `add-parent`, `cut-clips` | Links into `~/daywarden/bin` |
 
-On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.bakuna.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its proxy port and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
+On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.bakuna.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its configuration URL, or its proxy port, and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
 
 ### Running it with dw
 
 ```sh
-dw up          # check the policy, start, and wait until every service is healthy
-dw status      # version, start at boot, and each service. Exits 0 only when all are healthy
-dw reload      # check config/policy.yaml and apply it without restarting a container
+dw up          # check the policy, start, wait until every service is healthy, and print the configuration URL
+dw status      # version, start at boot, the configuration URL, and each service. Exits 0 only when all are healthy
+dw reload      # check config/policy.yaml and apply it to every service without restarting a container
 dw check       # check the policy and list every error. Changes nothing
 dw restart     # check the policy, then replace every container. Applies .env changes and a new version
 dw down        # stop and remove the containers. The CA, database, configuration, and recordings stay

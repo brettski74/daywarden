@@ -32,6 +32,9 @@ def _systemctl_user(host):
 
 
 UP = ["up", "-d", "--wait", "--wait-timeout", "180"]
+URL = ["exec", "-T", "autoconfig", "python", "-m", "policy.autoconfig", "--url"]
+SAID_URL = "Proxy configuration URL: http://tundra:8088/proxy.pac\n"
+ALL_HEALTHY = {"decisions": "healthy", "observations": "healthy", "proxy": "healthy", "autoconfig": "healthy"}
 DOWN_FOR_RESTART = ["down", "--remove-orphans"]
 NAMES = "tundra,localhost,127.0.0.1"
 CHECK = ["python", "-m", "policy.check", "--host-dir", "config", "--parent-names", NAMES]
@@ -101,7 +104,8 @@ def test_up_creates_the_directories_and_waits_for_health_from_any_directory(host
     done = host.dw("up", cwd=host.elsewhere)
     assert done.returncode == 0, done.stderr
     assert (host.root / "ca").is_dir() and (host.root / "data").is_dir()
-    assert _compose(host) == [CHECK_BEFORE_UP, UP]
+    assert _compose(host) == [CHECK_BEFORE_UP, UP, URL]
+    assert done.stdout == "daywarden is up.\n" + SAID_URL
     assert list(host.elsewhere.iterdir()) == []
     assert _systemctl_user(host) == [["show-environment"], ["is-enabled", "daywarden.service"]]
 
@@ -140,11 +144,11 @@ def test_up_and_down_go_through_the_user_service_when_enabled(host):
 
 def test_up_on_a_running_enabled_daywarden_brings_back_a_stopped_service(host):
     host.state["systemd"].update(enabled=True, active="active")
-    host.state["running"] = {"decisions": "healthy", "observations": "healthy"}
+    host.state["running"] = {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
     done = host.dw("up")
     assert done.returncode == 0, done.stderr
-    assert _compose(host) == [CHECK_BEFORE_UP, UP]
-    assert host.state["running"]["proxy"] == "healthy"
+    assert _compose(host) == [CHECK_BEFORE_UP, UP, URL]
+    assert host.state["running"]["autoconfig"] == "healthy"
 
 
 def test_a_failed_user_service_start_is_reported(host):
@@ -172,21 +176,31 @@ def test_status_of_a_healthy_stack_exits_zero(host):
     assert lines[0] == f"daywarden 20261105-184500, in {host.root}"
     assert "Start at boot: disabled" in lines
     assert "Last start through the user service: no failure" in lines
-    assert lines[-3:] == ["  decisions     healthy", "  observations  healthy", "  proxy         healthy"]
+    assert lines[-5:] == [
+        "Proxy configuration URL: http://tundra:8088/proxy.pac",
+        "  decisions     healthy",
+        "  observations  healthy",
+        "  proxy         healthy",
+        "  autoconfig    healthy",
+    ]
 
 
 def test_status_of_a_stopped_or_partly_healthy_stack_exits_non_zero(host):
     done = host.dw("status")
     assert done.returncode == 1
-    assert done.stdout.splitlines()[-3:] == [
+    assert done.stdout.splitlines()[-4:] == [
         "  decisions     not running",
         "  observations  not running",
         "  proxy         not running",
+        "  autoconfig    not running",
     ]
-    host.state["running"] = {"decisions": "healthy", "observations": "unhealthy", "proxy": "starting"}
+    host.state["running"] = {"decisions": "healthy", "observations": "unhealthy", "proxy": "starting", "autoconfig": "healthy"}
     done = host.dw("status")
     assert done.returncode == 1
-    assert done.stdout.splitlines()[-2:] == ["  observations  unhealthy", "  proxy         starting"]
+    assert done.stdout.splitlines()[-3:] == ["  observations  unhealthy", "  proxy         starting", "  autoconfig    healthy"]
+    host.all_running()
+    host.state["running"]["autoconfig"] = "unhealthy"
+    assert host.dw("status").returncode == 1
 
 
 def test_status_shows_enabled_and_a_failed_start(host):
@@ -347,10 +361,11 @@ def test_check_on_a_stopped_daywarden_runs_in_a_new_container_and_starts_nothing
     assert done.stdout == "household timezone Australia/Sydney\n"
     assert _compose(host) == [_run_check()]
     assert host.state["running"] == {}
-    assert host.dw("status").stdout.splitlines()[-3:] == [
+    assert host.dw("status").stdout.splitlines()[-4:] == [
         "  decisions     not running",
         "  observations  not running",
         "  proxy         not running",
+        "  autoconfig    not running",
     ]
 
 
@@ -416,9 +431,9 @@ def test_restart_checks_then_replaces_every_container_and_waits_for_health(host)
     host.all_running()
     done = host.dw("restart")
     assert done.returncode == 0, done.stderr
-    assert done.stdout == "daywarden restarted.\n"
-    assert _compose(host) == [CHECK_BEFORE_RESTART, DOWN_FOR_RESTART, UP]
-    assert host.state["recreated"] == {"decisions": 1, "observations": 1, "proxy": 1}
+    assert done.stdout == "daywarden restarted.\n" + SAID_URL
+    assert _compose(host) == [CHECK_BEFORE_RESTART, DOWN_FOR_RESTART, UP, URL]
+    assert host.state["recreated"] == {"decisions": 1, "observations": 1, "proxy": 1, "autoconfig": 1}
 
 
 def test_restart_with_a_broken_policy_stops_nothing(host):
@@ -429,21 +444,21 @@ def test_restart_with_a_broken_policy_stops_nothing(host):
     assert done.stderr.startswith("dw: the policy has 2 errors. Nothing was restarted.\n")
     assert _compose(host) == [CHECK_BEFORE_RESTART]
     assert host.state.get("recreated") is None
-    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+    assert host.state["running"] == ALL_HEALTHY
 
 
 def test_restart_starts_a_stopped_daywarden_and_says_it_was_not_running(host):
     done = host.dw("restart")
     assert done.returncode == 0, done.stderr
-    assert done.stdout == "daywarden was not running, so it was started. daywarden is up.\n"
-    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+    assert done.stdout == "daywarden was not running, so it was started. daywarden is up.\n" + SAID_URL
+    assert host.state["running"] == ALL_HEALTHY
 
 
 def test_restart_brings_back_a_service_stopped_by_hand(host):
     host.state["running"] = {"decisions": "healthy", "proxy": "healthy"}
     done = host.dw("restart")
     assert done.returncode == 0, done.stderr
-    assert host.state["running"] == {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+    assert host.state["running"] == ALL_HEALTHY
 
 
 def test_restart_reports_a_service_that_does_not_become_healthy_as_up_does(host):
@@ -478,15 +493,16 @@ def test_reload_checks_then_reloads_both_services_without_touching_a_container(h
     assert done.returncode == 0, done.stderr
     assert done.stdout == (
         "household timezone Australia/Sydney\n"
-        "The decisions and observations services are using the reloaded policy.\n"
+        "The decisions, observations, and autoconfig services are using the reloaded policy.\n"
     )
     assert _compose(host) == [
         _exec_check("--quiet", "--refused", "Nothing was reloaded."),
         _reload("decisions"),
         _reload("observations"),
+        _reload("autoconfig"),
         ["config", "--hash", "*"],
     ]
-    assert host.state["reloaded"] == ["decisions", "observations"]
+    assert host.state["reloaded"] == ["decisions", "observations", "autoconfig"]
     assert host.state.get("recreated") is None
 
 
@@ -504,6 +520,11 @@ def test_reload_with_a_broken_policy_reloads_nothing(host):
     [
         ("decisions", "", []),
         ("observations", "the decisions service is using the reloaded policy, and the observations service is not", ["decisions"]),
+        (
+            "autoconfig",
+            "the decisions and observations services are using the reloaded policy, and the autoconfig service is not",
+            ["decisions", "observations"],
+        ),
     ],
 )
 def test_a_service_that_refuses_the_reload_is_named_and_dw_exits_1(host, refusing, said, reloaded):
@@ -544,3 +565,97 @@ def test_reload_with_the_observations_service_stopped_says_so(host):
     assert done.returncode == 1
     assert "The observations service is not running. dw up starts it with this policy." in done.stderr
     assert host.state["reloaded"] == ["decisions"]
+
+
+def test_reload_with_the_autoconfig_service_stopped_says_so(host):
+    host.state["running"] = {"decisions": "healthy", "observations": "healthy", "proxy": "healthy"}
+    done = host.dw("reload")
+    assert done.returncode == 1
+    assert "The autoconfig service is not running. dw up starts it with this policy." in done.stderr
+    assert host.state["reloaded"] == ["decisions", "observations"]
+
+
+# Ports from PORT_BASE
+
+
+def _set_env(host, **settings):
+    """Replace the installed .env's port lines with these settings."""
+    lines = [line for line in (host.root / ".env").read_text().splitlines() if not line.startswith("PORT_BASE=")]
+    lines += [f"{key}={value}" for key, value in settings.items()]
+    (host.root / ".env").write_text("\n".join(lines) + "\n")
+
+
+def _ports(host):
+    return {key: host.state["up_env"][key] for key in ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT")}
+
+
+def test_the_ports_default_to_the_block_from_8080(host):
+    _set_env(host)
+    assert host.dw("up").returncode == 0
+    assert _ports(host) == {"PROXY_PORT": "8080", "POLICY_PORT": "8084", "PROXY_CONFIG_PORT": "8088"}
+
+
+@pytest.mark.parametrize("command", ["up", "restart"])
+def test_port_base_moves_every_port_and_a_port_set_on_its_own_wins(host, command):
+    _set_env(host, PORT_BASE="9080")
+    done = host.dw(command)
+    assert done.returncode == 0, done.stderr
+    assert _ports(host) == {"PROXY_PORT": "9080", "POLICY_PORT": "9084", "PROXY_CONFIG_PORT": "9088"}
+    assert done.stdout.endswith("Proxy configuration URL: http://tundra:9088/proxy.pac\n")
+    _set_env(host, PORT_BASE="9080", POLICY_PORT="8090")
+    assert host.dw(command).returncode == 0
+    assert _ports(host) == {"PROXY_PORT": "9080", "POLICY_PORT": "8090", "PROXY_CONFIG_PORT": "9088"}
+    assert host.dw(command, env={"PROXY_CONFIG_PORT": "7000"}).returncode == 0
+    assert _ports(host)["PROXY_CONFIG_PORT"] == "7000"
+
+
+@pytest.mark.parametrize(
+    ("settings", "said"),
+    [
+        ({"PORT_BASE": "80x"}, "PORT_BASE must be a whole number from 1 to 65535, such as 8080, not '80x'."),
+        ({"PORT_BASE": "65530"}, "PORT_BASE 65530 puts PROXY_CONFIG_PORT at 65530+8 = 65538, above 65535."),
+        ({"PORT_BASE": "8080", "PROXY_PORT": "8088"}, "PROXY_PORT and PROXY_CONFIG_PORT are both 8088. Each port must be different."),
+        ({"PORT_BASE": "8080", "POLICY_PORT": "70000"}, "POLICY_PORT must be a whole number from 1 to 65535, not '70000'."),
+    ],
+)
+@pytest.mark.parametrize(("command", "refused"), [("up", "daywarden was not started."), ("restart", "Nothing was restarted.")])
+def test_ports_that_cannot_be_used_are_refused_and_nothing_starts_or_stops(host, settings, said, command, refused):
+    host.all_running()
+    _set_env(host, **settings)
+    done = host.dw(command)
+    assert done.returncode == 1
+    assert done.stderr == f"dw: the ports in {host.root}/.env cannot be used. {refused}\n  {said}\n"
+    assert _compose(host) == []
+    assert host.state["running"] == ALL_HEALTHY
+
+
+def test_down_still_stops_daywarden_with_ports_that_cannot_be_used(host):
+    host.all_running()
+    _set_env(host, PORT_BASE="nope")
+    assert host.dw("down").returncode == 0
+    assert host.state["running"] == {}
+
+
+def test_a_new_port_base_makes_reload_name_the_services_that_need_a_restart(host):
+    assert host.dw("up").returncode == 0
+    _set_env(host, PORT_BASE="9080")
+    done = host.dw("reload")
+    assert done.returncode == 0, done.stderr
+    assert "Still running with the old settings: autoconfig, decisions, proxy. Run dw restart to apply the changes." in done.stdout
+    assert host.dw("restart").returncode == 0
+    assert "Warning" not in host.dw("reload").stdout
+
+
+def test_status_of_a_stopped_daywarden_names_the_url_from_this_machine(host):
+    _set_env(host, PORT_BASE="9080")
+    done = host.dw("status")
+    assert "Proxy configuration URL: http://tundra:9088/proxy.pac" in done.stdout.splitlines()
+    assert ["exec", "-T", "autoconfig"] not in [call[:3] for call in _compose(host)]
+
+
+def test_status_of_a_running_daywarden_asks_the_service_for_the_url(host):
+    host.all_running()
+    host.state["config_url"] = "http://tasks.example:8088/proxy.pac"
+    done = host.dw("status")
+    assert "Proxy configuration URL: http://tasks.example:8088/proxy.pac" in done.stdout.splitlines()
+    assert URL in _compose(host)

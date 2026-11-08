@@ -31,7 +31,7 @@ from pathlib import Path
 
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.hierarchy import ConfigError, Policy, load, require_yaml
-from policy.selection import picker_url
+from policy.selection import picker_url, proxy_config_url
 
 CONFIG_MOUNT = "/etc/daywarden"
 DEFAULT_POLICY_FILE = CONFIG_MOUNT + "/policy.yaml"
@@ -140,6 +140,12 @@ def summary_lines(policy: Policy | None, clock: HouseholdClock, source: str) -> 
     for group in sorted(policy.site_groups, key=lambda item: item.priority):
         lines.append(f"site group {group.name}: priority {group.priority}, {len(group.patterns)} patterns")
     lines.append("site group default: urls that match no configured group")
+    direct = policy.proxy_configuration
+    lines += [
+        f"proxy configuration is {proxy_config_url(policy)}",
+        f"proxy configuration direct entries: {', '.join(direct.switched_on()) or 'none'}",
+        f"proxy configuration extra direct entries: {', '.join(item.text for item in direct.extra) or 'none'}",
+    ]
     return lines
 
 

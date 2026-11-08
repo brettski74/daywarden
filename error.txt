@@ -1,0 +1,8 @@
+URL:
+https://globalnews.ca/news/12136868/cruise-ship-leaves-without-passengers-cambodia/?utm_source=firefox-newtab-en-ca
+
+Result on screen:
+
+502 Bad Gateway
+
+HTTP/2 protocol error: Received header value surrounded by whitespace b"\tdefault-src 'self' *.wp.com;\timg-src data: https:;\tscript-src 'unsafe-inline' 'unsafe-eval' blob: https:;\tstyle-src 'unsafe-inline' https:;\tfont-src data: https:;\tmedia-src blob: https:;\tframe-src https:;\tobject-src 'none';\tconnect-src https:;"

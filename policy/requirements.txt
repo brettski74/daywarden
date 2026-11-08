@@ -7,3 +7,4 @@ cryptography==49.0.0
 mutagen==1.48.1
 pydub==0.25.1
 audioop-lts==0.2.2
+psutil==7.2.2

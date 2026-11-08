@@ -13,6 +13,8 @@ import socket
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -80,6 +82,7 @@ class Daywarden:
         systemctl.write_text("#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n", encoding="utf-8")
         systemctl.chmod(0o755)
         self.project = f"dw-reload-{os.getpid()}"
+        self.hostname = Path("/etc/hostname").read_text(encoding="utf-8").strip()
         self.env = {
             **os.environ,
             "PATH": f"{fakes}:{os.environ['PATH']}",
@@ -88,6 +91,7 @@ class Daywarden:
             "CA_VOLUME_PATH": str(directory / "ca"),
             "PROXY_PORT": str(_free_port()),
             "POLICY_PORT": str(_free_port()),
+            "PROXY_CONFIG_PORT": str(_free_port()),
             "PARENT_NAMES": "localhost",
             "OBSERVATION_INTERVAL": "60",
         }
@@ -116,7 +120,7 @@ class Daywarden:
     def containers(self) -> dict[str, tuple[str, str]]:
         """Each service's container id and the time it started."""
         found = {}
-        for service in ("decisions", "observations", "proxy"):
+        for service in ("decisions", "observations", "proxy", "autoconfig"):
             ident = self.compose("ps", "-q", service).stdout.strip()
             started = subprocess.run(
                 ["docker", "inspect", "--format", "{{.State.StartedAt}}", ident],
@@ -127,6 +131,14 @@ class Daywarden:
 
     def decide(self) -> dict:
         return json.loads(self.compose("exec", "-T", "decisions", "python", "-c", DECIDE).stdout)
+
+    def pac(self, path: str = "/proxy.pac", method: str = "GET") -> tuple[int, str]:
+        request = urllib.request.Request(f"http://127.0.0.1:{self.env['PROXY_CONFIG_PORT']}{path}", data=b"" if method == "POST" else None, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as error:
+            return error.code, ""
 
     def edit(self, old: str, new: str) -> None:
         path = self.config / "policy.yaml"
@@ -161,7 +173,7 @@ def test_reload_applies_the_policy_without_restarting_a_container(daywarden):
     done = daywarden.dw("reload")
     assert done.returncode == 0, done.stderr
     assert "site group reading: priority 10, 1 patterns" in done.stdout
-    assert "The decisions and observations services are using the reloaded policy." in done.stdout
+    assert "The decisions, observations, and autoconfig services are using the reloaded policy." in done.stdout
     assert "dw restart" not in done.stdout
     assert daywarden.decide() == {"action": "allow"}
     assert daywarden.containers() == before
@@ -195,6 +207,65 @@ def test_no_request_from_the_proxy_can_reload_either_service(daywarden):
     assert done.stdout.split() == ["http://decisions:8090/v1/reload", "404", "http://observations:8091/v1/reload", "404"]
 
 
+def test_up_printed_the_configuration_url_and_the_file_names_the_proxy_port(daywarden):
+    status, pac = daywarden.pac()
+    assert status == 200
+    assert f':{daywarden.env["PROXY_PORT"]}";' in pac
+    assert daywarden.pac("/wpad.dat") == (200, pac)
+    done = daywarden.dw("status")
+    assert f":{daywarden.env['PROXY_CONFIG_PORT']}/proxy.pac" in done.stdout
+    assert "  autoconfig    healthy" in done.stdout.splitlines()
+
+
+def test_a_reload_changes_the_auto_configuration_file_without_a_restart(daywarden):
+    good = (daywarden.config / "policy.yaml").read_text(encoding="utf-8")
+    before = daywarden.containers()
+    try:
+        daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\nproxy_configuration:\n  direct:\n    extra: ['*.home.arpa']\n")
+        done = daywarden.dw("reload")
+        assert done.returncode == 0, done.stderr
+        assert "proxy configuration extra direct entries: *.home.arpa" in done.stdout
+        assert 'var DIRECT_GLOBS = ["*.home.arpa"];' in daywarden.pac()[1]
+        daywarden.edit("extra: ['*.home.arpa']", "extra: ['10.8.0.0/33']")
+        refused = daywarden.dw("reload")
+        assert refused.returncode == 1
+        assert "'10.8.0.0/33' is not a host name" in refused.stderr
+        assert 'var DIRECT_GLOBS = ["*.home.arpa"];' in daywarden.pac()[1]
+        assert daywarden.containers() == before
+    finally:
+        (daywarden.config / "policy.yaml").write_text(good, encoding="utf-8")
+        assert daywarden.dw("reload").returncode == 0
+
+
+def test_no_request_to_the_auto_configuration_port_can_reload_it(daywarden):
+    good = (daywarden.config / "policy.yaml").read_text(encoding="utf-8")
+    before = daywarden.pac()[1]
+    try:
+        daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\nproxy_configuration:\n  direct:\n    extra: [nas.example]\n")
+        for path in ("/proxy.pac", "/v1/reload", "/reload"):
+            assert daywarden.pac(path, "POST")[0] in {404, 501}
+        assert daywarden.pac()[1] == before
+    finally:
+        (daywarden.config / "policy.yaml").write_text(good, encoding="utf-8")
+
+
+def test_the_proxy_and_the_policy_pages_work_with_the_auto_configuration_service_stopped(daywarden):
+    daywarden.compose("stop", "autoconfig")
+    try:
+        with pytest.raises(urllib.error.URLError):
+            daywarden.pac()
+        assert "action" in daywarden.decide()
+        proxy = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{daywarden.env['PROXY_PORT']}"}))
+        with pytest.raises(urllib.error.HTTPError) as denied:
+            proxy.open("http://daywarden-reload-test.invalid/", timeout=10)
+        assert denied.value.code == 403
+        done = daywarden.dw("reload")
+        assert done.returncode == 1
+        assert "The autoconfig service is not running. dw up starts it with this policy." in done.stderr
+    finally:
+        assert daywarden.dw("up").returncode == 0
+
+
 def test_reload_names_the_services_a_changed_env_would_change(daywarden):
     before = daywarden.containers()
     done = daywarden.dw("reload", env={"OBSERVATION_INTERVAL": "30"})
@@ -209,7 +280,10 @@ def test_restart_replaces_every_container_and_is_no_slower_than_down_and_up(dayw
     done = daywarden.dw("restart")
     restart_seconds = time.monotonic() - started
     assert done.returncode == 0, done.stdout + done.stderr
-    assert done.stdout.strip().endswith("daywarden restarted.")
+    assert done.stdout.splitlines()[-2:] == [
+        "daywarden restarted.",
+        f"Proxy configuration URL: http://{daywarden.hostname}:{daywarden.env['PROXY_CONFIG_PORT']}/proxy.pac",
+    ]
     after = daywarden.containers()
     assert all(after[service][0] != before[service][0] for service in before)
     assert daywarden.decide() == {"action": "allow"}

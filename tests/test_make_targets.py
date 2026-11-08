@@ -32,12 +32,29 @@ def _compose(host):
     return [call[4:] for call in host.calls("docker") if call[1:2] == ["compose"]]
 
 
-def test_reload_applies_the_policy_to_both_services_without_restarting_a_container(host):
+def test_up_and_down_start_and_stop_every_service_on_the_ports_dw_uses(host):
+    env = host.root / ".env"
+    env.write_text(env.read_text(encoding="utf-8") + "PORT_BASE=9080\n", encoding="utf-8")
+    done = _make(host, "up")
+    assert done.returncode == 0, done.stderr
+    assert host.state["running"] == {service: "healthy" for service in SERVICES}
+    assert {key: host.state["up_env"][key] for key in ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT")} == {
+        "PROXY_PORT": "9080",
+        "POLICY_PORT": "9084",
+        "PROXY_CONFIG_PORT": "9088",
+    }
+    assert "Proxy configuration URL: http://tundra:9088/proxy.pac" in done.stdout
+    done = _make(host, "down")
+    assert done.returncode == 0, done.stderr
+    assert host.state["running"] == {}
+
+
+def test_reload_applies_the_policy_to_every_service_without_restarting_a_container(host):
     host.all_running()
     done = _make(host, "reload")
     assert done.returncode == 0, done.stderr
-    assert "The decisions and observations services are using the reloaded policy." in done.stdout
-    assert host.state["reloaded"] == ["decisions", "observations"]
+    assert "The decisions, observations, and autoconfig services are using the reloaded policy." in done.stdout
+    assert host.state["reloaded"] == ["decisions", "observations", "autoconfig"]
     assert not [call for call in _compose(host) if call[:1] in (["up"], ["down"])]
 
 

@@ -57,11 +57,10 @@ def installed_compose(text: str, version: str) -> str:
     document = yaml.safe_load(text)
     services = document["services"]
     for service in services.values():
-        service.pop("build", None)
+        if service.pop("build", None) == "./policy":
+            service["image"] = f"{POLICY_IMAGE}:{version}"
         service["pull_policy"] = "never"
         service["restart"] = "on-failure"
-    services["decisions"]["image"] = f"{POLICY_IMAGE}:{version}"
-    services["observations"]["image"] = f"{POLICY_IMAGE}:{version}"
     proxy = services["proxy"]
     proxy["image"] = f"{PROXY_IMAGE}:{version}"
     proxy["volumes"] = [volume for volume in proxy["volumes"] if not str(volume).startswith("./proxy:")]

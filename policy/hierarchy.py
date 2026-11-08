@@ -47,6 +47,7 @@ from policy import arithmetic, parts_of_speech, skip_counting, spelling
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, normalize_ip, resolve_address
 from policy.clock import named_zone
+from policy.pac import SWITCHES, DirectEntries, parse_extra
 from policy.problems import Collector, Problems, problems_of
 from policy.tasks import Task
 
@@ -101,6 +102,7 @@ _TOP_KEYS = {
     "quotas",
     "rule_sets",
     "tasks",
+    "proxy_configuration",
 }
 _SCALARS = {"entry", "timezone", "hostname", "port", "bucket_length", "time_grace", "volume_grace"}
 _PORT_TEXT = re.compile(r"[1-9][0-9]*")
@@ -259,6 +261,8 @@ class Policy:
     time_windows: tuple[TimeWindow, ...] = ()
     quotas: tuple[Quota, ...] = ()
     tasks: tuple[Task, ...] = ()
+    # Which hosts the proxy auto-config file sends direct, not to the proxy.
+    proxy_configuration: DirectEntries = DirectEntries()
 
     def rule_set(self, name: str) -> tuple[Rule, ...] | None:
         for found, rules in self.rule_sets:
@@ -315,6 +319,8 @@ class _Build:
     task_where: dict[str, str] = field(default_factory=dict)
     rule_sets: dict[str, tuple[Rule, ...]] = field(default_factory=dict)
     ruleset_where: dict[str, str] = field(default_factory=dict)
+    proxy_configuration: DirectEntries = DirectEntries()
+    proxy_where: str = ""
     task_data: bool = True
     # Each file read, in the order the policy includes it.
     files: list[str] = field(default_factory=list)
@@ -584,6 +590,57 @@ def _take_tasks(node: yaml.Node, build: _Build) -> None:
     for name, body, where in _entities(node, "task", build):
         ok, task = build.attempt(where, _task, name, body, where, build.task_data)
         _claim(build, build.tasks, build.task_where, name, task if ok else _BROKEN, where, "task")
+
+
+def _take_proxy_configuration(node: yaml.Node, build: _Build) -> None:
+    """Take the one ``proxy_configuration`` section. Every mistake in it is noted where it is written."""
+    where = _at(node)
+    if build.proxy_where:
+        build.fail(f"{where}: proxy_configuration is already set at {build.proxy_where}")
+        return
+    build.proxy_where = where
+    if not isinstance(node, yaml.MappingNode):
+        build.fail(f"{where}: proxy_configuration must be a mapping")
+        return
+    pairs = _lenient_pairs(node, build)
+    for key, key_node in _key_nodes(node):
+        if key != "direct":
+            build.fail(f"{_at(key_node)}: unknown setting proxy_configuration.{key}")
+    direct = pairs.get("direct")
+    if direct is None:
+        return
+    if not isinstance(direct, yaml.MappingNode):
+        build.fail(f"{_at(direct)}: proxy_configuration.direct must be a mapping")
+        return
+    entries = _lenient_pairs(direct, build)
+    for key, key_node in _key_nodes(direct):
+        if key not in SWITCHES and key != "extra":
+            build.fail(f"{_at(key_node)}: unknown setting proxy_configuration.direct.{key}")
+    switches: dict[str, bool] = {}
+    for name in SWITCHES:
+        value = entries.get(name)
+        if value is None:
+            continue
+        if not isinstance(value, yaml.ScalarNode) or value.tag != _BOOL:
+            build.fail(f"{_at(value)}: proxy_configuration.direct.{name} must be true or false")
+            continue
+        switches[name] = value.value.lower() in {"y", "yes", "true", "on"}
+    extra: list = []
+    if "extra" in entries:
+        label = "proxy_configuration.direct.extra"
+        ok, items = build.attempt(_at(entries["extra"]), _sequence, entries["extra"], f"{_at(entries['extra'])}: {label}")
+        for item in items if ok else ():
+            parsed, text = build.attempt(_at(item), _text, item, f"{_at(item)}: {label} item")
+            if not parsed:
+                continue
+            try:
+                found = parse_extra(text)
+            except ValueError as error:
+                build.fail(f"{_at(item)}: {label}: {error}")
+                continue
+            if found not in extra:
+                extra.append(found)
+    build.proxy_configuration = DirectEntries(**switches, extra=tuple(extra))
 
 
 _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
@@ -995,6 +1052,7 @@ _TAKERS: dict[str, Callable[[yaml.Node, _Build], None]] = {
     "quotas": _take_quotas,
     "rule_sets": _take_rule_sets,
     "tasks": _take_tasks,
+    "proxy_configuration": _take_proxy_configuration,
 }
 
 
@@ -1052,6 +1110,7 @@ def _finish(
         tuple(build.windows.values()),
         quotas,
         tuple(build.tasks.values()),
+        build.proxy_configuration,
     )
 
 
