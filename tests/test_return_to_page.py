@@ -84,6 +84,11 @@ tasks:
     group: younger
     pass_cooldown: 0
     body: {json.dumps(SUMS)}
+  more_sums:
+    type: arithmetic
+    group: younger
+    pass_cooldown: 0
+    body: {json.dumps(SUMS)}
   older_sums:
     type: arithmetic
     group: older
@@ -275,7 +280,7 @@ def service(tmp_path, monkeypatch):
 def test_a_pass_sends_him_back_to_the_page_that_sent_him_to_revision(service):
     redirect = service.decide(VIDEO)
     assert redirect["action"] == "redirect"
-    assert redirect["location"] == "https://tasks.example/tasks/sums"
+    assert redirect["location"] == "https://tasks.example/tasks/next"
     result = service.pass_task()
     assert result["back"] == VIDEO
     assert result["next"] == "https://tasks.example/tasks/next"
@@ -383,7 +388,8 @@ def test_a_pass_that_does_not_reach_tasks_required_keeps_him_on_revision(tmp_pat
     first = service.pass_task()
     assert first["back"] is None
     assert first["next"] == "https://tasks.example/tasks/next"
-    assert service.pass_task()["back"] == VIDEO
+    assert service.pass_task()["back"] is None
+    assert service.pass_task(task="more_sums")["back"] == VIDEO
 
 
 # Helpers

@@ -72,6 +72,11 @@ def _location(page) -> str | None:
     return None
 
 
+def _picked(policy, store, ip=YOUNGER) -> str | None:
+    """Return where the picker sends this computer."""
+    return _location(respond_task(policy, store, method="GET", path="/tasks/next", client_ip=ip, now=_at()))
+
+
 def test_an_eligible_task_uses_the_hostname_and_the_published_port(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_PORT", "8090")
     policy = _load(
@@ -92,21 +97,12 @@ def test_an_eligible_task_uses_the_hostname_and_the_published_port(tmp_path, mon
         ),
     )
     with AttemptStore(":memory:") as store:
-        younger = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-        older = decide(policy, client_ip=OLDER, url=YOUTUBE, at=_at(), attempts=store)
-        page = respond_task(
-            policy,
-            store,
-            method="GET",
-            path="/tasks/next",
-            client_ip=YOUNGER,
-            cookie=None,
-            now=_at(),
-        )
-    assert younger.decision["location"] == "https://garden:8090/tasks/sums"
-    assert older.decision["location"] == "https://garden:8090/tasks/words"
-    assert page.status == 302
-    assert _location(page) == "https://garden:8090/tasks/sums"
+        younger = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+        older = decide(policy, client_ip=OLDER, url=YOUTUBE, at=_at())
+        assert younger.decision["location"] == "https://garden:8090/tasks/next"
+        assert older.decision["location"] == "https://garden:8090/tasks/next"
+        assert _picked(policy, store) == "https://garden:8090/tasks/sums"
+        assert _picked(policy, store, OLDER) == "https://garden:8090/tasks/words"
 
 
 def test_nothing_eligible_lands_on_the_picker(tmp_path, monkeypatch):
@@ -127,19 +123,16 @@ def test_nothing_eligible_lands_on_the_picker(tmp_path, monkeypatch):
     )
     picker = "https://garden:8090/tasks/next"
     with AttemptStore(":memory:") as store:
-        sent = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-        follow = decide(policy, client_ip=YOUNGER, url=picker, at=_at(), attempts=store)
+        sent = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
         page = respond_task(
             policy,
             store,
             method="GET",
             path="/tasks/next",
             client_ip=YOUNGER,
-            cookie=None,
             now=_at(),
         )
     assert sent.decision == {"action": "redirect", "status": 302, "location": picker}
-    assert follow.decision == {"action": "allow"}
     assert page.status == 200
     assert NOTHING in page.body
 
@@ -163,8 +156,9 @@ def test_an_omitted_hostname_uses_the_operating_system_name(tmp_path, monkeypatc
     )
     assert policy.hostname is None
     with AttemptStore(":memory:") as store:
-        trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-    assert trace.decision["location"] == "https://lounge:8090/tasks/sums"
+        trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+        assert _picked(policy, store) == "https://lounge:8090/tasks/sums"
+    assert trace.decision["location"] == "https://lounge:8090/tasks/next"
 
 
 def test_an_omitted_hostname_uses_the_compose_hosts_name_not_the_containers(tmp_path, monkeypatch):
@@ -187,12 +181,12 @@ def test_an_omitted_hostname_uses_the_compose_hosts_name_not_the_containers(tmp_
         ),
     )
     with AttemptStore(":memory:") as store:
-        trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-    assert trace.decision["location"] == "https://study:8090/tasks/sums"
+        trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+        assert _picked(policy, store) == "https://study:8090/tasks/sums"
+    assert trace.decision["location"] == "https://study:8090/tasks/next"
     host_file.write_text("not a host\n", encoding="utf-8")
-    with AttemptStore(":memory:") as store:
-        fallen = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-    assert fallen.decision["location"] == "https://1c45a70451e1:8090/tasks/sums"
+    fallen = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+    assert fallen.decision["location"] == "https://1c45a70451e1:8090/tasks/next"
 
 
 def test_port_443_is_left_off_and_a_set_port_overrides_the_published_one(tmp_path, monkeypatch):
@@ -224,11 +218,13 @@ def test_port_443_is_left_off_and_a_set_port_overrides_the_published_one(tmp_pat
         ),
     )
     with AttemptStore(":memory:") as store:
-        standard = decide(plain, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-        reverse = decide(proxied, client_ip=YOUNGER, url=YOUTUBE, at=_at(), attempts=store)
-    assert standard.decision["location"] == "https://garden/tasks/sums"
+        standard = decide(plain, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+        reverse = decide(proxied, client_ip=YOUNGER, url=YOUTUBE, at=_at())
+        assert _picked(plain, store) == "https://garden/tasks/sums"
+        assert _picked(proxied, store) == "https://garden:8443/tasks/sums"
+    assert standard.decision["location"] == "https://garden/tasks/next"
     assert ":443" not in standard.decision["location"]
-    assert reverse.decision["location"] == "https://garden:8443/tasks/sums"
+    assert reverse.decision["location"] == "https://garden:8443/tasks/next"
 
 
 @pytest.mark.parametrize(

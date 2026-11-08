@@ -12,6 +12,7 @@ services:
         aliases:
           - class.google.test
           - tasks.daywarden.test
+          - parent.daywarden.test
     healthcheck:
       test:
         - CMD

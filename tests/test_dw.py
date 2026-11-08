@@ -33,7 +33,8 @@ def _systemctl_user(host):
 
 UP = ["up", "-d", "--wait", "--wait-timeout", "180"]
 DOWN_FOR_RESTART = ["down", "--remove-orphans"]
-CHECK = ["python", "-m", "policy.check", "--host-dir", "config"]
+NAMES = "tundra,localhost,127.0.0.1"
+CHECK = ["python", "-m", "policy.check", "--host-dir", "config", "--parent-names", NAMES]
 
 
 def _run_check(*extra):
@@ -361,6 +362,16 @@ def test_check_on_a_running_daywarden_uses_the_decisions_container_and_changes_n
     assert host.state.get("recreated") is None and host.state.get("reloaded") is None
 
 
+def test_check_is_given_parent_names_from_env_even_while_the_containers_have_the_old_list(host):
+    host.all_running()
+    env = host.root / ".env"
+    env.write_text(env.read_text().replace(f"PARENT_NAMES={NAMES}", "PARENT_NAMES=tundra,tundra.lan"))
+    done = host.dw("check")
+    assert done.returncode == 0, done.stderr
+    [call] = _compose(host)
+    assert call[call.index("--parent-names") + 1] == "tundra,tundra.lan"
+
+
 @pytest.mark.parametrize("running", [False, True])
 def test_check_lists_every_error_and_exits_1(host, running):
     if running:
@@ -378,7 +389,8 @@ def test_check_lists_every_error_and_exits_1(host, running):
 def test_check_names_the_configuration_directory_as_the_parent_writes_it(host, config_dir, shown):
     done = host.dw("check", env={"DAYWARDEN_CONFIG_DIR": config_dir.format(root=host.root)})
     assert done.returncode == 0, done.stderr
-    assert _compose(host)[-1][-2:] == ["--host-dir", shown]
+    call = _compose(host)[-1]
+    assert call[call.index("--host-dir") + 1] == shown
 
 
 # up with a broken policy

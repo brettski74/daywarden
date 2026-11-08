@@ -1,17 +1,13 @@
-"""Pick the revision task a client group faces, and the URL it is sent to.
+"""Order the available tasks, pick one, and say where the task pages live.
 
-The pool is whatever S003.1 calls eligible, except ``parent_check``, which
-the child never sees. When any of those tasks is required, the pool is only
-the required ones. Inside the pool, a task that has never been passed comes
-before one that has, and the oldest pass comes next. Equal candidates are
-ordered by name and then rotated, so the order of requests does not leave
-one of them at the back forever.
+The picker and the selector both use the available set from
+``policy.tasks.task_sets``. Inside it, a task that has never been passed
+comes before one that has, and the oldest pass comes next. Equal candidates
+are ordered by name and then rotated, so the order of requests does not
+leave one of them at the back forever. Only the picker moves the rotation.
 
-Giving up is allowed on a task that is not required. It is allowed on a
-required task only when another required task is eligible. The next page
-leaves out tasks already abandoned in this visit. When that would leave no
-required task, and a required task is still eligible, he is sent back to a
-required task other than the one he just left.
+Giving up a required attempt is refused while its task is the only
+required task. Any other attempt can be given up.
 """
 
 from __future__ import annotations
@@ -19,21 +15,20 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from policy.hierarchy import Policy
-from policy.sounds import SOUND_PATH
 from policy.tasks import (
     PARENT_CHECK,
-    PASS,
+    REQUIRED,
     Attempt,
     AttemptStore,
     Task,
-    household_day,
-    is_eligible,
-    is_required,
+    TaskSets,
+    last_pass,
+    task_sets,
 )
 
 _TURNS = """
@@ -44,6 +39,8 @@ CREATE TABLE IF NOT EXISTS task_turns (
 """
 
 PICKER_PATH = "/tasks/next"
+CHOOSER_PATH = "/tasks/choose"
+_RESERVED = (PICKER_PATH, CHOOSER_PATH)
 MEDIA_SEGMENT = "/audio/"
 DEFAULT_PUBLISHED_PORT = 8090
 # Compose mounts the machine's /etc/hostname here. The container's own
@@ -133,14 +130,19 @@ def picker_url(policy: Policy) -> str:
     return task_origin(policy) + PICKER_PATH
 
 
+def chooser_url(policy: Policy) -> str:
+    """Return the task selector on the policy server."""
+    return task_origin(policy) + CHOOSER_PATH
+
+
 def task_page_path(name: str) -> str:
     """Return the path of one task on the policy server.
 
-    ``/tasks/next`` is the picker. A task of that name is served under
-    ``/tasks/work/``.
+    ``/tasks/next`` is the picker and ``/tasks/choose`` the selector. A task
+    with either name is served under ``/tasks/work/``.
     """
     path = "/tasks/" + quote(name, safe="")
-    if path == PICKER_PATH:
+    if path in _RESERVED:
         return "/tasks/work/" + quote(name, safe="")
     return path
 
@@ -183,9 +185,9 @@ def _port_matches(url_port: int | None, configured: int) -> bool:
     return url_port == configured
 
 
-def task_name_from_path(path: str, entry: str) -> str | None:
-    """Return the task name in a task-site path, or None for the picker entry."""
-    if path == entry:
+def task_name_from_path(path: str) -> str | None:
+    """Return the task name in a task-site path, or None for the picker, the selector, or another path."""
+    if path in _RESERVED:
         return None
     for prefix in ("/tasks/work/", "/tasks/"):
         if path.startswith(prefix):
@@ -196,51 +198,55 @@ def task_name_from_path(path: str, entry: str) -> str | None:
     return None
 
 
-def may_open(
-    tasks: Sequence[Task],
-    name: str,
-    client_group: str,
-    today: date,
-    attempts: Sequence[Attempt],
-) -> bool:
-    """Return whether this client group may be shown this task today.
-
-    ``parent_check`` is never shown. A task that is not eligible is not
-    shown. While any required task is eligible, an optional task is not shown.
-    """
+def configured_task(tasks: Sequence[Task], name: str, client_group: str) -> Task | None:
+    """Return the task of this name when it is assigned to this group and is not ``parent_check``."""
     task = next((item for item in tasks if item.name == name), None)
-    if task is None or task.type == PARENT_CHECK:
-        return False
-    if not is_eligible(task, client_group, today, attempts):
-        return False
-    if _any_required(tasks, client_group, today, attempts):
-        return is_required(task, client_group, today, attempts)
-    return True
+    if task is None or task.type == PARENT_CHECK or client_group not in task.groups:
+        return None
+    return task
 
 
-def may_abandon(
-    task: Task,
-    tasks: Sequence[Task],
-    client_group: str,
-    today: date,
-    attempts: Sequence[Attempt],
-) -> bool:
-    """Return whether this attempt may be marked abandoned.
+def may_abandon(attempt: Attempt, task: Task, sets: TaskSets) -> bool:
+    """Return whether this attempt may be given up.
 
-    A task that is not required may be put down. A required task may be put
-    down only when another required task is eligible. ``parent_check`` is not
-    a child task, so it is not abandoned from a child page. Spelling practice
-    uses this same answer before it leaves a scored attempt.
+    A required attempt may not be given up while its task is the only
+    required task. A potential or practice attempt always may.
+    ``parent_check`` is not a child task, so it is not abandoned from a
+    child page.
     """
     if task.type == PARENT_CHECK:
         return False
-    if not is_required(task, client_group, today, attempts):
+    if attempt.task_set != REQUIRED:
         return True
-    return any(
-        other.name != task.name and is_required(other, client_group, today, attempts)
-        for other in tasks
-        if other.type != PARENT_CHECK
-    )
+    if all(other.name != task.name for other in sets.required):
+        return True
+    return any(other.name != task.name for other in sets.required)
+
+
+def ordered_tasks(
+    sets: TaskSets,
+    client_group: str,
+    attempts: Sequence[Attempt],
+    *,
+    turn: int = 0,
+) -> tuple[tuple[Task, ...], int]:
+    """Return the available tasks in the order the picker tries them, and how many tie for first.
+
+    Each run of equal candidates is in name order, rotated by ``turn``.
+    """
+    ranked = sorted(sets.available, key=lambda task: (_rank(task, client_group, attempts), task.name))
+    groups: list[list[Task]] = []
+    for task in ranked:
+        if groups and _rank(groups[-1][0], client_group, attempts) == _rank(task, client_group, attempts):
+            groups[-1].append(task)
+        else:
+            groups.append([task])
+    turn = max(turn, 0)
+    ordered: list[Task] = []
+    for group in groups:
+        shift = turn % len(group)
+        ordered.extend(group[shift:] + group[:shift])
+    return tuple(ordered), len(groups[0]) if groups else 0
 
 
 def choose_task(
@@ -249,65 +255,30 @@ def choose_task(
     today: date,
     attempts: Sequence[Attempt],
     *,
-    exclude: frozenset[str] = frozenset(),
     turn: int = 0,
-    reopen_required: bool = False,
-    leaving: str | None = None,
 ) -> tuple[Task | None, int]:
-    """Return the task to open, and how many candidates tied for it.
+    """Return the task the picker opens, and how many candidates tied for it.
 
-    ``exclude`` holds tasks already abandoned in this visit. When that leaves
-    nothing, and ``reopen_required`` is set while a required task remains,
-    the next task is a required one other than ``leaving`` when one exists.
-    The tie count is zero when nothing is chosen. A tie of one does not rotate.
+    The tie count is zero when nothing is available.
     """
-    eligible = [
-        task
-        for task in tasks
-        if task.type != PARENT_CHECK and is_eligible(task, client_group, today, attempts)
-    ]
-    required = [task for task in eligible if is_required(task, client_group, today, attempts)]
-    base = required if required else eligible
-    narrowed = [task for task in base if task.name not in exclude]
-    if narrowed:
-        pool = narrowed
-    elif reopen_required and required:
-        others = [task for task in required if task.name != leaving]
-        pool = others or list(required)
-    else:
+    ordered, ties = ordered_tasks(task_sets(tasks, client_group, today, attempts), client_group, attempts, turn=turn)
+    if not ordered:
         return None, 0
-    ranked = sorted(pool, key=lambda task: (_rank(task, client_group, attempts), task.name))
-    best = _rank(ranked[0], client_group, attempts)
-    tied = [task for task in ranked if _rank(task, client_group, attempts) == best]
-    if turn < 0:
-        turn = 0
-    return tied[turn % len(tied)], len(tied)
+    return ordered[0], ties
 
 
-def chosen_task_url(
-    policy: Policy,
-    client_group: str,
-    today: date,
-    store: AttemptStore,
-    *,
-    exclude: frozenset[str] = frozenset(),
-    reopen_required: bool = False,
-    leaving: str | None = None,
-) -> str | None:
-    """Return the task URL to open, advancing the rotation when the pick was tied.
+def picked_task_url(policy: Policy, client_group: str, today: date, store: AttemptStore) -> str | None:
+    """Return the task URL the picker opens, advancing the rotation when the pick was tied.
 
-    None means nothing in the pool is eligible. The caller then shows the
+    None means nothing is available. The caller then shows the
     plain-language page instead of redirecting.
     """
     task, ties = choose_task(
         policy.tasks,
         client_group,
         today,
-        store.attempts(client_group),
-        exclude=exclude,
+        store.history(client_group),
         turn=read_turn(store, client_group),
-        reopen_required=reopen_required,
-        leaving=leaving,
     )
     if task is None:
         return None
@@ -316,90 +287,16 @@ def chosen_task_url(
     return task_page_url(policy, task.name)
 
 
-def apply_task_selection(
-    decision: dict,
-    policy: Policy,
-    url: str,
-    client_group: str,
-    at: datetime,
-    store: AttemptStore,
-) -> dict:
-    """Point a revision redirect at the chosen task, and keep him off the wrong one.
-
-    A task he may open is allowed through, including when the rule said
-    ``revision_task``, so the follow-up request does not redirect in a circle.
-    A quiz request is a post to that same task URL. The quiz sound files are
-    allowed by the same answer that would let a task page load, and so are a
-    task's own audio files under ``<task URL>/audio/`` while he may open it.
-    An allow for the picker, or for a task he may not open, becomes a
-    redirect. When nothing is eligible, a request that is already the
-    picker is allowed so that page can say so.
-    """
-    revision = picker_url(policy)
-    action = decision.get("action")
-    today = household_day(at)
-    on_site = same_task_site(url, policy)
-    entry = PICKER_PATH
-    path = urlsplit(url).path or "/"
-    if on_site and path.startswith(SOUND_PATH):
-        if action == "redirect" and decision.get("location") == revision:
-            return {"action": "allow"}
-        return decision
-    media = task_media_from_path(path) if on_site else None
-    if media is not None:
-        opened = may_open(policy.tasks, media[0], client_group, today, store.attempts(client_group))
-        if opened and action == "redirect" and decision.get("location") == revision:
-            return {"action": "allow"}
-        return decision
-    name = task_name_from_path(path, entry) if on_site else None
-    if name is not None and may_open(policy.tasks, name, client_group, today, store.attempts(client_group)):
-        if action == "allow" or (action == "redirect" and decision.get("location") == revision):
-            return {"action": "allow"} if action == "redirect" else decision
-        return decision
-    if action == "redirect" and decision.get("location") == revision:
-        picked, ties = _preview(policy, client_group, today, store)
-        if picked is None:
-            if on_site and path == entry:
-                return {"action": "allow"}
-            return decision
-        if on_site and path == urlsplit(picked).path:
-            return {"action": "allow"}
-        _use_turn(store, client_group, ties)
-        return {**decision, "location": picked}
-    if action != "allow" or not on_site or (name is None and path != entry):
-        return decision
-    picked, ties = _preview(policy, client_group, today, store)
-    if picked is None:
-        if name is None:
-            return decision
-        return {"action": "redirect", "status": 302, "location": revision}
-    if name is not None and picked == task_page_url(policy, name):
-        return decision
-    _use_turn(store, client_group, ties)
-    return {"action": "redirect", "status": 302, "location": picked}
-
-
-def _preview(
-    policy: Policy,
-    client_group: str,
-    today: date,
-    store: AttemptStore,
-) -> tuple[str | None, int]:
-    task, ties = choose_task(
-        policy.tasks,
+def choices(policy: Policy, client_group: str, today: date, store: AttemptStore) -> tuple[Task, ...]:
+    """Return the available tasks in picker order, without moving the rotation."""
+    history = store.history(client_group)
+    ordered, _ties = ordered_tasks(
+        task_sets(policy.tasks, client_group, today, history),
         client_group,
-        today,
-        store.attempts(client_group),
+        history,
         turn=read_turn(store, client_group),
     )
-    if task is None:
-        return None, 0
-    return task_page_url(policy, task.name), ties
-
-
-def _use_turn(store: AttemptStore, client_group: str, ties: int) -> None:
-    if ties > 1:
-        advance_turn(store, client_group)
+    return ordered
 
 
 def read_turn(store: AttemptStore, client_group: str) -> int:
@@ -428,39 +325,12 @@ def advance_turn(store: AttemptStore, client_group: str) -> None:
         )
 
 
-def _any_required(
-    tasks: Sequence[Task],
-    client_group: str,
-    today: date,
-    attempts: Sequence[Attempt],
-) -> bool:
-    return any(
-        task.type != PARENT_CHECK and is_required(task, client_group, today, attempts) for task in tasks
-    )
-
-
 def _rank(task: Task, client_group: str, attempts: Sequence[Attempt]) -> tuple[int, str]:
     """Sort never-passed tasks first, then the oldest pass."""
-    finished = _last_pass_finished(task.name, client_group, attempts)
-    if finished is None:
+    found = last_pass(task.name, client_group, attempts)
+    if found is None or found.finished_at is None:
         return (0, "")
-    return (1, finished.isoformat())
-
-
-def _last_pass_finished(
-    task_name: str,
-    client_group: str,
-    attempts: Sequence[Attempt],
-) -> datetime | None:
-    found: Attempt | None = None
-    for attempt in attempts:
-        if attempt.task != task_name or attempt.client_group != client_group:
-            continue
-        if attempt.outcome != PASS or attempt.finished_at is None:
-            continue
-        if found is None or (attempt.finished_at, attempt.id) > (found.finished_at, found.id):
-            found = attempt
-    return None if found is None else found.finished_at
+    return (1, found.finished_at.isoformat())
 
 
 def _ensure_turns(connection) -> None:

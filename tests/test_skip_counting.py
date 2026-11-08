@@ -986,7 +986,8 @@ def test_giving_up_an_optional_task_closes_the_question_and_abandons(tmp_path):
     quiz.open(START)
     quiz.ask(START)
     page = quiz.give_up(START + timedelta(seconds=2))
-    assert page.status == 200
+    assert page.status == 302
+    assert ("location", "https://tasks.example/tasks/choose") in page.headers
     abandoned = quiz.store.attempts("younger", "count")[-1]
     assert abandoned.outcome == "abandoned"
     assert abandoned.detail["questions"][-1]["outcome"] == "timeout"
@@ -1177,7 +1178,6 @@ class Quiz:
             method=method,
             path="/tasks/count",
             client_ip=YOUNGER,
-            cookie=None,
             now=now,
             query=query,
             body=body,

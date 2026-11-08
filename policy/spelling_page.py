@@ -212,11 +212,10 @@ def media(task: Task, name: str) -> Path | None:
     return find_clip(settings, pool, key, sentence=sentence, extension=extension)
 
 
-def give_up_page(detail: Mapping, location: str | None, nothing: str) -> PageResponse | None:
+def give_up_page(detail: Mapping, location: str) -> PageResponse | None:
     """Return the missed-words screen shown after giving up, or None when he missed nothing.
 
-    "Continue" goes on to ``location``, or says ``nothing`` when no other
-    task is available.
+    "Continue" goes on to ``location``, the task selector.
     """
     words = missed_words(detail)
     if not words:
@@ -245,7 +244,6 @@ p {{ font-size: 1.8rem; }}
 {_missed_list(words)}
 <button type="button" id="continue" class="big" autofocus>Continue</button>
 </section>
-<p id="nothing" hidden>{_e(nothing)}</p>
 <script>
 (() => {{
   const next = {target};
@@ -254,12 +252,7 @@ p {{ font-size: 1.8rem; }}
   function onward() {{
     if (gone) return;
     gone = true;
-    if (next) {{
-      window.location.href = next;
-      return;
-    }}
-    document.getElementById("review").hidden = true;
-    document.getElementById("nothing").hidden = false;
+    window.location.href = next;
   }}
   button.addEventListener("click", onward);
   document.addEventListener("keydown", (event) => {{

@@ -12,13 +12,19 @@ line, every error, then any warnings, to stderr, and exits 1. A missing
 policy file is an error. ``--host-dir`` names the host directory mounted at
 /etc/daywarden, so each error shows the path the parent edits.
 
-Run with: python -m policy.check [--host-dir DIR] [--refused TEXT] [--quiet]
+``--parent-names`` is ``PARENT_NAMES`` from ``.env``. Each of those names,
+other than the loopback ones, that ``bypass.txt`` does not match is a
+warning, printed even with ``--quiet``. The proxy bypasses those names
+anyway, but only reads ``PARENT_NAMES`` when it starts.
+
+Run with: python -m policy.check [--host-dir DIR] [--refused TEXT] [--quiet] [--parent-names NAMES]
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -29,10 +35,46 @@ from policy.selection import picker_url
 
 CONFIG_MOUNT = "/etc/daywarden"
 DEFAULT_POLICY_FILE = CONFIG_MOUNT + "/policy.yaml"
+LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def policy_file() -> Path:
     return Path(os.environ.get("POLICY_FILE", DEFAULT_POLICY_FILE))
+
+
+def bypass_file() -> Path:
+    return Path(os.environ.get("BYPASS_PATH", CONFIG_MOUNT + "/bypass.txt"))
+
+
+def bypass_warnings(parent_names: str, bypass: Path) -> list[str]:
+    """Return a warning for each policy-server name that the bypass list does not match.
+
+    The proxy matches hosts the same way: globs, ignoring case, against the
+    whole host name.
+    """
+    try:
+        text = bypass.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    patterns = [line.split("#", 1)[0].strip() for line in text.splitlines()]
+    globs = [_glob(pattern) for pattern in patterns if pattern]
+    warnings = []
+    for token in parent_names.split(","):
+        name = token.strip().strip("[]").lower().rstrip(".")
+        if not name or name in LOOPBACK_NAMES:
+            continue
+        if any(glob.fullmatch(name) for glob in globs):
+            continue
+        warnings.append(
+            f"{bypass}: {name} is in PARENT_NAMES and not in this list. The proxy reads PARENT_NAMES only "
+            f"when it starts, so {name} only bypasses the proxy until the next restart picks up a change. "
+            "Add it here as well."
+        )
+    return warnings
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in pattern.lower()))
 
 
 def load_required(
@@ -114,17 +156,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m policy.check", description="Check the household policy.")
     parser.add_argument("--host-dir", help="the host directory mounted at /etc/daywarden, for the paths shown")
     parser.add_argument("--refused", default="", help="text added to the count line, such as Nothing was reloaded.")
-    parser.add_argument("--quiet", action="store_true", help="print nothing for a good policy")
+    parser.add_argument("--quiet", action="store_true", help="print only warnings for a good policy")
+    parser.add_argument("--parent-names", help="PARENT_NAMES from .env, checked against bypass.txt")
     args = parser.parse_args(argv)
     warnings: list[str] = []
+    names = [] if args.parent_names is None else bypass_warnings(args.parent_names, bypass_file())
     try:
         policy = load_required(policy_file(), warn=warnings.append)
     except ConfigError as error:
-        print("\n".join(error_lines(error.problems, warnings, args.host_dir, args.refused)), file=sys.stderr)
+        lines = error_lines(error.problems, [*warnings, *names], args.host_dir, args.refused)
+        print("\n".join(lines), file=sys.stderr)
         return 1
     if not args.quiet:
         zone, source = household_zone(policy.timezone, machine_localtime())
-        print("\n".join(summary_lines(policy, HouseholdClock(zone), source) + warning_lines(warnings, args.host_dir)))
+        lines = summary_lines(policy, HouseholdClock(zone), source) + warning_lines([*warnings, *names], args.host_dir)
+        print("\n".join(lines))
+    elif names:
+        print("\n".join(warning_lines(names, args.host_dir)))
     return 0
 
 

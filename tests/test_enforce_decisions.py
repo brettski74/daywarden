@@ -68,6 +68,8 @@ class Stack:
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
+        # parent.daywarden.test is only in PARENT_NAMES. tasks.daywarden.test is in both lists.
+        self.env["PARENT_NAMES"] = "parent.daywarden.test,tasks.daywarden.test,localhost,127.0.0.1"
         self.cmd = [
             "docker",
             "compose",
@@ -362,5 +364,37 @@ def test_decision_api_down_fails_closed_except_for_the_bypass_list(stack):
         assert _status(refused_headers) == 403
         assert UNAVAILABLE.encode() in refused_body
         assert "/secret" not in _paths(stack.jsonl("origin", ORIGIN_LOG))
+    finally:
+        stack.start_decisions()
+
+
+def test_parent_names_are_forwarded_without_a_decision_and_carry_the_childs_address(stack):
+    _write_decision(
+        stack.config_dir,
+        {"action": "deny", "status": 403, "message": "should-not-see"},
+    )
+    stack.clear_jsonl("decisions", DECISION_LOG)
+    stack.clear_jsonl("origin", ORIGIN_LOG)
+    for url in ("http://parent.daywarden.test/tasks/next", "http://tasks.daywarden.test/tasks/choose"):
+        completed, headers, body = _exchange(stack, url)
+        assert completed.returncode == 0, completed.stderr
+        assert _status(headers) == 200
+        assert b"daywarden-origin-ok /tasks/" in body
+    completed, headers, _body = _exchange(stack, "http://class.google.test/index.html")
+    assert _status(headers) == 200
+    assert stack.jsonl("decisions", DECISION_LOG) == []
+    clients = {entry["path"]: entry["client"] for entry in stack.jsonl("origin", ORIGIN_LOG)}
+    ipaddress.ip_address(clients["/tasks/next"])
+    assert clients["/tasks/choose"] == clients["/tasks/next"]
+    assert clients["/index.html"] is None
+
+
+def test_parent_names_are_forwarded_while_the_decision_service_is_down(stack):
+    stack.stop_decisions()
+    try:
+        completed, headers, body = _exchange(stack, "http://parent.daywarden.test/usage")
+        assert completed.returncode == 0, completed.stderr
+        assert _status(headers) == 200
+        assert b"daywarden-origin-ok /usage" in body
     finally:
         stack.start_decisions()

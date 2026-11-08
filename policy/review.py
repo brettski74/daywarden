@@ -1,9 +1,13 @@
 """Parent review of revision attempts.
 
 The page lists one client group's attempts, newest first, and opens one
-attempt to show the answers and results that were stored. A parent records
-a ``parent_check`` pass from this page. The child has no request that does
-that, and the page itself is the parent session from S007.1.
+attempt to show the answers and results that were stored. Each attempt says
+which task set it started in. Above the list is where the household day
+stands: today's score, the required tasks still outstanding, the potential
+tasks still available, and the potential passes waiting on the required
+ones. A parent records a ``parent_check`` pass from this page. The child has
+no request that does that, and the page itself is the parent session from
+S007.1.
 
 Quiz stories add type-specific detail later. This page shows the stored
 record, and a list of answers when the record has one.
@@ -27,7 +31,18 @@ from policy.report import (
     format_duration,
     open_parent,
 )
-from policy.tasks import PARENT_CHECK, PASS, Attempt, AttemptStore, Task
+from policy.tasks import (
+    PARENT_CHECK,
+    PASS,
+    POTENTIAL,
+    PRACTICE,
+    REQUIRED,
+    Attempt,
+    AttemptStore,
+    Score,
+    Task,
+    household_day,
+)
 
 QUIZ_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -43,6 +58,13 @@ QUIZ_PAGE = """<!DOCTYPE html>
 """
 
 _LIST_KEYS = ("client",)
+_SET_LABELS = {
+    REQUIRED: "Required",
+    POTENTIAL: "Potential",
+    PRACTICE: "Practice",
+    PARENT_CHECK: "Parent check",
+}
+UNFINISHED_LABEL = "Unfinished"
 
 
 def respond_attempts(
@@ -55,6 +77,7 @@ def respond_attempts(
     now: datetime,
     attempts: AttemptStore | None = None,
     clients: Sequence[str] = (),
+    tasks: Sequence[Task] = (),
 ) -> PageResponse:
     """Return the attempt list, the sign-in form, or the closed page."""
     denied = open_parent(
@@ -71,7 +94,7 @@ def respond_attempts(
     if denied is not None:
         return denied
     store = attempts if attempts is not None else AttemptStore(connection=accounts.connection)
-    return _response(200, _attempts_body(store, clients, query.get("client", "")))
+    return _response(200, _attempts_body(store, clients, query.get("client", ""), now=now, tasks=tasks))
 
 
 def respond_attempt(
@@ -112,7 +135,7 @@ def respond_attempt(
             "Attempt",
         )
         return _response(404, body)
-    return _response(200, _attempt_body(found))
+    return _response(200, _attempt_body(found, household_day(now)))
 
 
 def respond_parent_check(
@@ -154,9 +177,10 @@ def respond_parent_check(
                 PASS,
                 now,
                 detail={"recorded_by": "parent"},
+                task_set=PARENT_CHECK,
             )
             accounts.record_parent_check(group, now)
-    return _response(200, _attempts_body(store, clients, group, notice=notice))
+    return _response(200, _attempts_body(store, clients, group, notice=notice, now=now, tasks=tasks))
 
 
 def https_only_page() -> str:
@@ -180,6 +204,8 @@ def _attempts_body(
     clients: Sequence[str],
     client: str,
     *,
+    now: datetime,
+    tasks: Sequence[Task] = (),
     notice: str = "",
 ) -> str:
     parts = ["<h1>Attempts</h1>", _client_form(clients, client), notice]
@@ -189,58 +215,118 @@ def _attempts_body(
     elif clients and chosen not in clients:
         parts.append("<p>That client group is not in the household.</p>")
     else:
+        today = household_day(now)
         rows = attempts.recent(chosen)
         parts.append(f"<h2>{_e(chosen)}</h2>")
-        parts.append(_attempt_table(rows))
+        parts.append(_summary(attempts.score(tasks, chosen, today)))
+        parts.append(_attempt_table(rows, today))
     parts.append("<h2>Record a parent check</h2>")
     parts.append(_check_form(clients))
     return _document("\n".join(part for part in parts if part), "Attempts")
 
 
-def _attempt_table(rows: Sequence[Attempt]) -> str:
+def _summary(score: Score) -> str:
+    """Return where today stands: the score and the tasks behind it."""
+    rows = [
+        ("Today's score", str(score.points)),
+        ("Required tasks outstanding", _names(task.name for task in score.sets.required)),
+        ("Potential tasks available", _names(task.name for task in score.sets.potential)),
+        ("Potential passes waiting on required tasks", _names(score.waiting)),
+    ]
+    items = "\n".join(f"<dt>{_e(label)}</dt><dd>{_e(value)}</dd>" for label, value in rows)
+    return f'<dl id="today">\n{items}\n</dl>'
+
+
+def _names(names) -> str:
+    listed = list(names)
+    return ", ".join(listed) if listed else "none"
+
+
+def _attempt_table(rows: Sequence[Attempt], today) -> str:
     if not rows:
         return "<p>No attempts yet.</p>"
-    body = "\n".join(_attempt_row(attempt) for attempt in rows)
+    body = "\n".join(_attempt_row(attempt, today) for attempt in rows)
     return (
         "<table>\n"
         "<thead>\n"
-        "<tr><th>Task</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Duration</th></tr>\n"
+        "<tr><th>Task</th><th>Set</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Duration</th></tr>\n"
         "</thead>\n"
         f"<tbody>\n{body}\n</tbody>\n"
         "</table>"
     )
 
 
-def _attempt_row(attempt: Attempt) -> str:
+def _attempt_row(attempt: Attempt, today) -> str:
     name = _e(attempt.task)
     return (
         "<tr>"
         f'<td><a href="/attempts/{attempt.id}">{name}</a></td>'
+        f"<td>{_e(set_label(attempt))}</td>"
         f"<td>{_e(_local(attempt.started_at))}</td>"
-        f"<td>{_e(_finished(attempt))}</td>"
-        f"<td>{_e(attempt.outcome)}</td>"
-        f"<td>{_e(_duration(attempt))}</td>"
+        f"<td>{_e(_finished(attempt, today))}</td>"
+        f"<td>{_e(outcome_label(attempt, today))}</td>"
+        f"<td>{_e(_duration(attempt, today))}</td>"
         "</tr>"
     )
 
 
-def _attempt_body(attempt: Attempt) -> str:
-    finished = _finished(attempt)
+def set_label(attempt: Attempt) -> str:
+    """Return Required, Potential, Practice, or Parent check."""
+    return _SET_LABELS.get(attempt.task_set, attempt.task_set)
+
+
+def outcome_label(attempt: Attempt, today) -> str:
+    """Return the stored outcome, or Unfinished for an attempt left open on an earlier household day."""
+    if attempt.left_open(today):
+        return UNFINISHED_LABEL
+    return attempt.outcome
+
+
+def _attempt_body(attempt: Attempt, today) -> str:
+    finished = _finished(attempt, today)
     back = f"/attempts?client={_e(attempt.client_group)}"
     parts = [
         f"<h1>{_e(attempt.task)}</h1>",
         f"<p><a href=\"{back}\">Attempts</a></p>",
         "<dl>",
         f"<dt>Client group</dt><dd>{_e(attempt.client_group)}</dd>",
+        f"<dt>Set</dt><dd>{_e(set_label(attempt))}</dd>",
         f"<dt>Started</dt><dd>{_e(_local(attempt.started_at))}</dd>",
         f"<dt>Finished</dt><dd>{_e(finished)}</dd>",
-        f"<dt>Outcome</dt><dd>{_e(attempt.outcome)}</dd>",
-        f"<dt>Duration</dt><dd>{_e(_duration(attempt))}</dd>",
+        f"<dt>Outcome</dt><dd>{_e(outcome_label(attempt, today))}</dd>",
+        f"<dt>Duration</dt><dd>{_e(_duration(attempt, today))}</dd>",
         "</dl>",
+        _reopened(attempt),
         _answers(attempt.detail),
         _record(attempt.detail),
     ]
     return _document("\n".join(part for part in parts if part), "Attempt")
+
+
+def _reopened(attempt: Attempt) -> str:
+    """Return each time he gave this attempt up and came back to it."""
+    if not attempt.reopened:
+        return ""
+    rows = []
+    for event in attempt.reopened:
+        gave_up = _event_time(event.get("gave_up"))
+        came_back = _event_time(event.get("came_back"))
+        rows.append(f"<tr><td>{_e(gave_up)}</td><td>{_e(came_back)}</td></tr>")
+    body = "\n".join(rows)
+    return (
+        "<h2>Given up and carried on</h2>\n"
+        "<table>\n<thead>\n<tr><th>Gave up</th><th>Came back</th></tr>\n</thead>\n"
+        f"<tbody>\n{body}\n</tbody>\n</table>"
+    )
+
+
+def _event_time(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    try:
+        return _local(datetime.fromisoformat(value))
+    except ValueError:
+        return value
 
 
 def _answers(detail: Mapping) -> str:
@@ -336,13 +422,17 @@ def _local(moment: datetime) -> str:
     return f"{format_day(moment.date())}, {clock}"
 
 
-def _finished(attempt: Attempt) -> str:
+def _finished(attempt: Attempt, today) -> str:
+    if attempt.left_open(today):
+        return "never finished"
     if attempt.finished_at is None:
         return "still going"
     return _local(attempt.finished_at)
 
 
-def _duration(attempt: Attempt) -> str:
+def _duration(attempt: Attempt, today) -> str:
+    if attempt.left_open(today):
+        return ""
     if attempt.finished_at is None:
         return "still going"
     started = attempt.started_at

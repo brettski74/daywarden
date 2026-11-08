@@ -30,6 +30,8 @@ OBSERVATION_URL = os.environ.get(
     "OBSERVATION_URL", "http://observations:8091/v1/observations"
 )
 BYPASS_PATH = Path(os.environ.get("BYPASS_PATH", "/etc/daywarden/bypass.txt"))
+# The policy server's names. A change needs a restart of this container.
+PARENT_NAMES = bypass.parent_names(os.environ.get("PARENT_NAMES"))
 TIMEOUT = float(os.environ.get("DECISION_TIMEOUT", "2"))
 # How often an open flow is checked for bytes that are ready to report.
 _POLL_SECONDS = 0.2
@@ -107,8 +109,10 @@ class DecisionEnforcer:
         if flow.request.method.upper() == "CONNECT":
             return
         host = flow.request.pretty_host
-        if bypass.is_bypassed(host, bypass.load_patterns(BYPASS_PATH)):
+        if bypass.is_bypassed(host, bypass.load_patterns(BYPASS_PATH), PARENT_NAMES):
             ctx.log.info(f"bypass {flow.request.method} {host}")
+            if bypass.is_parent(host, PARENT_NAMES):
+                _name_the_child(flow)
             self._arm(flow)
             return
         outcome = _ask(flow)
@@ -121,12 +125,7 @@ class DecisionEnforcer:
         action = outcome["action"]
         if action == "allow":
             ctx.log.info(f"allow {flow.request.method} {host}")
-            peer = flow.client_conn.peername
-            if peer and peer[0]:
-                # The task site is fetched by the proxy, so the origin would
-                # otherwise see the proxy's address. The child IP is the one
-                # the decision was made for.
-                flow.request.headers["X-Daywarden-Client"] = peer[0]
+            _name_the_child(flow)
             self._arm(flow)
             return
         if action == "deny":
@@ -313,6 +312,14 @@ class DecisionEnforcer:
             host = "?"
         print(f"cut {host}", flush=True)
         ctx.log.info(f"cut {host}")
+
+
+def _name_the_child(flow: http.HTTPFlow) -> None:
+    # The task site is fetched by the proxy, so the origin would otherwise
+    # see the proxy's address. The child IP is the one the request came from.
+    peer = flow.client_conn.peername
+    if peer and peer[0]:
+        flow.request.headers["X-Daywarden-Client"] = peer[0]
 
 
 def _live_handler(flow: http.HTTPFlow):

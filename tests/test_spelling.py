@@ -19,7 +19,6 @@ from conftest import write_alphabet, write_wav  # noqa: E402
 
 from policy import spelling  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
-from policy.engine import decide  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
 from policy.review import respond_attempt  # noqa: E402
@@ -40,7 +39,7 @@ from policy.spelling import (  # noqa: E402
     untoken,
 )
 from policy.store import PolicyStore  # noqa: E402
-from policy.task_page import MUST_FINISH, respond_task  # noqa: E402
+from policy.task_page import MUST_FINISH, respond_task, task_media  # noqa: E402
 from policy.tasks import AttemptStore  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
@@ -698,7 +697,6 @@ class Quiz:
             method=method,
             path="/tasks/words",
             client_ip=YOUNGER,
-            cookie=None,
             now=now,
             query=query,
             body=body,
@@ -940,29 +938,18 @@ def test_giving_up_shows_the_missed_words_including_the_one_left_showing(tmp_pat
     assert "Words to practise" in page.body
     assert f"<li>{missed}</li>" in page.body
     assert f"<li>{showing}</li>" in page.body
-    assert 'const next = "https://tasks.example/tasks/sums";' in page.body
-    assert any(name == "set-cookie" for name, _value in page.headers)
+    assert 'const next = "https://tasks.example/tasks/choose";' in page.body
 
 
-def test_giving_up_with_nothing_missed_and_nothing_else_moves_straight_on(tmp_path, data):
+def test_giving_up_with_nothing_missed_goes_straight_to_the_selector(tmp_path, data):
     _words(data, "spelling/current", "rope", "cat")
     quiz = Quiz(tmp_path)
     quiz.open(START)
     page = quiz.give_up(START + timedelta(seconds=2))
     assert quiz.attempt().outcome == "abandoned"
     assert "Words to practise" not in page.body
-    assert "nothing else available" in page.body
-
-
-def test_giving_up_with_missed_words_and_nothing_else_says_so_after_continue(tmp_path, data):
-    _words(data, "spelling/current", "rope", "cat")
-    quiz = Quiz(tmp_path)
-    quiz.open(START)
-    quiz.spell(False)
-    page = quiz.give_up(quiz.now)
-    assert "Words to practise" in page.body
-    assert "const next = null;" in page.body
-    assert '<p id="nothing" hidden>There is nothing else available right now.</p>' in page.body
+    assert page.status == 302
+    assert ("location", "https://tasks.example/tasks/choose") in page.headers
 
 
 def test_a_required_spelling_task_keeps_its_progress_when_he_tries_to_give_up(tmp_path, data):
@@ -1025,39 +1012,22 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path,
 # Audio through the proxy and the service
 
 
-@pytest.mark.parametrize(
-    ("rules", "expected"),
-    [
-        (
-            """\
-  gate:
-    - condition: always
-      when_true: { action: redirect, location: revision_task }
-""",
-            {"action": "allow"},
-        ),
-        (
-            """\
-  gate:
-    - condition: always
-      when_true: { action: deny, message: "Closed." }
-""",
-            {"action": "deny", "status": 403, "message": "Closed."},
-        ),
-    ],
-    ids=["revision-redirect", "denied"],
-)
-def test_word_audio_follows_the_rule_that_lets_the_task_page_load(tmp_path, data, rules, expected):
+def test_word_audio_is_served_for_a_task_passed_today_but_not_for_another_groups_task(tmp_path, data):
     _words(data, "spelling/current", "rope")
-    quiz = Quiz(tmp_path, rules=rules)
+    other = """\
+  theirs:
+    type: spelling
+    group: default
+    pass_cooldown: 0
+"""
+    quiz = Quiz(tmp_path, extra=other)
+    quiz.store.record("younger", "words", "pass", START - timedelta(hours=1))
+    assert not quiz.store.task_sets(quiz.policy.tasks, "younger", START.date()).available
     name = token("rope", CURRENT, random.Random(1)) + ".wav"
-    with AttemptStore(":memory:") as store:
-        audio = decide(
-            quiz.policy, client_ip=YOUNGER, url=f"https://tasks.example/tasks/words/audio/{name}", at=START, attempts=store
-        )
-        page = decide(quiz.policy, client_ip=YOUNGER, url="https://tasks.example/tasks/words", at=START, attempts=store)
-    assert audio.decision == expected
-    assert page.decision["action"] == expected["action"]
+    found = task_media(quiz.policy, quiz.store, path=f"/tasks/words/audio/{name}", client_ip=YOUNGER, now=START)
+    assert found is not None and found.name.startswith("rope")
+    elsewhere = task_media(quiz.policy, quiz.store, path=f"/tasks/theirs/audio/{name}", client_ip=YOUNGER, now=START)
+    assert elsewhere is None
 
 
 def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch):

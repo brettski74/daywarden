@@ -405,8 +405,8 @@ def test_parent_check_ignores_dates_skips_and_the_pass_cap():
         assert store.is_eligible(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(2))
         assert not store.is_eligible(task, "older", _day(2))
-        store.record("younger", task.name, "pass", _at(2))
-        store.record("younger", task.name, "pass", _at(2, 17))
+        store.record("younger", task.name, "pass", _at(2), task_set="parent_check")
+        store.record("younger", task.name, "pass", _at(2, 17), task_set="parent_check")
         assert store.passes_on("younger", _day(2)) == 2
         assert store.is_eligible(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(2))

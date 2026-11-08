@@ -624,7 +624,8 @@ def test_giving_up_an_optional_task_closes_the_question_and_abandons(tmp_path):
     quiz.open(START)
     quiz.ask(START)
     page = quiz.give_up(START + timedelta(seconds=2))
-    assert page.status == 200
+    assert page.status == 302
+    assert ("location", "https://tasks.example/tasks/choose") in page.headers
     abandoned = quiz.store.attempts("younger", "sums")[-1]
     assert abandoned.outcome == "abandoned"
     assert abandoned.detail["questions"][-1]["outcome"] == "timeout"
@@ -712,7 +713,7 @@ def test_the_shipped_sets_have_audio_for_every_outcome():
     - condition: always
       when_true: { action: redirect, location: revision_task }
 """,
-            {"action": "allow"},
+            {"action": "redirect", "status": 302, "location": "https://tasks.example/tasks/next"},
         ),
         (
             """\
@@ -725,7 +726,7 @@ def test_the_shipped_sets_have_audio_for_every_outcome():
     ],
     ids=["allowed-site", "revision-redirect", "denied"],
 )
-def test_sound_files_follow_the_rule_that_lets_the_task_page_load(tmp_path, rules, expected):
+def test_a_policy_server_url_that_reaches_the_decision_api_is_judged_like_any_other(tmp_path, rules, expected):
     sites = """\
 site_groups:
   tasks:
@@ -733,17 +734,10 @@ site_groups:
     patterns: ["tasks.example"]
 """
     policy = _policy(tmp_path, _body(), rules=rules, sites=sites)
-    with AttemptStore(":memory:") as store:
-        sound = decide(
-            policy,
-            client_ip=YOUNGER,
-            url="https://tasks.example/static/sounds/correct/cha-ching.mp3",
-            at=START,
-            attempts=store,
-        )
-        page = decide(policy, client_ip=YOUNGER, url="https://tasks.example/tasks/sums", at=START, attempts=store)
+    sound = decide(policy, client_ip=YOUNGER, url="https://tasks.example/static/sounds/correct/cha-ching.mp3", at=START)
+    page = decide(policy, client_ip=YOUNGER, url="https://tasks.example/tasks/sums", at=START)
     assert sound.decision == expected
-    assert page.decision["action"] == expected["action"]
+    assert page.decision == expected
 
 
 def test_the_service_serves_the_sounds_and_runs_a_question(tmp_path, monkeypatch):
@@ -897,7 +891,6 @@ class Quiz:
             method=method,
             path="/tasks/sums",
             client_ip=YOUNGER,
-            cookie=None,
             now=now,
             query=query,
             body=body,
