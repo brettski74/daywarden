@@ -42,7 +42,11 @@ PICKER_PATH = "/tasks/next"
 CHOOSER_PATH = "/tasks/choose"
 _RESERVED = (PICKER_PATH, CHOOSER_PATH)
 MEDIA_SEGMENT = "/audio/"
-DEFAULT_PUBLISHED_PORT = 8090
+# The Compose defaults: PORT_BASE 8080, and the policy pages and the
+# auto-configuration file 4 and 8 above it.
+DEFAULT_PROXY_PORT = 8080
+DEFAULT_PUBLISHED_PORT = 8084
+DEFAULT_PROXY_CONFIG_PORT = 8088
 # Compose mounts the machine's /etc/hostname here. The container's own
 # hostname is an id such as 1c45a70451e1, which clients do not use.
 HOST_HOSTNAME = Path("/etc/host-hostname")
@@ -53,16 +57,35 @@ def published_port() -> int:
 
     That is ``POLICY_PORT``, the host port Compose publishes onto the
     container's HTTPS listener. It is not the port the process binds. An
-    unset variable uses the Compose default, 8090.
+    unset variable uses the Compose default, 8084.
     """
-    raw = os.environ.get("POLICY_PORT", "").strip()
+    return _port_setting("POLICY_PORT", DEFAULT_PUBLISHED_PORT)
+
+
+def proxy_port() -> int:
+    """Return ``PROXY_PORT``, the host port browsers use for the proxy."""
+    return _port_setting("PROXY_PORT", DEFAULT_PROXY_PORT)
+
+
+def proxy_config_port() -> int:
+    """Return ``PROXY_CONFIG_PORT``, the host port that serves the proxy auto-config file."""
+    return _port_setting("PROXY_CONFIG_PORT", DEFAULT_PROXY_CONFIG_PORT)
+
+
+def proxy_config_url(policy: Policy) -> str:
+    """Return the proxy auto-config URL a browser is given."""
+    return f"http://{task_host(policy)}:{proxy_config_port()}/proxy.pac"
+
+
+def _port_setting(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
     if not raw:
-        return DEFAULT_PUBLISHED_PORT
+        return default
     if not raw.isdecimal():
-        raise ValueError("POLICY_PORT must be a whole number from 1 to 65535")
+        raise ValueError(f"{name} must be a whole number from 1 to 65535")
     value = int(raw)
     if not 1 <= value <= 65535:
-        raise ValueError("POLICY_PORT must be a whole number from 1 to 65535")
+        raise ValueError(f"{name} must be a whole number from 1 to 65535")
     return value
 
 

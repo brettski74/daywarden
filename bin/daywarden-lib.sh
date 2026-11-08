@@ -5,8 +5,10 @@
 # repository for bin/ in a clone, and ~/daywarden for an installed package.
 # Both hold docker-compose.yml, .env, and config/.
 
-DW_SERVICES=(decisions observations proxy)
+DW_SERVICES=(decisions observations proxy autoconfig)
 DW_UNIT=daywarden.service
+DW_PORT_KEYS=(PROXY_PORT POLICY_PORT PROXY_CONFIG_PORT)
+DW_PORT_PROBLEMS=()
 
 dw_user() {
     printf '%s\n' "${USER:-$(id -un)}"
@@ -39,12 +41,104 @@ dw_require_installed() {
 }
 
 # Check the install, move to root so relative paths in .env resolve the way
-# Compose resolves them, and load .env.
+# Compose resolves them, load .env, and work out the ports. A port mistake
+# stops only the commands that call dw_require_ports.
 dw_prepare() {
     dw_require_installed "$1"
     cd -- "$root"
     dw_load_env "$root/.env"
+    dw_ports || true
+    dw_resolver
     DW_PROJECT=${COMPOSE_PROJECT_NAME:-daywarden}
+}
+
+# Work out and export PROXY_PORT, POLICY_PORT, and PROXY_CONFIG_PORT, so
+# Compose, including config --hash, sees the ports dw uses. A port set in
+# .env or the environment wins. The others are PORT_BASE, PORT_BASE+4, and
+# PORT_BASE+8, and PORT_BASE is 8080 when it is left out. Compose cannot add
+# numbers, so this is the one place that does. Each mistake goes in
+# DW_PORT_PROBLEMS, and false when there is one.
+dw_ports() {
+    local base=${PORT_BASE:-8080} key value offset=0
+    local -A seen=()
+    DW_PORT_PROBLEMS=()
+    if [[ $base =~ ^[0-9]{1,5}$ ]] && [ "$((10#$base))" -ge 1 ] && [ "$((10#$base))" -le 65535 ]; then
+        base=$((10#$base))
+    else
+        DW_PORT_PROBLEMS+=("PORT_BASE must be a whole number from 1 to 65535, such as 8080, not '$base'.")
+        base=""
+    fi
+    for key in "${DW_PORT_KEYS[@]}"; do
+        value=${!key:-}
+        if [ -z "$value" ]; then
+            if [ -z "$base" ]; then
+                offset=$((offset + 4))
+                continue
+            fi
+            value=$((base + offset))
+            if [ "$value" -gt 65535 ]; then
+                DW_PORT_PROBLEMS+=("PORT_BASE $base puts $key at $base+$offset = $value, above 65535.")
+                offset=$((offset + 4))
+                continue
+            fi
+        elif [[ $value =~ ^[0-9]{1,5}$ ]] && [ "$((10#$value))" -ge 1 ] && [ "$((10#$value))" -le 65535 ]; then
+            value=$((10#$value))
+        else
+            DW_PORT_PROBLEMS+=("$key must be a whole number from 1 to 65535, not '$value'.")
+            offset=$((offset + 4))
+            continue
+        fi
+        offset=$((offset + 4))
+        if [ -n "${seen[$value]:-}" ]; then
+            DW_PORT_PROBLEMS+=("${seen[$value]} and $key are both $value. Each port must be different.")
+        fi
+        seen[$value]=$key
+        export "$key=$value"
+    done
+    [ ${#DW_PORT_PROBLEMS[@]} -eq 0 ]
+}
+
+# Print each port mistake and what was not done, such as "Nothing was
+# restarted.". False when there is one.
+dw_require_ports() {
+    local problem
+    [ ${#DW_PORT_PROBLEMS[@]} -eq 0 ] && return 0
+    echo "dw: the ports in $root/.env cannot be used. $1" >&2
+    for problem in "${DW_PORT_PROBLEMS[@]}"; do
+        echo "  $problem" >&2
+    done
+    return 1
+}
+
+# Export the directory that holds this machine's resolver configuration,
+# and the file's name in it. NetworkManager and systemd-resolved replace the
+# file rather than edit it, so the auto-configuration service mounts the
+# directory. A symlink, such as into /run/systemd/resolve, is followed.
+dw_resolver() {
+    local file
+    file=$(readlink -f -- "${DAYWARDEN_ETC:-/etc}/resolv.conf" 2>/dev/null) || file=""
+    if [ -n "$file" ] && [ -d "$(dirname -- "$file")" ]; then
+        export RESOLV_CONF_DIR="${RESOLV_CONF_DIR:-$(dirname -- "$file")}"
+        export RESOLV_CONF_NAME="${RESOLV_CONF_NAME:-$(basename -- "$file")}"
+    fi
+}
+
+dw_machine_hostname() {
+    local name=""
+    [ -r "${DAYWARDEN_ETC:-/etc}/hostname" ] && name=$(tr -d ' \t\r\n' <"${DAYWARDEN_ETC:-/etc}/hostname")
+    [ -n "$name" ] || name=$(uname -n)
+    printf '%s\n' "$name"
+}
+
+# Print the proxy auto-config URL. The running auto-configuration service
+# knows the policy's hostname. Without it, this machine's hostname is used.
+dw_config_url() {
+    local url=""
+    if dw_running autoconfig; then
+        url=$(dw_compose exec -T autoconfig python -m policy.autoconfig --url 2>/dev/null) || url=""
+    fi
+    [ -n "$url" ] || url="http://$(dw_machine_hostname):${PROXY_CONFIG_PORT:-8088}/proxy.pac"
+    printf '%s\n' "$url"
 }
 
 dw_compose() {
@@ -139,6 +233,7 @@ dw_check_policy() {
 # healthy. The argument ends the count line when the policy has errors,
 # such as "daywarden was not started.".
 dw_compose_up() {
+    dw_require_ports "$1" || return 1
     dw_make_dirs || return 1
     dw_check_policy run --quiet --refused "$1" || return 1
     dw_start_checked

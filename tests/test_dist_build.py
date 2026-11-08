@@ -16,9 +16,9 @@ def compose():
 
 def test_the_installed_stack_runs_the_packaged_images_and_never_builds_or_pulls(compose):
     services = compose["services"]
-    assert set(services) == {"decisions", "observations", "proxy"}
-    assert services["decisions"]["image"] == "daywarden-policy:20261105-184500"
-    assert services["observations"]["image"] == "daywarden-policy:20261105-184500"
+    assert set(services) == {"decisions", "observations", "proxy", "autoconfig"}
+    for name in ("decisions", "observations", "autoconfig"):
+        assert services[name]["image"] == "daywarden-policy:20261105-184500"
     assert services["proxy"]["image"] == "daywarden-proxy:20261105-184500"
     for service in services.values():
         assert "build" not in service

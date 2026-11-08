@@ -242,7 +242,7 @@ Attempts stored before task sets existed are treated as required. They count for
 
 ### Direct task URLs
 
-Any configured task opens at its own URL, such as a bookmark of `https://garden:8090/tasks/spelling`, whatever the task sets say: a task passed today, cooling down, at `max_passes`, before its `available_from`, or optional while a required task is outstanding. The page serves its quiz requests and its audio too. A name that is not a task, a task assigned to another client group, and a `parent_check` task send him to the picker. Nothing a child sends records a parent check.
+Any configured task opens at its own URL, such as a bookmark of `https://garden:8084/tasks/spelling`, whatever the task sets say: a task passed today, cooling down, at `max_passes`, before its `available_from`, or optional while a required task is outstanding. The page serves its quiz requests and its audio too. A name that is not a task, a task assigned to another client group, and a `parent_check` task send him to the picker. Nothing a child sends records a parent check.
 
 ### Try a different task
 
@@ -585,6 +585,20 @@ A parameter that belongs to another condition is a load error. An unknown condit
 
 On an `always` rule the false action is never used. Leave it out and it defaults to continue.
 
+## Proxy configuration
+
+`proxy_configuration` is optional, and may be in any file of the configuration, once. It decides which hosts the proxy auto-configuration file sends direct, so a browser opens them without the proxy:
+
+```yaml
+proxy_configuration:
+  direct:
+    local_subnets: false
+    local_domains: false
+    extra: ["*.home.arpa", 10.8.0.0/16]
+```
+
+`direct` holds five switches, `localhost`, `plain_host_names`, `policy_server`, `local_subnets`, and `local_domains`, each `true` or `false`, and an `extra` list. A switch left out is on, and the whole section left out means every switch on and no `extra`. Each `extra` item is a host name, a host glob with `*` and `?` as in `config/bypass.txt`, a domain written with a leading dot that also covers every name under it, an IPv4 or IPv6 address, or a subnet in CIDR form. An unknown key, a switch that is not `true` or `false`, and an item that is none of those forms, such as `10.8.0.0/33` or `http://nas/`, are load errors, listed with the rest. What each switch covers is in [docs/child-computer.md](child-computer.md#proxy). The decisions never see a direct host, so no rule applies to it.
+
 ## Decision log
 
 A decision log line names the client group and the site group, each of which may be `default`, and names the rule set and rule index that produced the decision. Inline sets use their path. The line also carries the allow, deny, or redirect that was returned to the addon. When a top-level continue became a deny, the line says that.
@@ -773,7 +787,7 @@ A load that fails lists every error it can find, not only the first, so every mi
 
 ## Applying an edit
 
-`dw reload` applies an edit to the running decisions and observations services, without restarting a container. It checks the policy first, with the same code the services run, and changes nothing while there is an error. A good policy is used for the next request through the proxy. That covers every setting in the policy files: time windows, rules, site group patterns, client group addresses, quotas, tasks, `hostname`, `timezone`, and `bucket_length`. A reload keeps:
+`dw reload` applies an edit to the running decisions, observations, and autoconfig services, without restarting a container. It checks the policy first, with the same code the services run, and changes nothing while there is an error. A good policy is used for the next request through the proxy, and the next fetch of the proxy auto-configuration file. That covers every setting in the policy files: time windows, rules, site group patterns, client group addresses, quotas, tasks, `hostname`, `timezone`, `bucket_length`, and `proxy_configuration`. A reload keeps:
 
 - **Attempts in progress.** A quiz run keeps the questions, words, deadlines, and tries it started with, and it is scored and recorded as it would be after `dw down` and `dw up` with the same edit. The next attempt that starts uses the new task settings. A task the edit adds can be started, and one it removes is no longer offered.
 - **Transfers already running.** A download or video keeps the deadline and byte ceiling recorded when it was allowed. A reload does not make it walk the rules early. When it reaches them, it is walked again with the reloaded policy, using the client group and site group from its approval.

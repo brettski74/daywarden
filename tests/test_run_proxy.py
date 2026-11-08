@@ -66,6 +66,7 @@ class ProxyStack:
         self.env = os.environ.copy()
         self.env["PROXY_PORT"] = str(port)
         self.env["POLICY_PORT"] = str(_free_port())
+        self.env["PROXY_CONFIG_PORT"] = str(_free_port())
         self.env["PARENT_PASSWORD"] = ""
         self.env["CA_VOLUME_PATH"] = str(ca_dir)
         self.env["DAYWARDEN_CONFIG_DIR"] = str(config_dir)
@@ -179,6 +180,19 @@ def test_listen_port_and_ca_path_come_from_configuration(tmp_path):
     command = service["command"]
     assert command[0] == "mitmdump"
     assert "regular" in command
+
+
+def test_a_bare_compose_up_publishes_the_ports_dw_uses_by_default(tmp_path):
+    env = {key: value for key, value in os.environ.items() if key not in ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT", "PORT_BASE")}
+    env["CA_VOLUME_PATH"] = str(tmp_path)
+    completed = _run(["docker", "compose", "-p", "daywarden-config", "config", "--format", "json"], env=env, timeout=30)
+    services = json.loads(completed.stdout)["services"]
+    published = {name: [str(item["published"]) for item in service.get("ports", [])] for name, service in services.items()}
+    assert published == {"decisions": ["8084"], "observations": [], "proxy": ["8080"], "autoconfig": []}
+    assert services["decisions"]["environment"]["POLICY_PORT"] == "8084"
+    assert services["autoconfig"]["network_mode"] == "host"
+    assert services["autoconfig"]["environment"]["PROXY_CONFIG_PORT"] == "8088"
+    assert services["autoconfig"]["environment"]["PROXY_PORT"] == "8080"
 
 
 def test_every_service_has_mounts_docker_can_create(tmp_path):

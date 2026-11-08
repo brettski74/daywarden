@@ -1,5 +1,8 @@
 # Start with: make up
-# The listen port and the CA directory are set in .env.
+# The ports and the CA directory are set in .env. dw works out PROXY_PORT,
+# POLICY_PORT, and PROXY_CONFIG_PORT from PORT_BASE, because Compose cannot
+# add numbers. The defaults here are the ports for PORT_BASE 8080, so a bare
+# docker compose up publishes the same ports as dw up with the defaults.
 # Hosts that skip authorization are listed in config/bypass.txt, and the
 # proxy adds the policy server's names from PARENT_NAMES.
 # The decisions service is the policy service. The household policy is
@@ -21,6 +24,8 @@
 # `python -m policy.accounts` inside the decisions container. The decision
 # API stays on plain HTTP inside the compose network. It does not show the
 # report and does not edit policy.
+# The autoconfig service serves the proxy auto-config file browsers fetch,
+# http://<this machine>:PROXY_CONFIG_PORT/proxy.pac, also as /wpad.dat.
 
 name: daywarden
 
@@ -40,13 +45,15 @@ services:
       PARENT_LIFETIME: ${PARENT_LIFETIME:-180m}
       PARENT_HTTPS_PORT: "8443"
       # Host port clients use. Task URLs use this, not the bind port 8443.
-      POLICY_PORT: ${POLICY_PORT:-8090}
+      POLICY_PORT: ${POLICY_PORT:-8084}
+      # For the configuration URL in the policy summary.
+      PROXY_CONFIG_PORT: ${PROXY_CONFIG_PORT:-8088}
       DAYWARDEN_DATA_DIR: /var/lib/daywarden/data
     ports:
       # Clients open https://<this machine>:POLICY_PORT/usage. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
       # 8443 is where the HTTPS listener is bound.
-      - "${POLICY_PORT:-8090}:8443"
+      - "${POLICY_PORT:-8084}:8443"
     volumes:
       - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
       - policy-data:/var/lib/daywarden
@@ -144,7 +151,7 @@ services:
       PARENT_NAMES: ${PARENT_NAMES}
       DECISION_TIMEOUT: "2"
     ports:
-      - "${PROXY_PORT}:8080"
+      - "${PROXY_PORT:-8080}:8080"
     volumes:
       - "${CA_VOLUME_PATH}:/home/mitmproxy/.mitmproxy"
       - ./proxy:/opt/daywarden:ro
@@ -164,6 +171,54 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+    restart: unless-stopped
+
+  autoconfig:
+    build: ./policy
+    image: daywarden-policy:local
+    pull_policy: build
+    command:
+      - python
+      - -m
+      - policy.autoconfig
+    # The host's network, so the file is built from the server's own
+    # interfaces and addresses, and PROXY_CONFIG_PORT is bound directly.
+    network_mode: host
+    # It writes nothing and binds a port above 1024. As nobody, it cannot
+    # read anything under the host's /etc that only root can.
+    user: "65534:65534"
+    environment:
+      POLICY_FILE: ${POLICY_FILE:-/etc/daywarden/policy.yaml}
+      PROXY_CONFIG_PORT: ${PROXY_CONFIG_PORT:-8088}
+      # The proxy port the file names.
+      PROXY_PORT: ${PROXY_PORT:-8080}
+      # The policy server's names, which the file sends direct.
+      PARENT_NAMES: ${PARENT_NAMES}
+      MACHINE_HOSTNAME: /etc/host-hostname
+      RESOLV_CONF: /etc/host-resolver/${RESOLV_CONF_NAME:-resolv.conf}
+    volumes:
+      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
+      - /etc/hostname:/etc/host-hostname:ro
+      # The directory that holds the host's resolv.conf, read on every fetch
+      # for the search domains. NetworkManager and systemd-resolved replace
+      # the file, which a single-file mount would not see. dw follows a
+      # resolv.conf symlink, such as into /run/systemd/resolve.
+      - type: bind
+        source: ${RESOLV_CONF_DIR:-/etc}
+        target: /etc/host-resolver
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import os, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:" + os.environ["PROXY_CONFIG_PORT"] + "/proxy.pac", method="HEAD"), timeout=2)'
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
     restart: unless-stopped
 
 volumes:

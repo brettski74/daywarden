@@ -1,13 +1,16 @@
 """Ask the service in this container to reload the policy: python -m policy.reload
 
-``dw reload`` runs this with ``docker compose exec`` in the decisions and the
-observations containers, because each service accepts a reload only from
-its own loopback address. For the decisions service it prints the summary
-of the policy now in force, then any warnings. A refused reload prints the
-count line and every error to stderr and exits 1, and the service keeps the
-policy it had.
+``dw reload`` runs this with ``docker compose exec`` in the decisions, the
+observations, and the auto-configuration containers. The decisions and
+observations services accept a reload only from their own loopback address.
+The auto-configuration service shares the host's network, where a reverse
+proxy on the server also comes from loopback, so it takes a reload only
+through a Unix socket inside its container. For the decisions service this
+prints the summary of the policy now in force, then any warnings. A refused
+reload prints the count line and every error to stderr and exits 1, and the
+service keeps the policy it had.
 
-Run with: python -m policy.reload --service decisions|observations [--host-dir DIR]
+Run with: python -m policy.reload --service decisions|observations|autoconfig [--host-dir DIR]
 """
 
 from __future__ import annotations
@@ -18,9 +21,11 @@ import os
 import sys
 import urllib.request
 
+from policy import autoconfig
 from policy.check import error_lines, warning_lines
 
 TIMEOUT_SECONDS = 60
+SERVICES = ("decisions", "observations", "autoconfig")
 
 
 def port_for(service: str) -> int:
@@ -29,15 +34,22 @@ def port_for(service: str) -> int:
     return int(os.environ.get("OBSERVATION_PORT", "8091"))
 
 
+def ask(service: str) -> dict:
+    """Ask one service to reload and return its answer."""
+    if service == "autoconfig":
+        return autoconfig.ask("reload", timeout=TIMEOUT_SECONDS)
+    request = urllib.request.Request(f"http://127.0.0.1:{port_for(service)}/v1/reload", data=b"", method="POST")
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        return json.loads(response.read())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m policy.reload", description="Reload the household policy.")
-    parser.add_argument("--service", choices=("decisions", "observations"), required=True)
+    parser.add_argument("--service", choices=SERVICES, required=True)
     parser.add_argument("--host-dir", help="the host directory mounted at /etc/daywarden, for the paths shown")
     args = parser.parse_args(argv)
-    request = urllib.request.Request(f"http://127.0.0.1:{port_for(args.service)}/v1/reload", data=b"", method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-            answer = json.loads(response.read())
+        answer = ask(args.service)
     except (OSError, ValueError) as error:
         print(f"dw: the {args.service} service did not answer the reload: {error}", file=sys.stderr)
         return 1
