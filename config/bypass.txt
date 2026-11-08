@@ -4,12 +4,16 @@
 # Lines starting with # are comments.
 #
 # Sample list for the household policy in policy.yaml. These are the
-# school hosts, plus the policy server named by hostname.
+# school hosts, plus the policy server's names.
 # Those pages keep working when the policy service is down. Edit this file
 # and policy.yaml together. Nothing copies one into the other.
 
-# Policy server. The hostname in policy.yaml.
+# Policy server. The proxy also forwards every name in PARENT_NAMES in .env
+# without a decision, but reads that list only when it starts. This file is
+# read on every request, so list the same names here as well. dw check warns
+# about a name in PARENT_NAMES that this file does not match.
 garden
+garden.bakuna.net
 
 # School work. The same host globs as that group.
 classroom.google.com

@@ -1,6 +1,7 @@
 # Start with: make up
 # The listen port and the CA directory are set in .env.
-# Hosts that skip authorization are listed in config/bypass.txt.
+# Hosts that skip authorization are listed in config/bypass.txt, and the
+# proxy adds the policy server's names from PARENT_NAMES.
 # The decisions service is the policy service. The household policy is
 # config/policy.yaml. Client groups, site groups, and rule sets are loaded
 # from that file each time the service starts, and again on dw reload,
@@ -138,6 +139,9 @@ services:
       OBSERVATION_INTERVAL: ${OBSERVATION_INTERVAL:-60}
       OBSERVATION_TIMEOUT: ${OBSERVATION_TIMEOUT:-2}
       BYPASS_PATH: /etc/daywarden/bypass.txt
+      # The policy server's names are forwarded without a decision, the same
+      # as a host in bypass.txt, and carry the child's address.
+      PARENT_NAMES: ${PARENT_NAMES}
       DECISION_TIMEOUT: "2"
     ports:
       - "${PROXY_PORT}:8080"

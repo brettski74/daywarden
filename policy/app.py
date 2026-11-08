@@ -133,7 +133,6 @@ def create_app() -> FastAPI:
             parsed.client_ip,
             parsed.url,
             at,
-            attempts,
         )
         if parsed.flow_id and trace.decision.get("action") == "allow":
             usage_store.save_transfer(
@@ -221,7 +220,6 @@ def create_app() -> FastAPI:
             method=request.method,
             path=path,
             client_ip=client_ip,
-            cookie=request.headers.get("cookie"),
             now=now.clock.local(),
             query=_query(request, ("do",)),
             body=raw,
@@ -301,6 +299,7 @@ def create_app() -> FastAPI:
             now=now.clock.local(),
             attempts=attempts,
             clients=_client_names(now.policy),
+            tasks=() if now.policy is None else now.policy.tasks,
         )
 
     def _attempt_page(request: Request, raw: bytes, now: Loaded, attempt_id: str):
@@ -398,7 +397,7 @@ def _client_address(request: Request, policy: Policy | None) -> str:
     return peer
 
 
-def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at, attempts: AttemptStore):
+def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, at):
     if policy is None:
         trace = Trace(
             "default",
@@ -409,4 +408,4 @@ def _judge_for(policy: Policy | None, ledger: Ledger, client_ip: str, url: str, 
             {"action": "deny", "status": 403, "message": NO_RULE_MESSAGE},
         )
         return trace, Assumption()
-    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger, attempts=attempts)
+    return judge(policy, client_ip=client_ip, url=url, at=at, ledger=ledger)

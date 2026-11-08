@@ -21,7 +21,7 @@ from datetime import datetime
 
 from policy.hierarchy import Policy
 from policy.report import PageResponse, _e, _response
-from policy.selection import choose_task, picker_url
+from policy.selection import picker_url
 from policy.tasks import PASS, AttemptStore, household_day
 
 VISIT = "visit"
@@ -33,9 +33,8 @@ Back = Callable[[], str | None]
 
 
 def next_task_url(policy: Policy, store: AttemptStore, client_group: str, now: datetime) -> str | None:
-    """Return the picker when another task is eligible, or None when there is nothing."""
-    chosen, _ties = choose_task(policy.tasks, client_group, household_day(now), store.attempts(client_group))
-    if chosen is None:
+    """Return the picker when a task is available, or None when there is nothing."""
+    if not store.task_sets(policy.tasks, client_group, household_day(now)).available:
         return None
     return picker_url(policy)
 

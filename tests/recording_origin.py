@@ -45,6 +45,7 @@ class Handler(BaseHTTPRequestHandler):
                 "method": self.command,
                 "path": path,
                 "host": host,
+                "client": self.headers.get("X-Daywarden-Client"),
                 "body_len": len(body),
             }
         )

@@ -174,21 +174,23 @@ Every task takes these fields, whatever its type. Any other field on a task fail
 | --- | --- | --- |
 | `type` | Required | The kind of task: `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`. |
 | `group` or `groups` | Required | The client group the task is assigned to with `group`, or a list of one or more with `groups`. Use one of the two, not both. `default` means the implicit client group. |
-| `pass_cooldown` | Required | Household days after a pass before the task is offered again. |
+| `pass_cooldown` | Required | Household days after a pass before the task is offered again. A task is never offered again on the day it was passed, so 0 and 1 both mean the next day. |
 | `failure_cooldown` | No wait | Household days after a failure before the task is offered again. |
 | `available_from` | Available now | The first household day the task can be offered in yyyy-mm-dd format. |
-| `due_date` | No due date | The household day from which the task is required, until the group has passed it once. Use yyyy-mm-dd format |
-| `max_skips` | No limit | The number of times the task may be skipped before becoming a required task. A skip is counted at most once per day. |
-| `max_passes` | No limit | The maximum number of times that the task may be successfully completed by the group. Once the task has been completed enough times, it's educational value is assumed to have diminished to the point that it is not worth the child repeating it again. |
+| `due_date` | No due date | The household day from which the task is required, until the group has passed it once, at any time. A practice pass does not count. Use yyyy-mm-dd format |
+| `max_skips` | No limit | The number of skip days since the last pass at which the task becomes required. A skip is counted at most once per day. |
+| `max_passes` | No limit | The maximum number of times that the task may be successfully completed by the group. Once the task has been completed enough times, it's educational value is assumed to have diminished to the point that it is not worth the child repeating it again. Practice passes do not count, and the task still opens from a bookmark. |
 | `body` | `{}` | The settings for the task's type. A mapping. |
 
 Dates are household dates written `2026-10-31`. Cooldowns, `max_skips`, and `max_passes` are whole numbers, zero or more. Leaving out an optional field leaves that rule off. The load fails for a missing required field, an unknown client group, a group listed twice, a date in another form, and a negative or fractional number. The error names the task and the field.
 
-A cooldown of N days ends N day boundaries after the household day the attempt finished. 0 is the same day, and 1 is the next day. Only the group's last finished attempt counts. A pass starts `pass_cooldown`, a failure starts `failure_cooldown`, and an abandonment starts neither.
+A cooldown of N days ends N day boundaries after the household day the attempt finished. 0 is the same day, and 1 is the next day. Only the group's last finished attempt counts. A pass starts `pass_cooldown`, a failure starts `failure_cooldown`, and an abandonment starts neither. A task passed today is not offered again today, whatever its `pass_cooldown`.
 
-A skip day is a household day on which the group failed or abandoned the task. Several failures or abandonments on one day are one skip day. The count starts again from zero after each pass. The task becomes required once the skip days before today reach `max_skips`, so a skip earlier today does not count until tomorrow. A `max_skips` of 0 makes the task required on every day it is offered.
+A skip day is a household day on which the group failed or abandoned the task, or started an attempt and left it unfinished. Several failures, abandonments, or unfinished attempts on one day are one skip day. An unfinished attempt counts for the day it started, from the next day on, whether or not he opens the task again, so closing the browser is not a way round `max_skips`. The count starts again from zero after each pass. The task becomes required once the skip days since the last pass, before today, reach `max_skips`, so a skip earlier today does not count until tomorrow. A `max_skips` of 0 makes the task required on every day it is offered.
 
-A task is offered to a group only when it is assigned to that group, today is on or after `available_from`, the group has fewer than `max_passes` passes, and the cooldown has ended. A task that is not offered is never required, so a task at its pass limit, or still cooling down, is not required by its due date or its skip days. A pass that finishes after `max_passes` was lowered is still recorded. A `max_passes` of 0 never offers the task.
+Practice attempts, described below, count for none of these rules: they start no cooldown, are not skip days, do not count toward `max_passes`, and do not clear a due date.
+
+A task is offered to a group only when it is assigned to that group, today is on or after `available_from`, the group has fewer than `max_passes` passes, the cooldown has ended, and the group has not passed it today. A task that is not offered is never required, so a task at its pass limit, still cooling down, or passed today, is not required by its due date or its skip days. A pass that finishes after `max_passes` was lowered is still recorded. A `max_passes` of 0 never offers the task.
 
 `available_from`, `due_date`, `max_skips`, and `max_passes` do nothing on a task whose type is `parent_check`. That type is never required. Assignment and cooldowns still apply to it.
 
@@ -207,7 +209,56 @@ tasks:
 
 This spelling task is first offered on 5 October. After a pass it rests until the next day. After a failure it can be tried again at once. Two skip days since the last pass make it required, and from 11 December it is required until the group has passed it. After 20 passes it is not offered again. `younger` and `older` each keep their own cooldowns, skip days, and passes, so a pass by `older` does nothing for `younger`.
 
-The picker offers an eligible task other than `parent_check`. While any of those tasks is required, it offers only a required one. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. Giving up abandons the attempt when the task is not required, and when it is required only if another required task is eligible. The only required task stays in progress. An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass counts toward `tasks_required` and is listed with the group's other attempts. The child has no request that records one.
+### Task sets
+
+The rules use four sets of tasks, worked out for one client group on one household day.
+
+- **Configured tasks** are every task assigned to the group, other than `parent_check`, whatever their dates, cooldowns, and limits.
+- **Required tasks** are the offered tasks that are due and never passed, or whose skip days since the last pass have reached `max_skips`.
+- **Potential tasks** are the other offered tasks. A task whose `available_from` is still in the future is never offered.
+- **Available tasks** are the required tasks while there are any, and otherwise the potential tasks.
+
+Each attempt is stored with the set its task was in when the attempt started: **required**, **potential**, or **practice**. Practice means the task was in neither the required set nor the potential set, such as a repeat of a task passed today, a task cooling down, a task at `max_passes`, or a task before its `available_from`. An attempt stays in the set it started in until it finishes, including through a reload. A parent check is stored in its own set, **parent check**.
+
+### Today's score
+
+The score is what `tasks_required` compares with `required`.
+
+- A required pass scores one point on the household day it passed.
+- A potential pass scores one point on the day it passed, but only while no task is required. While a required task is outstanding, the point waits. It counts once the required tasks have been passed, or are cooling down after a failure.
+- No task scores more than once on a household day, whatever mix of required, potential, and practice passes it has.
+- A practice pass scores nothing.
+- Each parent check scores one point on the day it was recorded, even several in one day, and even while a required task is outstanding.
+
+So he can do the easier tasks first. With parts of speech due today, spelling and addition not required, and `tasks_required` of 2, passing spelling and addition scores nothing yet. If parts of speech has `failure_cooldown: 1` and he fails it, it is no longer required today, and the score becomes 2. Passing it instead makes the score 3. Without a failure cooldown, a failed task stays required, and only parent checks add to the score that day. A reload that makes another task required stops the waiting points counting again until that task is cleared. Once every task he can do is passed or cooling down, nothing he does adds a point that day. Only a parent check does.
+
+Attempts stored before task sets existed are treated as required. They count for cooldowns, skip days, `max_passes`, and due dates as they did, and a pass from earlier on the day of the upgrade scores one point.
+
+### The picker and the selector
+
+`/tasks/next` is the picker. It opens an available task. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. A redirect to `revision_task`, and "Next task" on the end screen of a quiz, go to the picker, so his revision keeps its variety. "Next task" is shown only while a task is available, and "All done for now" otherwise.
+
+`/tasks/choose` is the task selector. It lists the available tasks by name, in the order the picker would try them, and each one opens that task. When exactly one task is available it opens that task straight away. Opening it does not move the picker's rotation. When nothing is available, the picker and the selector both say "There is nothing to revise right now." A task named `next` or `choose` is served at `/tasks/work/next` or `/tasks/work/choose`.
+
+### Direct task URLs
+
+Any configured task opens at its own URL, such as a bookmark of `https://garden:8090/tasks/spelling`, whatever the task sets say: a task passed today, cooling down, at `max_passes`, before its `available_from`, or optional while a required task is outstanding. The page serves its quiz requests and its audio too. A name that is not a task, a task assigned to another client group, and a `parent_check` task send him to the picker. Nothing a child sends records a parent check.
+
+### Try a different task
+
+"Try a different task" gives up the attempt and opens the selector, which lists every available task, including the one he just left. Spelling shows its missed words first, and "Continue" goes to the selector. A required attempt cannot be given up while its task is the only required task. The page says "This task has to be finished before another one." and the attempt stays in progress. A potential or practice attempt can always be given up.
+
+### Coming back to a task he gave up
+
+When he opens a task within an hour of giving it up, on the household day the attempt started, the given-up attempt carries on, however he opens it: the selector, the picker, "Next task", or a bookmark. His count, run, and earlier answers are as he left them, and the question showing when he gave up stays a timeout. The hour is the quizzes' idle limit, counted from the give-up. Only the task's newest attempt is carried on. A carried-on attempt is in progress again, so it is not a skip day, and it keeps the set it started in. Giving it up again starts the hour again. After the hour, or on a later day, a new attempt starts. A give-up that ended in a pass or a failure, which spelling and skip counting allow when closing the open question decides the result, is finished and is not carried on. The parent's attempt page lists each time he gave the attempt up and came back.
+
+### An attempt belongs to one day
+
+An attempt left in progress, for example when he closed the tab partway through, carries on only on the household day it started. When he opens that task on a later day, the old attempt is closed as unfinished and a new one starts in the set the task is in now. Like an abandonment, an unfinished attempt scores nothing, starts no cooldown, and does not count toward `max_passes`, and it is a skip day for the day it started. A quiz already on the screen when the day ends carries on, and a pass scores on the day it passes. `/attempts` shows an attempt from an earlier day that was never finished as Unfinished.
+
+### Parent checks and the attempts page
+
+An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass scores one point and is listed with the group's other attempts. The child has no request that records one. For the chosen client group, `/attempts` shows today's score, which is the one the rules use at that moment, the required tasks still outstanding, the potential tasks still available, and the potential passes waiting on the required tasks. Each attempt there, and the attempt page it opens, says whether it was Required, Potential, Practice, or a Parent check.
 
 ### Arithmetic tasks
 
@@ -443,7 +494,7 @@ The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`.
 
 ### Sound sets
 
-Each outcome plays one sound, chosen at random from that outcome's directory in the policy image: `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`. Every audio file in the directory is equally likely. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`. Any other file, such as an attribution note, is never played. Adding or removing a sound is a file change in that directory. It takes effect when the policy image is rebuilt and the service restarts. A set with no audio plays nothing for that outcome, and the service logs a warning naming that set when it starts. The files are served at `/static/sounds/<set>/<file>` on the task host. A rule that allows the task page, or redirects to `revision_task`, allows them too. A new sound stops the one before it. The page has no mute control.
+Each outcome plays one sound, chosen at random from that outcome's directory in the policy image: `policy/static/sounds/correct/`, `incorrect/`, and `timeout/`. Every audio file in the directory is equally likely. Audio is `.mp3`, `.wav`, `.ogg`, `.opus`, or `.m4a`. Any other file, such as an attribution note, is never played. Adding or removing a sound is a file change in that directory. It takes effect when the policy image is rebuilt and the service restarts. A set with no audio plays nothing for that outcome, and the service logs a warning naming that set when it starts. The files are served at `/static/sounds/<set>/<file>` on the task host, which the proxy forwards without a decision like the task pages. A new sound stops the one before it. The page has no mute control.
 
 ## Rule sets
 
@@ -491,7 +542,9 @@ If `allow_school` allows, the request is allowed. If it continues, `younger_even
 
 An inline list has no name of its own. Logs identify it by the path of the rule that contains it. A named set is how a list is defined once and used in more than one place. A cycle in `evaluate` is a load error.
 
-`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. The scheme is always `https`. The host is the household `hostname`, or the hostname of the machine running Compose when that is left out. That name is read from the machine's `/etc/hostname`, not from the container's own hostname. The port is the household `port`, or the published policy port (`POLICY_PORT`) when that is left out. Port 443 is left off the URL. When a revision task is eligible for the classified client group, the URL is `https://<hostname>:<port>/tasks/<name>` for the chosen task. When nothing is eligible, the URL is `https://<hostname>:<port>/tasks/next`, and that page says there is nothing to revise. A request for a task the child is not meant to open is sent to one he is. The addon sees only `allow`, `deny`, or `redirect`. The policy file does not set a `revision_task` URL. A file that still sets one fails to load. Rules still redirect to the token `revision_task`.
+`revision_task` is replaced with a concrete absolute URL before the answer leaves the policy service. The scheme is always `https`. The host is the household `hostname`, or the hostname of the machine running Compose when that is left out. That name is read from the machine's `/etc/hostname`, not from the container's own hostname. The port is the household `port`, or the published policy port (`POLICY_PORT`) when that is left out. Port 443 is left off the URL. The URL is the task picker, `https://<hostname>:<port>/tasks/next`, which opens an available task for the client group, or says there is nothing to revise. The addon sees only `allow`, `deny`, or `redirect`.
+
+The policy service has no special handling for its own pages. The proxy forwards every request for a name in `PARENT_NAMES`, other than `localhost`, `127.0.0.1`, and `::1`, without asking for a decision, the same as a host in `config/bypass.txt`, and adds the child's address as `X-Daywarden-Client`, so the task pages know which child is asking. That holds at any time, including at bedtime, and while the policy service is down. The proxy reads `PARENT_NAMES` when it starts, so list the same names in `bypass.txt`, which it reads on every request. `dw check` warns about a name in `PARENT_NAMES` that `bypass.txt` does not match. A name the browser uses for the policy server that is in neither list is judged by the rules like any other URL, and a redirect to `revision_task` then loops. That name is missing from the certificate too, so add it to both. The policy file does not set a `revision_task` URL. A file that still sets one fails to load. Rules still redirect to the token `revision_task`.
 
 ### Back to the page he was sent away from
 
@@ -506,7 +559,7 @@ A request is remembered for its source address when all of these hold:
 
 The address is normalized the way client groups are matched, and each address keeps one URL: a later remembered request replaces it. The client group does not matter, so two computers in one group, or a computer in the `default` group, each have their own. The URL, the household day it was remembered on, and the time are stored in the policy database (`return_pages`), so a restart does not lose them. Hosts on the proxy bypass list never reach the policy service, so they are never remembered.
 
-When an attempt passes on a quiz page, the service takes the URL remembered for the address the task page sees, which is `X-Daywarden-Client` when the proxy forwarded the page. A URL remembered on an earlier household day is not used. It decides that URL for that address with the same rules the proxy would use at that moment. An allow is sent back with the pass, and the "Well done" screen shows "Going back to <host>", a "Go now" button, and "Next task" when another task is eligible. The page opens the URL in the same tab after 5 seconds, or at once on "Go now" or Enter. "Next task" stops the countdown. When the URL would be redirected or denied, or nothing is remembered, "Well done" is unchanged. On a spelling pass with missed words, the countdown starts when "Continue" brings up "Well done". A failure, a give-up, and a `parent_check` pass forward nothing, and they leave the URL in place.
+When an attempt passes on a quiz page, the service takes the URL remembered for the address the task page sees, which is `X-Daywarden-Client` when the proxy forwarded the page. A URL remembered on an earlier household day is not used. It decides that URL for that address with the same rules the proxy would use at that moment. An allow is sent back with the pass, and the "Well done" screen shows "Going back to <host>", a "Go now" button, and "Next task" when another task is available. The page opens the URL in the same tab after 5 seconds, or at once on "Go now" or Enter. "Next task" stops the countdown. When the URL would be redirected or denied, or nothing is remembered, "Well done" is unchanged. On a spelling pass with missed words, the countdown starts when "Continue" brings up "Well done". A failure, a give-up, and a `parent_check` pass forward nothing, and they leave the URL in place.
 
 The return is an ordinary request through the proxy, decided like any other. When the proxy allows exactly the remembered URL for that address, by the forward or because he opened it himself, the URL is forgotten. Opening it from "Well done" again needs a new redirect.
 
@@ -524,7 +577,7 @@ The return is an ordinary request through the proxy, decided like any other. Whe
 
 `group` is accepted where `groups` is stored, and `window` where `windows` is stored. Each is the convenience for a single name. The model stores a list. Specifying both the singular and the plural is a load error. An empty list is a load error.
 
-`tasks_required` is a count of passes. One stored pass scores one point. The count is the attempt rows for this client group whose outcome is `pass` and whose finish falls on the household day. A different scoring system is out of scope. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
+`tasks_required` compares today's score, described under [Today's score](#todays-score), with `required`. The score is read from the attempt rows for this client group whose outcome is `pass` and whose finish falls on the household day. The count resets at local midnight. Another client group's passes do not count. Failure and giving up do not increment it. A required count of zero is true for every client group, including `default`.
 
 There is no per-weekday count. A different count on a different day is a different rule under a different window. Per-weekday targets inside a spelling task stay on that task.
 
@@ -729,7 +782,9 @@ A load that fails lists every error it can find, not only the first, so every mi
 
 A DNS name that does not resolve keeps the addresses it had before the reload. A missing `policy.yaml` is refused, as any other error is. `dw check` runs the same check and changes nothing. `dw up`, `dw restart`, and the start at boot run it before they start anything, so a broken policy cannot start daywarden into a crash loop.
 
-`config/bypass.txt` is read by the proxy on every request, and spelling recordings when a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, and a newly installed version, change the containers themselves, and they need `dw restart`. `dw reload` names the services still running with the old settings.
+`config/bypass.txt` is read by the proxy on every request, and spelling recordings when a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, and a newly installed version, change the containers themselves, and they need `dw restart`. `dw reload` names the services still running with the old settings. A change to `PARENT_NAMES` is one of those, and the proxy is among the services named.
+
+Apply policy changes and upgrades overnight, while the child is not using the computer. A reload never changes the set of an attempt already stored, but it can make a task required partway through the day, and a potential pass he has already made then waits on that task. For example, he has passed spelling as a potential task, and a reload makes spelling and two new tasks required. Spelling was passed today, so it is not required, but its point waits until both new tasks are passed: three tasks where two would have done. A parent check makes up for it. An upgrade restarts the services, so a quiz on the screen reloads.
 
 # Usage report
 
@@ -743,7 +798,7 @@ The report can be sliced by site group, by client group, or by quota. A quota sl
 - Glob matching, as listed under site groups.
 - The household timezone, local midnight, and DNS resolution at load time.
 - Start-inclusive, end-exclusive periods, including the one-midnight rule for an end clock that is earlier than the start.
-- One completion, one point, for the classified client group and the local date.
+- One point per task per day, for the classified client group and the local date, as described under [Today's score](#todays-score).
 - Bucket length, ended buckets for time, stored bytes for volume, and no banking across midnight. Byte suffixes are `b`, `k`, `M`, `G`, and `T`.
 - A policy file that fails to load does not replace the policy already loaded.
 - Unknown keys are rejected.
@@ -753,8 +808,8 @@ The report can be sliced by site group, by client group, or by quota. A quota sl
 - **Cutting a live transfer** is [S008.6](../stories/S008.6-cut-transfer.md). The thresholds are above. The addon stops the flow when the observation response is `{"action":"cut"}`. Any failure to get that response leaves the transfer alone. A household day that starts at a clock other than midnight is [S009](../stories/S009-household-day-boundary.md), and it is not part of the cut. This is not required for the rule engine.
 - **Applying a policy edit to a transfer already in flight.** The cut re-walks when a recorded deadline or ceiling is reached, and it keeps the groups from the approval. A flag that makes every live transfer walk again on its next observation, including a fresh classification, is not built.
 - **A shared quota pool** across client groups. Balances stay per client group.
-- **Any scoring other than one point per completed task.**
-- **A proxy bypass list** so some hosts still work when the policy service is down. That list would live on the proxy, not in this policy. It is useful, and it is not part of this design. Sending every request to the policy service is acceptable.
+- **Any scoring other than the score described under [Today's score](#todays-score).**
+- **A proxy configuration URL** that tells the browser not to send the policy server's requests to the proxy at all. That is [S019](../stories/S019-proxy-configuration-url.md). Until then, `config/bypass.txt` and the proxy's `PARENT_NAMES` bypass let them through.
 
 # Where the work lives
 

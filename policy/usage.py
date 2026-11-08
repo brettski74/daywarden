@@ -43,7 +43,7 @@ from policy.engine import (
     judge_frozen,
 )
 from policy.hierarchy import DEFAULT_BUCKET_SECONDS, Policy
-from policy.tasks import ensure_attempts, pass_count
+from policy.tasks import Task, ensure_attempts, pass_count
 
 # A quota rule set is read before the access path turns a top-level continue
 # into a deny. On a quota, allow and continue both mean the traffic belongs.
@@ -207,13 +207,13 @@ class UsageStore(Ledger):
         ).fetchone()
         return int(total)
 
-    def successes(self, client_group: str, day: date) -> int:
-        """Return this client group's revision passes on the household day.
+    def successes(self, client_group: str, day: date, tasks: Sequence[Task] = ()) -> int:
+        """Return this client group's score on the household day.
 
-        One stored pass scores one point. The rows are the attempt catalogue.
+        The rows are the attempt catalogue, scored by ``policy.tasks.day_score``.
         A day with none is zero. Another client group is a different count.
         """
-        return pass_count(self.connection, client_group, day)
+        return pass_count(self.connection, client_group, day, tasks)
 
     def site_buckets(
         self,

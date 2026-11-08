@@ -1,8 +1,8 @@
 Ticket: S018
 Title: Open any task, choose the next one, and score each task once
-Status: Refined
+Status: Done
 Story Points: 21
-Last Updated: 2026-11-07 16:40:00
+Last Updated: 2026-11-07 17:05:00
 ---
 
 # User Voice
@@ -84,20 +84,20 @@ The required and potential sets, and so the available set, always leave out:
 In each of these rules, a pass, failure, or abandonment means one that is not practice. Practice is defined under
 "Practice attempts".
 
-- [ ] The picker at `/tasks/next` picks only from the available tasks. While any task is required, it sends him only to
+- [x] The picker at `/tasks/next` picks only from the available tasks. While any task is required, it sends him only to
   a required task. Its order is unchanged: a task never passed comes first, then the task whose last pass is oldest,
   and tied tasks take turns.
-- [ ] A task with `pass_cooldown: 0` that he passed earlier today is not offered again today by the picker or the
+- [x] A task with `pass_cooldown: 0` that he passed earlier today is not offered again today by the picker or the
   selector.
-- [ ] A task whose `due_date` is today, and that the group has never passed, is offered as required. A task the group
+- [x] A task whose `due_date` is today, and that the group has never passed, is offered as required. A task the group
   passed before its due date is not required on or after that date.
-- [ ] A task whose skip days since its last pass have reached `max_skips` is offered as required. Once he passes it, it
+- [x] A task whose skip days since its last pass have reached `max_skips` is offered as required. Once he passes it, it
   is no longer required.
-- [ ] A task that would be required but is in a cooldown, has reached `max_passes`, or was passed today is neither
+- [x] A task that would be required but is in a cooldown, has reached `max_passes`, or was passed today is neither
   required nor offered.
-- [ ] A task whose `available_from` is in the future is not offered by the picker or the selector, including when
+- [x] A task whose `available_from` is in the future is not offered by the picker or the selector, including when
   nothing else is available.
-- [ ] When the available set is empty, `/tasks/next` and the selector both say "There is nothing to revise right
+- [x] When the available set is empty, `/tasks/next` and the selector both say "There is nothing to revise right
   now."
 
 ## Direct task URLs
@@ -107,48 +107,48 @@ to the proxy at all, which S019 makes easy. When the browser does send them, the
 policy server without asking for a decision, as described under "The proxy". Which task he may open, and whether it
 counts, is decided by the task site itself.
 
-- [ ] He can open the page of any configured task directly, for example from a bookmark, and do the quiz. This
+- [x] He can open the page of any configured task directly, for example from a bookmark, and do the quiz. This
   includes a task he passed today, a task in a cooldown, a task at `max_passes`, a task before its `available_from`,
   and an optional task while a required task is outstanding. The task site serves the page, its quiz requests, and its
   audio. It does not send him to the picker.
-- [ ] A `parent_check` task's URL still does not open a page, and nothing a child sends records a parent check.
-- [ ] A task name that is not in the policy, or a task that is not assigned to his client group, sends him to the
+- [x] A `parent_check` task's URL still does not open a page, and nothing a child sends records a parent check.
+- [x] A task name that is not in the policy, or a task that is not assigned to his client group, sends him to the
   picker.
 
 ## The proxy
 
-- [ ] The proxy treats every name in `PARENT_NAMES` as bypassed, the same as a host in `config/bypass.txt`, except
+- [x] The proxy treats every name in `PARENT_NAMES` as bypassed, the same as a host in `config/bypass.txt`, except
   `localhost`, `127.0.0.1`, and `::1`. The two lists are merged, and a request whose host matches either one is
   forwarded without a decision, on any port. This includes while the policy service is down.
-- [ ] A forwarded request whose host is in `PARENT_NAMES` carries the child's address to the policy server, as an
+- [x] A forwarded request whose host is in `PARENT_NAMES` carries the child's address to the policy server, as an
   allowed request does now. This holds whether the host matched `PARENT_NAMES`, `config/bypass.txt`, or both. The task
   pages and the selector then know which child is asking. For example, with `garden` in `PARENT_NAMES` and in
   `bypass.txt`, and his browser sending `https://garden:8090/tasks/next` through the proxy, he is sent to one of his
   own tasks, not told there is nothing to revise. A bypassed host that is not in `PARENT_NAMES` is forwarded as it is
   now, without his address.
-- [ ] With the policy server's names removed from `config/bypass.txt` and kept in `PARENT_NAMES`, the task pages,
+- [x] With the policy server's names removed from `config/bypass.txt` and kept in `PARENT_NAMES`, the task pages,
   the picker, the selector, and the parent pages such as `/usage` and `/attempts` all open through the proxy at any
   time, including during school hours and at bedtime in the sample policy. None of them is redirected or denied.
-- [ ] A change to `PARENT_NAMES` takes effect after `dw restart`, as it does now for the certificate. `dw reload`
+- [x] A change to `PARENT_NAMES` takes effect after `dw restart`, as it does now for the certificate. `dw reload`
   names the proxy among the services that still have the old settings. A change to `bypass.txt` still takes effect
   on the next request.
-- [ ] `config/bypass.txt` and the configuration directory stay read-only to the containers. Nothing writes to
+- [x] `config/bypass.txt` and the configuration directory stay read-only to the containers. Nothing writes to
   `bypass.txt` at startup. The merge happens in the proxy's memory. A first install still writes this machine's names
   into `bypass.txt`, as it does now.
-- [ ] `dw check`, and the check in `dw reload`, `dw restart`, and `dw up`, warn about each name in `PARENT_NAMES`,
+- [x] `dw check`, and the check in `dw reload`, `dw restart`, and `dw up`, warn about each name in `PARENT_NAMES`,
   other than `localhost`, `127.0.0.1`, and `::1`, that `bypass.txt` does not match. The warning says that the name
   only bypasses the proxy until the next restart picks up a change. It is a warning, not an error, and nothing is
   refused.
-- [ ] The decision service has no task-site handling of its own. It no longer allows a task page that the household
+- [x] The decision service has no task-site handling of its own. It no longer allows a task page that the household
   rules would deny or redirect, and it no longer redirects a request for a task page to the picker or to another task.
   A policy-server URL that reaches the decision API, for example from a test, is judged by the household rules like
   any other URL.
-- [ ] A rule that redirects to `revision_task` gets him to an available task, chosen the way the picker chooses. The
+- [x] A rule that redirects to `revision_task` gets him to an available task, chosen the way the picker chooses. The
   redirect can name the task directly, as it does now, or go through the picker. Either is acceptable, and this story
   does not require the current behaviour to change. When nothing is available, he ends up on the page that says
   "There is nothing to revise right now."
-- [ ] Remembering the page he was sent away from, and going back to it after a pass, works as it does now.
-- [ ] With the sample `.env`, `config/bypass.txt`, and `config/policy.yaml`, a redirect to revision during school hours
+- [x] Remembering the page he was sent away from, and going back to it after a pass, works as it does now.
+- [x] With the sample `.env`, `config/bypass.txt`, and `config/policy.yaml`, a redirect to revision during school hours
   opens a task, and every direct task URL in this story opens.
 
 ## Practice attempts
@@ -156,66 +156,66 @@ counts, is decided by the task site itself.
 An attempt is **required**, **potential**, or **practice**, depending on which set the task was in when he started the
 attempt. Practice means the task was in neither the required set nor the potential set.
 
-- [ ] A practice attempt is stored. A practice pass shows "Well done" like any other pass, including the return to the
+- [x] A practice attempt is stored. A practice pass shows "Well done" like any other pass, including the return to the
   page he was sent away from.
-- [ ] A practice attempt adds nothing to today's score.
-- [ ] A practice pass does not start a pass cooldown, count toward `max_passes`, clear a due date, or reset skip days.
+- [x] A practice attempt adds nothing to today's score.
+- [x] A practice pass does not start a pass cooldown, count toward `max_passes`, clear a due date, or reset skip days.
   A practice failure or give-up does not start a failure cooldown and is not a skip day. For example, he passes
   spelling with `failure_cooldown: 1`, then fails a practice attempt the same day, and spelling is offered as usual
   tomorrow.
-- [ ] An attempt stays in the set it started in until it finishes. Coming back to it, or a `dw reload` while it is in
+- [x] An attempt stays in the set it started in until it finishes. Coming back to it, or a `dw reload` while it is in
   progress, does not change its set.
 
 ## Today's score
 
 The score is what `tasks_required` compares against `required`.
 
-- [ ] A passed attempt that was required scores one point on the household day it passed.
-- [ ] A passed attempt that was potential scores one point on the day it passed, but only while there are no required
+- [x] A passed attempt that was required scores one point on the household day it passed.
+- [x] A passed attempt that was potential scores one point on the day it passed, but only while there are no required
   tasks. While a required task is outstanding, it waits and scores nothing.
-- [ ] No task scores more than once on a household day, whatever mix of required, potential, and practice passes it
+- [x] No task scores more than once on a household day, whatever mix of required, potential, and practice passes it
   has.
-- [ ] Each parent check recorded from `/attempts` scores one point on the day it was recorded, even when several are
+- [x] Each parent check recorded from `/attempts` scores one point on the day it was recorded, even when several are
   recorded the same day and even while a required task is outstanding.
-- [ ] The scenario in UC3 works through the proxy. With parts of speech due today and `failure_cooldown: 1`, addition
+- [x] The scenario in UC3 works through the proxy. With parts of speech due today and `failure_cooldown: 1`, addition
   and spelling with no limits, and `tasks_required` of 2, YouTube is redirected to revision after spelling and
   addition are passed. It is allowed once parts of speech has been failed.
-- [ ] In the same setup, passing parts of speech instead of failing it gives a score of 3, and YouTube is allowed.
-- [ ] In the same setup with no `failure_cooldown` on parts of speech, failing it leaves the score at 0 and YouTube is
+- [x] In the same setup, passing parts of speech instead of failing it gives a score of 3, and YouTube is allowed.
+- [x] In the same setup with no `failure_cooldown` on parts of speech, failing it leaves the score at 0 and YouTube is
   still redirected. A parent check then adds 1, and a second parent check makes it 2 and YouTube is allowed.
-- [ ] A `dw reload` that gives a not-yet-passed task a due date of today makes that task required. The waiting
+- [x] A `dw reload` that gives a not-yet-passed task a due date of today makes that task required. The waiting
   potential points stop counting on the next decision, until that task has been passed or is in a cooldown.
-- [ ] Attempts stored before this version of daywarden is installed are kept, and are treated as Required from the
+- [x] Attempts stored before this version of daywarden is installed are kept, and are treated as Required from the
   first start of the new version. They count for cooldowns, skip days, `max_passes`, and due dates as they do now. A
   pass from earlier on the day of the upgrade scores one point, and no task scores more than once a day.
-- [ ] A `dw reload` never changes the set of an attempt already stored, finished or not. A task that becomes required
+- [x] A `dw reload` never changes the set of an attempt already stored, finished or not. A task that becomes required
   after he passed it as a potential task today stays a potential pass.
 
 ## The task selector
 
-- [ ] A new page, the task selector at `/tasks/choose`, lists the available tasks, in the same order the picker would
+- [x] A new page, the task selector at `/tasks/choose`, lists the available tasks, in the same order the picker would
   try them.
-- [ ] When exactly one task is available, the selector sends him straight to it.
-- [ ] When more than one task is available, the selector lists them by task name, and each one opens that task.
-- [ ] When nothing is available, the selector says "There is nothing to revise right now."
-- [ ] The selector never leaves out an available task, including the one he just gave up and any others he gave up
+- [x] When exactly one task is available, the selector sends him straight to it.
+- [x] When more than one task is available, the selector lists them by task name, and each one opens that task.
+- [x] When nothing is available, the selector says "There is nothing to revise right now."
+- [x] The selector never leaves out an available task, including the one he just gave up and any others he gave up
   earlier.
-- [ ] A task named `choose` is opened at `/tasks/work/choose`, the same way a task named `next` is opened today.
-- [ ] Opening the selector does not move on the picker's turn order.
+- [x] A task named `choose` is opened at `/tasks/work/choose`, the same way a task named `next` is opened today.
+- [x] Opening the selector does not move on the picker's turn order.
 
 ## Try a different task, and Next task
 
-- [ ] After he confirms "Try a different task" on a quiz, the attempt is given up and he goes to the selector, not to
+- [x] After he confirms "Try a different task" on a quiz, the attempt is given up and he goes to the selector, not to
   a task the picker chose. This includes the give-up review that some quizzes show first.
-- [ ] After a give-up, the selector lists every available task, including the one he just left.
-- [ ] When the task he left is the only available task, the selector sends him straight back to it. When nothing is
+- [x] After a give-up, the selector lists every available task, including the one he just left.
+- [x] When the task he left is the only available task, the selector sends him straight back to it. When nothing is
   available, he sees "There is nothing to revise right now."
 
-- [ ] Giving up the only available required task is still refused with "This task has to be finished before another
+- [x] Giving up the only available required task is still refused with "This task has to be finished before another
   one." The attempt stays in progress.
-- [ ] A potential or practice attempt can always be given up, including while a required task is outstanding. The
+- [x] A potential or practice attempt can always be given up, including while a required task is outstanding. The
   selector then lists the available tasks, which are the required ones while any are outstanding.
-- [ ] "Next task" on the end screen of a quiz still goes to the picker, which chooses from the available set as it
+- [x] "Next task" on the end screen of a quiz still goes to the picker, which chooses from the available set as it
   does today. It is shown only when the available set is not empty, and "All done for now" is shown otherwise.
 
 ## Coming back to a task he gave up
@@ -223,58 +223,58 @@ The score is what `tasks_required` compares against `required`.
 These rules apply to an attempt that was abandoned by giving up. A give-up that ended in a pass or a failure, which a
 few quizzes allow when closing the open question decides the result, is finished and is not reopened.
 
-- [ ] When he opens a task within an hour of giving it up, on the household day the attempt started, the abandoned
+- [x] When he opens a task within an hour of giving it up, on the household day the attempt started, the abandoned
   attempt is reopened and carries on. This works whatever way he opens it: the selector, the picker, "Next task", or a
   bookmark. His count, run, and earlier answers are as they were when he gave up. The question that was showing when
   he gave up stays a timeout, as it would after a reload.
-- [ ] The hour is the quiz's existing idle limit, counted from the give-up. Coming back more than an hour after the
+- [x] The hour is the quiz's existing idle limit, counted from the give-up. Coming back more than an hour after the
   give-up, or on a later household day, starts a new attempt, and the given-up attempt stays abandoned.
-- [ ] Only the task's most recent attempt is reopened, and only if no newer attempt of that task has been started.
-- [ ] A reopened attempt is in progress again. It is no longer an abandonment, so it is not a skip day and does not
+- [x] Only the task's most recent attempt is reopened, and only if no newer attempt of that task has been started.
+- [x] A reopened attempt is in progress again. It is no longer an abandonment, so it is not a skip day and does not
   count toward `max_skips`. If he gives up on it again, it is abandoned again and the hour starts again from that
   give-up.
-- [ ] A reopened attempt keeps the set it started in.
-- [ ] The parent attempt page for a reopened attempt shows when he gave up and when he came back, each time it
+- [x] A reopened attempt keeps the set it started in.
+- [x] The parent attempt page for a reopened attempt shows when he gave up and when he came back, each time it
   happened.
 
 ## An attempt belongs to one day
 
-- [ ] An attempt left in progress, for example when he closed the tab partway through a quiz, is resumed only on the
+- [x] An attempt left in progress, for example when he closed the tab partway through a quiz, is resumed only on the
   household day it started. Today it is resumed on any later day.
-- [ ] When he opens that task on a later household day, the old attempt is closed as unfinished, and a fresh attempt
+- [x] When he opens that task on a later household day, the old attempt is closed as unfinished, and a fresh attempt
   starts in the set the task is in now. This happens whatever way he opens the task.
-- [ ] Once the household day it started has ended, an unfinished attempt counts as a skip day for the day it started,
+- [x] Once the household day it started has ended, an unfinished attempt counts as a skip day for the day it started,
   the same as giving up would have. This holds whether or not he opens the task again, so closing the browser does not
   dodge `max_skips`. For example, a task with `max_skips: 1` that he started and left open on Monday is required on
   Tuesday.
-- [ ] Like an abandonment, an unfinished attempt scores nothing, starts no cooldown, and does not count toward
+- [x] Like an abandonment, an unfinished attempt scores nothing, starts no cooldown, and does not count toward
   `max_passes`. An unfinished practice attempt has no effect at all, like any practice attempt.
-- [ ] An unfinished attempt and a give-up or failure on the same day are still one skip day.
-- [ ] The parent attempts page shows the outcome of an attempt from an earlier household day that was never finished
+- [x] An unfinished attempt and a give-up or failure on the same day are still one skip day.
+- [x] The parent attempts page shows the outcome of an attempt from an earlier household day that was never finished
   as Unfinished, whether or not he has opened the task again since. This includes attempts left open before this
   change.
-- [ ] Opening the task is what makes this check. A quiz already on the screen when the household day ends carries on,
+- [x] Opening the task is what makes this check. A quiz already on the screen when the household day ends carries on,
   and a pass scores on the day it passes.
 
 ## The parent attempts page
 
-- [ ] Each attempt on `/attempts`, and the attempt page it opens, says whether the attempt is Required, Potential,
+- [x] Each attempt on `/attempts`, and the attempt page it opens, says whether the attempt is Required, Potential,
   Practice, or Parent check. An attempt stored before this version was installed is shown as Required.
-- [ ] For the chosen client group, `/attempts` shows today's score, the required tasks still outstanding, the
+- [x] For the chosen client group, `/attempts` shows today's score, the required tasks still outstanding, the
   potential tasks still available, and the potential passes that are waiting on required tasks.
-- [ ] The score shown is the one YouTube decisions use for that group at that moment.
+- [x] The score shown is the one YouTube decisions use for that group at that moment.
 
 ## Documentation
 
-- [ ] `docs/hierarchical-policy.md` describes the four task sets, practice attempts, the score, the selector, coming
+- [x] `docs/hierarchical-policy.md` describes the four task sets, practice attempts, the score, the selector, coming
   back to a given-up task, unfinished attempts, and direct task URLs. It says that `pass_cooldown: 0` no longer offers
   a task again on the day it was passed, and that an unfinished attempt is a skip day. Its descriptions of
   `due_date`, `max_skips`, `max_passes`, and the picker match this story.
-- [ ] The README and `.env` notes say that the names in `PARENT_NAMES` are also the policy server's names that the
+- [x] The README and `.env` notes say that the names in `PARENT_NAMES` are also the policy server's names that the
   proxy forwards without a decision. `config/bypass.txt` is for other hosts, but may also include the policy server. This
   may even be advisable since `config/bypass.txt` is read on every request, whereas `PARENT_NAMES` only applies after a
   restart.
-- [ ] The documentation advises applying policy changes and upgrades overnight, while the child is not using the
+- [x] The documentation advises applying policy changes and upgrades overnight, while the child is not using the
   computer, and says why.
 
 # Notes
@@ -368,3 +368,145 @@ That is at the top of 21, and arguably a little over. It is kept as one story by
 story that fit comfortably in one session. If it had to be split, the first part would be the task sets, direct URLs,
 the proxy change, practice, and scoring, and the second would be the selector, "Try a different task", coming back to
 a given-up task, and the parent page summary.
+
+# Implementation
+
+## Files Added/Changed/Removed
+
+Changed:
+
+- `policy/tasks.py`: each attempt is stored with its task set (`required`, `potential`, `practice`, or
+  `parent_check`) and the times it was given up and carried on. A new `unfinished` outcome has no finish time. A
+  database from before this change is upgraded in place the first time a service opens it, and its attempts become
+  Required. `task_sets` works out the configured, required, potential, and available tasks. A task passed today is no
+  longer offered, and practice attempts are left out of cooldowns, skip days, `max_passes`, and due dates. An attempt
+  left in progress is a skip day for the day it started. `day_score` is the new score. `AttemptStore.open` carries on
+  today's attempt, reopens one given up within the hour, or closes one left from an earlier day as unfinished.
+  `AttemptStore.history` reads a group's attempts without their quiz detail, for the score and the sets.
+- `policy/selection.py`: the decision-time task handling (`apply_task_selection`, `may_open`, the visit cookie, and the
+  "reopen required" rule) is gone. It now orders the available tasks for the picker and the selector, and decides
+  whether an attempt may be given up from its set. Adds `/tasks/choose`, and serves a task named `choose` under
+  `/tasks/work/`.
+- `policy/task_page.py`: any configured task opens at its own URL. Adds the selector. "Try a different task" goes to the
+  selector. A task name that is not his goes to the picker. Audio is served for any configured task.
+- `policy/engine.py`: `revision_task` is always the picker. A policy-server URL is judged like any other.
+  `tasks_required` passes the policy's tasks to the ledger so it can score.
+- `policy/usage.py`: `successes` scores with `day_score`.
+- `policy/quiz_page.py`: "Next task" is shown while the available set is not empty.
+- `policy/spelling_page.py`: "Continue" on the missed words screen always goes to the selector.
+- `policy/review.py`: `/attempts` shows today's score, the required tasks outstanding, the potential tasks available,
+  and the passes waiting. Each attempt shows its set, an attempt left open on an earlier day shows as Unfinished, and
+  the attempt page lists each give-up and return. A parent check is stored in the parent check set.
+- `policy/app.py`: passes the tasks to `/attempts`, and no longer passes the attempt store to the decision.
+- `policy/check.py`: `--parent-names` warns about each name in `PARENT_NAMES`, other than the loopback names, that
+  `bypass.txt` does not match. The warning is printed even with `--quiet`.
+- `proxy/bypass.py`, `proxy/addon.py`: the names in `PARENT_NAMES`, other than `localhost`, `127.0.0.1`, and `::1`, are
+  bypassed, and a request for one of them carries the child's address in `X-Daywarden-Client`, whichever list matched.
+- `docker-compose.yml`: the proxy gets `PARENT_NAMES`.
+- `bin/daywarden-lib.sh`: the policy check is given `PARENT_NAMES` from `.env`.
+- `.env`, `config/bypass.txt`: notes on the policy server's names. The sample `bypass.txt` adds `garden.bakuna.net`.
+- `README.md`, `docs/hierarchical-policy.md`: the task sets, practice, the score, the picker and the selector, direct
+  task URLs, coming back to a given-up task, unfinished attempts, the proxy bypass of `PARENT_NAMES`, and the advice to
+  apply changes and upgrades overnight.
+- `tests/test_task_selection.py`: rewritten for this story.
+- `tests/test_bypass.py`, `tests/test_policy_check.py`, `tests/test_enforce_decisions.py`, `tests/recording_origin.py`,
+  `tests/recording-origin.compose.yml`: the `PARENT_NAMES` bypass, the child's address, and the check warning.
+- `tests/test_dw.py`, `tests/test_policy_hostname.py`, `tests/test_return_to_page.py`, `tests/test_arithmetic.py`,
+  `tests/test_spelling.py`, `tests/test_skip_counting.py`, `tests/test_parts_of_speech_quiz.py`,
+  `tests/test_task_catalogue.py`: updated for the picker redirect, the selector, and the new rules.
+
+## Change Summary
+
+The proxy now keeps the household rules away from the policy server: every name in `PARENT_NAMES` is forwarded without
+a decision and tells the policy server which child is asking. With that, the decision service lost all of its task-site
+handling, and a redirect to `revision_task` always goes through the picker.
+
+The policy server works out four task sets for a client group each time it needs them. The picker and the new selector
+offer only the available set, but any configured task opens from its own URL. Each attempt records the set it started
+in. Practice attempts are stored and shown, and count for nothing. The score counts required passes at once, potential
+passes once nothing is required, each task at most once a day, and every parent check.
+
+"Try a different task" goes to the selector. Opening a task within an hour of giving it up carries on that attempt. An
+attempt belongs to the household day it started: one left open is a skip day for that day and is closed as unfinished
+when the task is next opened.
+
+Existing databases are upgraded in place on the first start, and their attempts become Required.
+
+## Suggested Acceptance Testing
+
+### S018 acceptance test cases
+
+Setup for most cases: run daywarden with the sample `.env`, `config/bypass.txt`, and `config/policy.yaml`, sign in to
+`/attempts` as a parent in one browser, and use the child computer's browser through the proxy for the rest.
+
+1. **Upgrade keeps old attempts.** Before installing, note a group's attempts on `/attempts`. Install this version and
+   run `dw restart`. The same attempts are listed, each with Set "Required", and today's score shown at the top counts
+   each task passed today once.
+2. **UC3 through the proxy.** In `policy.yaml`, give `parts_of_speech` `due_date` of today and `failure_cooldown: 1`,
+   leave `sums` and `spelling` with no limits, keep `tasks_required` at 2, and `dw reload`. In the evening window, open
+   YouTube: it redirects to revision and lands on parts of speech. Open the spelling and sums task URLs directly and pass
+   both. YouTube still redirects, and `/attempts` shows score 0, parts_of_speech outstanding, and spelling and sums
+   waiting. Fail parts of speech. YouTube now plays, and the score is 2.
+3. **Passing the hard task.** Repeat case 2 on a fresh day (or after removing today's attempts with `rm-attempts`), but
+   pass parts of speech instead. The score is 3, and YouTube plays.
+4. **Parent checks make up the count.** Repeat case 2 with no `failure_cooldown` on parts of speech. After failing it,
+   YouTube still redirects and the score is 0. Record a parent check on `/attempts`: the score is 1. Record another:
+   the score is 2, and YouTube plays.
+5. **Repeats count for nothing.** Pass a task, then open its URL again from a bookmark and pass it again. "Well done"
+   shows as usual. On `/attempts` the second attempt is Practice, and the score did not change. Next day the task is
+   offered as usual.
+6. **Direct URLs open anything configured.** Open, by URL, a task passed today, one in its cooldown, one at
+   `max_passes`, one whose `available_from` is in the future, and an optional task while a required task is
+   outstanding. Each opens and runs its quiz, including spelling audio. On `/attempts` the first four are Practice and
+   the last is Potential.
+7. **Task pages are never blocked.** During school hours and at bedtime in the sample policy, open `/tasks/next`,
+   `/tasks/choose`, a task URL, `/usage`, and `/attempts` on the policy server. None is redirected or denied.
+8. **Try a different task.** With several tasks available, start one and confirm "Try a different task". The browser
+   lands on `/tasks/choose`, which lists every available task by name, including the one just left. Each link opens
+   that task.
+9. **Coming back within the hour.** Answer a few questions, give up, then pick the same task from the selector within
+   an hour. The quiz shows the same count, and the attempt page on `/attempts` shows when he gave up and when he came
+   back. Give up and come back again: both pairs of times are listed.
+10. **After the hour.** Give up a task and open it again more than an hour later. A new attempt starts at 0, and the
+    old one stays abandoned on `/attempts`.
+11. **The only required task.** Make one task due today and try "Try a different task" on it. It says "This task has
+    to be finished before another one." and the attempt stays in progress. With a second task due today, giving up the
+    first goes to the selector, which lists only the two required tasks.
+12. **Optional tasks can be put down.** While a task is required, open an optional task by URL and give it up. It is
+    abandoned, and the selector sends him straight to the required task.
+13. **One task left.** With only one task available, give it up. The selector opens that task again straight away. When
+    nothing is available, `/tasks/next` and `/tasks/choose` both say "There is nothing to revise right now."
+14. **Next task.** Pass a quiz while other tasks are available: "Next task" goes to the picker, which opens a task. Pass
+    the last available task: "All done for now" is shown instead.
+15. **`pass_cooldown: 0`.** Set a task's `pass_cooldown` to 0 and pass it. The picker and selector no longer offer it
+    today, and they do tomorrow.
+16. **Unfinished attempts.** Give a task `max_skips: 1`. Open it and close the tab without finishing. Next day,
+    `/attempts` shows yesterday's attempt as Unfinished, and the picker sends him to that task as required. Opening it
+    starts a fresh Required attempt.
+17. **A reload that makes a task due.** Pass an optional task, then give another task a due date of today and
+    `dw reload`. The score drops by that point and `/attempts` lists the pass as waiting, until the new task is passed.
+    The earlier pass still shows as Potential.
+18. **`PARENT_NAMES` without `bypass.txt`.** Remove the policy server's names from `config/bypass.txt`, keep them in
+    `PARENT_NAMES`, and run `dw check`. It warns about each name and says it only bypasses the proxy until the next
+    restart picks up a change. `dw up`, `dw restart`, and `dw reload` show the same warning and carry on. The task
+    pages, the picker, the selector, `/usage`, and `/attempts` still open through the proxy, at any time.
+19. **The child's address on a bypassed name.** With `garden` in both lists, open `https://garden:8090/tasks/next`
+    through the proxy from the child's computer. It opens one of his tasks, not "There is nothing to revise right now."
+20. **A `PARENT_NAMES` change needs a restart.** Add a new name for this machine to `PARENT_NAMES` only, and run
+    `dw reload`. It names the proxy among the services with old settings. Until `dw restart`, that name is judged by the
+    rules. After it, the name is forwarded. A name added to `bypass.txt` is forwarded at once.
+21. **Loopback names are not bypassed.** With `localhost` in `PARENT_NAMES`, a request through the proxy for
+    `http://localhost/` is still decided by the rules.
+22. **The policy service down.** Stop the decisions container. Pages on the policy server's names are still forwarded
+    by the proxy (they then fail to load because the service is down), while other sites get the 403 page.
+23. **A task named `choose`.** Add a task named `choose`. It opens at `/tasks/work/choose`, and `/tasks/choose` is
+    still the selector.
+24. **Parent check URL.** Open a `parent_check` task's URL as the child. No page opens, he is sent to the picker, and no
+    attempt is stored.
+25. **A task that is not his.** Open a task name that is not in the policy, and one assigned only to another client
+    group. Both send him to the picker.
+26. **The attempts page summary.** On `/attempts` for the younger group, check that the score matches what YouTube
+    decisions do, and that the required, potential, and waiting lists match the tasks above. Each attempt shows Required,
+    Potential, Practice, or Parent check.
+27. **Documentation.** `docs/hierarchical-policy.md` and the README describe the task sets, practice, the score, the
+    selector, coming back, unfinished attempts, direct URLs, the `PARENT_NAMES` bypass, and applying changes overnight.

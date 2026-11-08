@@ -17,15 +17,16 @@ A quota uses it, and a continue there stays a continue. ``revision_task``
 is replaced with an https URL on the policy server before either answer
 is returned. The host is the household hostname, or the hostname of the machine
 running Compose when that is left out. The port is the household port, or the
-published policy port when that is left out. When an attempt store is
-passed, that URL is the chosen task, or ``/tasks/next`` when nothing is
-eligible.
+published policy port when that is left out. The URL is the task picker,
+``/tasks/next``, which opens an available task. A URL on the policy server
+is judged like any other: the proxy keeps the task pages away from the rules
+by forwarding the policy server's names without asking.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -33,8 +34,8 @@ from urllib.parse import urlsplit
 from policy.buckets import place
 from policy.clients import normalize_ip
 from policy.hierarchy import REVISION_TASK, Action, Period, Policy, Rule, absolute_http_url
-from policy.selection import apply_task_selection, picker_url
-from policy.tasks import AttemptStore, household_day
+from policy.selection import picker_url
+from policy.tasks import Task, household_day
 
 NO_RULE_MESSAGE = "No rule granted access."
 UNCONFIGURED_TASK_MESSAGE = "The revision task page is not configured."
@@ -47,8 +48,7 @@ class Trace:
     ``rule_set`` is a rule-set name, or the path of an inline list. ``rule_index``
     counts from 1 in that list. Both are None when a top-level continue became
     the deny in ``decision``. ``continued`` is true only in that case.
-    ``revision`` is true when the deciding rule redirected to ``revision_task``,
-    whatever task selection made of that redirect afterwards.
+    ``revision`` is true when the deciding rule redirected to ``revision_task``.
     """
 
     client_group: str
@@ -63,8 +63,10 @@ class Trace:
 class Ledger:
     """The counts an access rule reads.
 
-    Successes are the client group's pass attempts for that household day.
-    ``policy.usage.UsageStore`` counts the rows S003.1 stores. Ended seconds
+    Successes are the client group's score for that household day. ``tasks``
+    is the policy's task list, which the score needs to know whether any
+    task is still required. ``policy.usage.UsageStore`` scores the attempt
+    rows S003.1 stores. Ended seconds
     and stored bytes are one client group's balance on a named quota. A missing
     row and an empty ledger answer the same way.
 
@@ -72,7 +74,7 @@ class Ledger:
     whether a bucket has ended. A date means the whole of that local day.
     """
 
-    def successes(self, client_group: str, day: date) -> int:
+    def successes(self, client_group: str, day: date, tasks: tuple[Task, ...] = ()) -> int:
         return 0
 
     def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
@@ -99,7 +101,7 @@ class MemoryLedger(Ledger):
     def set_stored_bytes(self, client_group: str, quota: str, day: date, count: int) -> None:
         self._bytes[(client_group, quota, day)] = count
 
-    def successes(self, client_group: str, day: date) -> int:
+    def successes(self, client_group: str, day: date, tasks: tuple[Task, ...] = ()) -> int:
         return self._successes.get((client_group, day), 0)
 
     def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
@@ -231,14 +233,12 @@ def decide(
     url: str,
     at: datetime,
     ledger: Ledger | None = None,
-    attempts: AttemptStore | None = None,
 ) -> Trace:
     """Judge one request on the access path.
 
     ``at`` is already household-local. The client group and the site group are
     classified once, then ``entry`` is evaluated with no parent. A continue
-    from that evaluation is a deny. ``attempts`` is what turns ``revision_task``
-    into one task's URL. Without it, the picker URL is used.
+    from that evaluation is a deny.
     """
     return judge(
         policy,
@@ -246,7 +246,6 @@ def decide(
         url=url,
         at=at,
         ledger=ledger,
-        attempts=attempts,
     )[0]
 
 
@@ -257,37 +256,19 @@ def judge(
     url: str,
     at: datetime,
     ledger: Ledger | None = None,
-    attempts: AttemptStore | None = None,
 ) -> tuple[Trace, Assumption]:
     """Judge one request, and note when that allow would need another look.
 
     Classification happens once. The assumption is empty unless the access
-    path allows. A deny or a redirect has no transfer to watch. With
-    ``attempts``, a revision redirect names the chosen task, and a task URL
-    he is not allowed to open is sent to one he is.
+    path allows. A deny or a redirect has no transfer to watch.
     """
-    trace, assumption = judge_frozen(
+    return judge_frozen(
         policy,
         client_group=classify_client(policy, client_ip),
         site_group=classify_site(policy, url),
         at=at,
         ledger=ledger,
     )
-    if attempts is None:
-        return trace, assumption
-    revised = apply_task_selection(
-        trace.decision,
-        policy,
-        url,
-        trace.client_group,
-        at,
-        attempts,
-    )
-    if revised == trace.decision:
-        return trace, assumption
-    if revised.get("action") != "allow":
-        assumption = Assumption()
-    return replace(trace, decision=revised), assumption
 
 
 def judge_frozen(
@@ -438,7 +419,8 @@ def _holds(rule: Rule, facts: _Facts) -> bool:
         return facts.client_group in rule.groups
     if rule.condition == "tasks_required":
         required = 0 if rule.required is None else rule.required
-        return facts.ledger.successes(facts.client_group, household_day(facts.at)) >= required
+        score = facts.ledger.successes(facts.client_group, household_day(facts.at), facts.policy.tasks)
+        return score >= required
     if rule.condition == "time_remaining":
         quota = facts.policy.quota(rule.quota or "")
         if quota is None:

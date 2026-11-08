@@ -248,4 +248,40 @@ tasks:
             noun: ["cat", "mat"]
             verb: ["sat"]
             adjective: []
-
+  parts_of_speech_nouns:
+    type: parts_of_speech
+    group: younger
+    pass_cooldown: 21
+    failure_cooldown: 1
+    body:
+      sentences:
+        - sentence: The fluffy cat slept peacefully on the warm blanket.
+          parts: 
+            noun: [ "cat", "blanket" ]
+        - sentence: A young boy carefully opened the wooden box.
+          parts:
+            noun: [ "boy", "box" ]
+        - sentence: The bright, yellow sun shone over the quiet village.
+          parts:
+            noun: [ "sun", "village" ]
+        - sentence: My little brother ran quickly through the garden.
+          parts:
+            noun: [ "brother", "garden" ]
+        - sentence: The hungry squirrel climbed up the tall tree beside the fence.
+          parts:
+            noun: [ "squirrel", "tree", "fence" ]
+        - sentence: A beautiful butterfly landed gently on the flower.
+          parts:
+            noun: [ "butterfly", "flower" ]
+        - sentence: The tiny puppy happily played in the garden.
+          parts:
+            noun: [ "puppy", "garden" ]
+        - sentence: An old man carried a heavy bag across the busy road.
+          parts:
+            noun: [ "man", "bag", "road" ]
+        - sentence: The cheerful girl sang loudly.
+          parts:
+            noun: [ "girl" ]
+        - sentence: A shiny, red bicycle stood beside the old garage.
+          parts:
+            noun: [ "bicycle", "garage" ]

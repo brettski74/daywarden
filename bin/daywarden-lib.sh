@@ -120,11 +120,13 @@ dw_make_dirs() {
 # Check the policy with the code in the policy image, and change nothing.
 # The first argument is exec, for the running decisions container, or run,
 # for a new container that starts no other service and publishes no port.
-# The rest go to policy.check. True when the policy has no errors.
+# The rest go to policy.check. PARENT_NAMES from .env goes too, so the check
+# warns about a policy-server name bypass.txt does not match, even while the
+# running container still has the old value. True when the policy has no errors.
 dw_check_policy() {
     local how=$1
     shift
-    local check=(python -m policy.check --host-dir "$(dw_config_dir)" "$@")
+    local check=(python -m policy.check --host-dir "$(dw_config_dir)" --parent-names "${PARENT_NAMES:-}" "$@")
     if [ "$how" = exec ]; then
         dw_compose exec -T decisions "${check[@]}"
         return

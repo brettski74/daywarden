@@ -377,3 +377,34 @@ def _no_dns(address, _lookup):
     if normalize_ip(address) is not None:
         return (normalize_ip(address),)
     raise UnresolvedAddress(f"{address}: no such name")
+
+
+def test_each_parent_name_bypass_txt_does_not_match_is_a_warning_even_when_quiet(mounted, capsys):
+    _write(mounted, "policy.yaml", GOOD)
+    _write(mounted, "bypass.txt", "# policy server\ngarden\n*.bakuna.net\n")
+    names = "garden,garden.bakuna.net,tundra,192.168.12.5,localhost,127.0.0.1,::1"
+    assert check.main(["--host-dir", "config", "--quiet", "--parent-names", names]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    lines = out.splitlines()
+    assert lines[0] == "Warnings:"
+    assert len(lines) == 3
+    assert lines[1].startswith("  config/bypass.txt: tundra is in PARENT_NAMES and not in this list.")
+    assert "only bypasses the proxy until the next restart picks up a change" in lines[1]
+    assert lines[2].startswith("  config/bypass.txt: 192.168.12.5 is in PARENT_NAMES")
+
+
+def test_parent_names_all_in_bypass_txt_add_no_warning(mounted, capsys):
+    _write(mounted, "policy.yaml", GOOD)
+    _write(mounted, "bypass.txt", "GARDEN\n")
+    assert check.main(["--quiet", "--parent-names", "garden,localhost"]) == 0
+    assert capsys.readouterr() == ("", "")
+
+
+def test_a_missing_bypass_txt_warns_about_every_parent_name_beside_the_errors(mounted, capsys):
+    _write(mounted, "policy.yaml", GOOD + "bogus: 1\n")
+    assert check.main(["--host-dir", "config", "--parent-names", "garden"]) == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == "dw: the policy has 1 error."
+    assert lines[2] == "Warnings:"
+    assert lines[3].startswith("  config/bypass.txt: garden is in PARENT_NAMES")

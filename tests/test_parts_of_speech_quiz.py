@@ -111,7 +111,6 @@ class Quiz:
                 method=method,
                 path="/tasks/words",
                 client_ip=YOUNGER,
-                cookie=None,
                 now=now,
                 query=query,
                 body=body,
