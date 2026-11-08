@@ -2,11 +2,13 @@
 # Run daywarden on this machine.
 #   dw up        check the policy, start it, wait until every service is healthy,
 #                and print the proxy configuration URL
-#   dw down      stop it and remove its containers
+#   dw down      stop it and remove its containers, or keep them with --keep
 #   dw reload    check the policy and apply it without restarting a container
-#   dw restart   check the policy, then replace every container
+#   dw restart   check the policy, then replace every container, or keep
+#                them with --keep
 #   dw check     check the policy and change nothing
 #   dw status    version, start at boot, and the health of each service
+#   dw logs      what the services, or the start at boot, logged
 #   dw enable    start it at boot, through a systemd user service
 #   dw disable   do not start it at boot
 # Acts on the directory above this script's own: ~/daywarden for an
@@ -22,7 +24,7 @@ root=$(dirname -- "$(dirname -- "$script")")
 # shellcheck source=daywarden-lib.sh
 . "$root/bin/daywarden-lib.sh"
 
-COMMANDS=(up down reload restart check status enable disable help)
+COMMANDS=(up down reload restart check status logs enable disable help)
 
 usage() {
     cat <<EOF
@@ -32,16 +34,20 @@ Commands:
   up       check the policy, start daywarden, and wait until every service
            is healthy
   down     stop daywarden and remove its containers. The CA, the database,
-           the configuration, and the recordings stay
+           the configuration, and the recordings stay. down --keep keeps
+           the containers, so dw logs still shows what they logged
   reload   check config/policy.yaml and apply it, without restarting any
            container. Quizzes, transfers, and sign-ins carry on
   restart  check the policy, then replace every container and wait until
            every service is healthy. Applies changes to .env, such as
-           PORT_BASE
+           PORT_BASE. restart --keep keeps each container whose settings
+           did not change, and what it logged
   check    check the policy and list every error. Changes nothing
   status   show the version, whether daywarden starts at boot, the proxy
            configuration URL, and the health of each service. Exits 0 only
            when all are healthy
+  logs     show what the services logged, or the start at boot with
+           dw logs boot. dw logs --help lists the options
   enable   start daywarden at boot, without anyone logging in
   disable  do not start daywarden at boot. A running daywarden keeps running
   help     show this help
@@ -53,6 +59,18 @@ EOF
 no_arguments() {
     if [ $# -gt 0 ]; then
         echo "dw: $COMMAND takes no arguments." >&2
+        usage >&2
+        exit 2
+    fi
+}
+
+# Set keep to 1 for --keep, the one switch down and restart take.
+keep_switch() {
+    keep=0
+    if [ $# -eq 1 ] && [ "$1" = --keep ]; then
+        keep=1
+    elif [ $# -gt 0 ]; then
+        echo "dw: $COMMAND takes no arguments other than --keep." >&2
         usage >&2
         exit 2
     fi
@@ -73,16 +91,41 @@ cmd_up() {
 
 # compose up --force-recreate measured slower than down and up, so a restart
 # is down and up, with the policy checked once before anything is stopped.
+# With --keep it is stop and up, which starts each stopped container whose
+# settings and image are unchanged and recreates the others. The config hash
+# does not change with the image, so the container IDs tell which were
+# recreated.
 cmd_restart() {
-    no_arguments "$@"
+    local keep
+    keep_switch "$@"
     dw_prepare dw
-    local was_running=0
+    local was_running=0 started=0 service id names recreated=()
+    local -A before=()
     dw_running && was_running=1
     dw_require_ports "Nothing was restarted." || exit 1
     dw_make_dirs || exit 1
     dw_check_policy run --quiet --refused "Nothing was restarted." || exit 1
-    dw_compose down --remove-orphans
-    dw_start_checked || exit 1
+    if [ "$keep" -eq 1 ]; then
+        while IFS=$'\t' read -r service id; do
+            before[$service]=$id
+        done < <(dw_container_ids)
+        dw_compose stop
+        dw_start_checked --remove-orphans && started=1
+        while IFS=$'\t' read -r service id; do
+            if [ -n "${before[$service]:-}" ] && [ "${before[$service]}" != "$id" ]; then
+                recreated+=("$service")
+            fi
+        done < <(dw_container_ids)
+        if [ "${#recreated[@]}" -gt 0 ]; then
+            printf -v names '%s, ' "${recreated[@]}"
+            echo "Recreated because .env, docker-compose.yml, or the image changed: ${names%, }."
+            echo "  What they logged before the restart is gone."
+        fi
+        [ "$started" -eq 1 ] || exit 1
+    else
+        dw_compose down --remove-orphans
+        dw_start_checked || exit 1
+    fi
     dw_track_with_user_service || exit 1
     if [ "$was_running" -eq 1 ]; then
         echo "daywarden restarted."
@@ -143,14 +186,24 @@ cmd_reload() {
     fi
 }
 
+# The containers are stopped before the user service, whose stop leaves
+# stopped containers in place, so --keep keeps them.
 cmd_down() {
-    no_arguments "$@"
+    local keep
+    keep_switch "$@"
     dw_prepare dw
-    dw_compose down
+    if [ "$keep" -eq 1 ]; then
+        dw_compose stop
+    else
+        dw_compose down
+    fi
     if dw_user_manager && [ "$(systemctl --user is-active "$DW_UNIT" 2>/dev/null)" = active ]; then
         systemctl --user stop "$DW_UNIT"
     fi
     echo "daywarden is down."
+    if [ "$keep" -eq 1 ]; then
+        echo "Its containers were kept, so dw logs can still show what they logged. dw down removes them."
+    fi
 }
 
 cmd_status() {
@@ -167,7 +220,7 @@ cmd_status() {
         echo "Start at boot: $boot"
         result=$(systemctl --user show -p ActiveState --value "$DW_UNIT" 2>/dev/null || true)
         if [ "$result" = failed ]; then
-            echo "Last start through the user service: failed. See journalctl --user -u daywarden."
+            echo "Last start through the user service: failed. See dw logs boot."
         else
             echo "Last start through the user service: no failure"
         fi
@@ -181,6 +234,221 @@ cmd_status() {
         [ "$state" = healthy ] && healthy=$((healthy + 1))
     done < <(dw_service_states)
     [ "$healthy" -eq "${#DW_SERVICES[@]}" ]
+}
+
+logs_usage() {
+    cat <<EOF
+usage: dw logs [OPTIONS] [SERVICE ...]
+       dw logs [OPTIONS] boot
+
+Shows the last 100 lines each service logged, each line after the service's
+name. With no names, shows every service. The options are the ones
+docker compose logs takes.
+
+Services:
+  decisions     one line for each request the proxy asked about: allow, deny,
+                or redirect, the site group and client group, and the rule
+  observations  the quotas and time limits counted from what was watched
+  proxy         the proxy that every request from a child's computer goes
+                through
+  autoconfig    the proxy configuration file and the computers that fetch it
+  boot          what the start at boot logged, through the daywarden user
+                service. Cannot be combined with other names
+
+Options:
+  -f, --follow        keep printing new lines as they are logged, until Ctrl-C
+  -n, --tail N        show the last N lines of each service instead of 100,
+                      or all of them with --tail all
+      --since WHEN    show only lines logged since WHEN: a duration such as 10m
+                      or 2h, or a date and time such as 2026-11-08T13:00.
+                      Without --tail, shows every line since then
+  -t, --timestamps    put the time each line was logged in front of it
+  -h, --help          show this help
+
+dw down, dw restart, and a reboot remove the containers and what they logged.
+dw down --keep and dw restart --keep keep them.
+EOF
+}
+
+logs_usage_error() {
+    echo "dw: $1" >&2
+    echo "Run dw logs --help for the options and the service names." >&2
+    exit 2
+}
+
+# Print the names as "a", "a and b", or "a, b, and c".
+spoken_list() {
+    case $# in
+    1) printf '%s\n' "$1" ;;
+    2) printf '%s and %s\n' "$1" "$2" ;;
+    *)
+        local all=("$@") text
+        printf -v text '%s, ' "${all[@]:0:$#-1}"
+        printf '%sand %s\n' "$text" "${all[$#-1]}"
+        ;;
+    esac
+}
+
+# A status of 130 is Compose ending a follow at Ctrl-C.
+logs_finish() {
+    local status=$1
+    [ "$status" -eq 130 ] && status=0
+    exit "$status"
+}
+
+# Compose takes --since 10m, and journalctl takes --since -10m. journalctl
+# before systemd 255 does not take the T in 2026-11-08T13:00.
+logs_boot() {
+    local options=(--user -u "$DW_UNIT" --no-pager) logged status=0
+    if ! dw_user_manager; then
+        echo "dw: the start-at-boot log cannot be read." >&2
+        dw_user_manager_advice >&2
+        exit 1
+    fi
+    logged=$(journalctl --user -u "$DW_UNIT" --no-pager --quiet -n 1 2>/dev/null) || logged=""
+    if [ -z "$logged" ] || [ "$logged" = "-- No entries --" ]; then
+        echo "dw: the daywarden user service has logged nothing. It logs when it starts or stops daywarden at boot," >&2
+        echo "  so it has nothing until daywarden is enabled at boot with dw enable." >&2
+        exit 1
+    fi
+    [ "$follow" -eq 1 ] && options+=(--follow)
+    if [ "$tail" = all ] || { [ -z "$tail" ] && [ -n "$since" ]; }; then
+        options+=(--no-tail)
+    else
+        options+=(--lines "${tail:-100}")
+    fi
+    if [[ $since =~ ^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$ ]]; then
+        options+=(--since "-$since")
+    elif [ -n "$since" ]; then
+        options+=(--since "${since/T/ }")
+    fi
+    journalctl "${options[@]}" || status=$?
+    logs_finish "$status"
+}
+
+# Compose follows a stopped container until Ctrl-C, waiting for lines that
+# cannot come, so a follow with nothing running is not passed on.
+logs_services() {
+    local options=(logs) present=() missing=() service id status=0 running=0
+    local -A exists=()
+    if ! docker info >/dev/null 2>&1; then
+        echo "dw: the Docker daemon is not answering, so the logs cannot be read." >&2
+        exit 1
+    fi
+    while IFS=$'\t' read -r service id; do
+        exists[$service]=$id
+    done < <(dw_container_ids)
+    for service in "$@"; do
+        if [ -n "${exists[$service]:-}" ]; then
+            present+=("$service")
+        else
+            missing+=("$service")
+        fi
+    done
+    if [ "${#present[@]}" -eq 0 ]; then
+        if [ "${#exists[@]}" -eq 0 ]; then
+            echo "dw: there is nothing to show, because daywarden has no containers." >&2
+        elif [ "${#missing[@]}" -eq 1 ]; then
+            echo "dw: there is nothing to show, because ${missing[0]} has no container." >&2
+        else
+            echo "dw: there is nothing to show, because $(spoken_list "${missing[@]}") have no containers." >&2
+        fi
+        echo "  dw down, dw restart, and a reboot remove the containers and what they logged." >&2
+        echo "  dw down --keep and dw restart --keep keep them." >&2
+        exit 1
+    fi
+    if [ "${#missing[@]}" -eq 1 ]; then
+        echo "dw: ${missing[0]} has no container, so nothing is shown for it." >&2
+    elif [ "${#missing[@]}" -gt 1 ]; then
+        echo "dw: $(spoken_list "${missing[@]}") have no containers, so nothing is shown for them." >&2
+    fi
+    if [ "$follow" -eq 1 ]; then
+        for service in "${present[@]}"; do
+            dw_running "$service" && running=1
+        done
+        if [ "$running" -eq 1 ]; then
+            options+=(--follow)
+        else
+            echo "dw: none of these services is running, so there are no new lines to follow." >&2
+        fi
+    fi
+    if [ -n "$tail" ]; then
+        options+=(--tail "$tail")
+    elif [ -z "$since" ]; then
+        options+=(--tail 100)
+    fi
+    [ -n "$since" ] && options+=(--since "$since")
+    [ "$timestamps" -eq 1 ] && options+=(--timestamps)
+    dw_compose "${options[@]}" "${present[@]}" || status=$?
+    logs_finish "$status"
+}
+
+# Opens no port, so it works with a port mistake in .env.
+cmd_logs() {
+    local follow=0 timestamps=0 tail="" tail_given=0 since="" names=() name service known valid
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h | --help)
+            logs_usage
+            return 0
+            ;;
+        -f | --follow) follow=1 ;;
+        -t | --timestamps) timestamps=1 ;;
+        -n | --tail | --since)
+            [ $# -ge 2 ] && [ -n "$2" ] || logs_usage_error "$1 needs a value."
+            if [ "$1" = --since ]; then
+                since=$2
+            else
+                tail=$2
+                tail_given=1
+            fi
+            shift
+            ;;
+        --tail=*)
+            tail=${1#*=}
+            tail_given=1
+            ;;
+        -n?*)
+            tail=${1#-n}
+            tail_given=1
+            ;;
+        --since=*)
+            since=${1#*=}
+            [ -n "$since" ] || logs_usage_error "--since needs a value."
+            ;;
+        -*)
+            [[ $1 =~ ^-[ft]+$ ]] || logs_usage_error "logs has no option $1."
+            [[ $1 == *f* ]] && follow=1
+            [[ $1 == *t* ]] && timestamps=1
+            ;;
+        *) names+=("$1") ;;
+        esac
+        shift
+    done
+    if [ "$tail_given" -eq 1 ] && [[ ! $tail =~ ^[0-9]+$ ]] && [ "$tail" != all ]; then
+        logs_usage_error "--tail takes a whole number of lines, or all, not '$tail'."
+    fi
+    valid=$(spoken_list "${DW_SERVICES[@]}" boot)
+    for name in "${names[@]}"; do
+        known=0
+        [ "$name" = boot ] && known=1
+        for service in "${DW_SERVICES[@]}"; do
+            [ "$service" = "$name" ] && known=1
+        done
+        [ "$known" -eq 1 ] || logs_usage_error "logs has no service named '$name'. The names are $valid."
+        if [ "$name" = boot ] && [ "${#names[@]}" -gt 1 ]; then
+            logs_usage_error "boot cannot be combined with other names. Run dw logs boot on its own."
+        fi
+    done
+    dw_prepare dw
+    trap 'exit 0' INT
+    if [ "${names[*]}" = boot ]; then
+        logs_boot
+    elif [ "${#names[@]}" -gt 0 ]; then
+        logs_services "${names[@]}"
+    else
+        logs_services "${DW_SERVICES[@]}"
+    fi
 }
 
 cmd_enable() {

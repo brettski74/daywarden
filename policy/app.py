@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -155,12 +156,7 @@ def create_app() -> FastAPI:
             )
         decision = json.dumps(trace.decision).encode()
         decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
-        where = "no rule" if trace.continued else f"{trace.rule_set} rule {trace.rule_index}"
-        print(
-            f"decision {parsed.method} {parsed.url} ({trace.site_group}) "
-            f"for {trace.client_group} at {at.isoformat(timespec='seconds')} by {where}",
-            flush=True,
-        )
+        print(decision_line(parsed.method, parsed.url, trace, at), flush=True)
         return Response(decision, media_type="application/json")
 
     @app.get("/quiz")
@@ -335,6 +331,19 @@ def _query(request: Request, keys: tuple[str, ...]) -> dict[str, str]:
         if value is not None:
             found[key] = value
     return found
+
+
+def decision_line(method: str, url: str, trace: Trace, at: datetime) -> str:
+    """The line the decisions service logs for one request, as dw logs decisions shows it."""
+    action = trace.decision.get("action", "deny")
+    where = "no rule" if trace.continued else f"{trace.rule_set} rule {trace.rule_index}"
+    line = (
+        f"decision {action} {method} {url} ({trace.site_group}) "
+        f"for {trace.client_group} at {at.isoformat(timespec='seconds')} by {where}"
+    )
+    if action == "redirect":
+        line += f" to {trace.decision.get('location', '')}"
+    return line
 
 
 def _announce(lines) -> None:

@@ -295,3 +295,46 @@ def test_restart_replaces_every_container_and_is_no_slower_than_down_and_up(dayw
     assert done.returncode == 0, done.stdout + done.stderr
     print(f"dw restart took {restart_seconds:.1f}s; dw down and dw up took {down_up_seconds:.1f}s")
     assert restart_seconds <= down_up_seconds + 2
+
+
+def test_logs_show_a_decision_and_keep_holds_it_across_a_stop_and_a_restart(daywarden):
+    """S021: dw logs, dw down --keep, and dw restart --keep."""
+    proxy = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{daywarden.env['PROXY_PORT']}"}))
+    with pytest.raises(urllib.error.HTTPError):
+        proxy.open("http://dw-logs-test.invalid/", timeout=10)
+    said = "decision deny GET http://dw-logs-test.invalid/ (default) for default at "
+
+    def decision_lines() -> list[str]:
+        done = daywarden.dw("logs", "decisions", "--tail", "all")
+        assert done.returncode == 0, done.stderr
+        return [line for line in done.stdout.splitlines() if said in line]
+
+    deadline = time.monotonic() + 15
+    while not decision_lines() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    [line] = decision_lines()
+    assert line.startswith("decisions-1  | ") and line.endswith(" by no rule")
+    before = daywarden.containers()
+
+    down = daywarden.dw("down", "--keep")
+    assert down.returncode == 0, down.stderr
+    assert "Its containers were kept, so dw logs can still show what they logged." in down.stdout
+    assert "  decisions     not running" in daywarden.dw("status").stdout.splitlines()
+    assert decision_lines() == [line]
+    followed = daywarden.dw("logs", "-f", timeout=60)
+    assert followed.returncode == 0, followed.stderr
+    assert "no new lines to follow" in followed.stderr
+    text = line.split(" | ", 1)[1]
+    assert [shown.split(" | ", 1)[1] for shown in followed.stdout.splitlines() if said in shown] == [text]
+
+    assert daywarden.dw("up").returncode == 0
+    assert {service: ident for service, (ident, _) in daywarden.containers().items()} == {
+        service: ident for service, (ident, _) in before.items()
+    }
+    restarted = daywarden.dw("restart", "--keep")
+    assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+    assert "daywarden restarted." in restarted.stdout
+    assert "Recreated" not in restarted.stdout
+    assert decision_lines() == [line]
+    kept = daywarden.compose("exec", "-T", "decisions", "cat", "/tmp/decisions.jsonl").stdout
+    assert "http://dw-logs-test.invalid/" in kept

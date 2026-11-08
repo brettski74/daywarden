@@ -1,5 +1,8 @@
 """S014: dw, add-parent, rm-attempts, and the user service on an installed daywarden."""
 
+import os
+import signal
+
 import pytest
 
 from hostfakes import Host, make_package
@@ -65,8 +68,9 @@ BROKEN = ["config/policy.yaml:3:1: unknown setting timezon", "config/policy.yaml
 def test_the_usage_lists_every_command(host, args):
     done = host.dw(*args)
     assert done.returncode == 0
-    for command in ("up", "down", "reload", "restart", "check", "status", "enable", "disable"):
+    for command in ("up", "down", "reload", "restart", "check", "status", "logs", "enable", "disable"):
         assert f"\n  {command} " in done.stdout
+    assert "down --keep" in done.stdout and "restart --keep" in done.stdout
     assert host.calls("docker") == []
 
 
@@ -78,13 +82,24 @@ def test_an_unknown_command_prints_the_usage_to_stderr_with_status_2(host):
     assert "usage: dw COMMAND" in done.stderr
 
 
-@pytest.mark.parametrize("command", ["up", "reload", "restart", "check"])
+@pytest.mark.parametrize("command", ["up", "reload", "check"])
 def test_an_extra_argument_is_a_usage_error(host, command):
     host.all_running()
     done = host.dw(command, "--now")
     assert done.returncode == 2
     assert f"dw: {command} takes no arguments." in done.stderr
     assert _compose(host) == []
+
+
+@pytest.mark.parametrize("command", ["down", "restart"])
+@pytest.mark.parametrize("args", [("--now",), ("--keep", "--now"), ("-k",), ("keep",)])
+def test_down_and_restart_take_only_keep(host, command, args):
+    host.all_running()
+    done = host.dw(command, *args)
+    assert done.returncode == 2
+    assert f"dw: {command} takes no arguments other than --keep." in done.stderr
+    assert _compose(host) == []
+    assert host.state["running"] == ALL_HEALTHY
 
 
 @pytest.mark.parametrize("missing", [".env", "docker-compose.yml"])
@@ -155,7 +170,7 @@ def test_a_failed_user_service_start_is_reported(host):
     host.state["systemd"].update(enabled=True, start_fails=True)
     done = host.dw("up")
     assert done.returncode == 1
-    assert "journalctl --user -u daywarden" in done.stderr
+    assert "dw: the daywarden user service did not start. See dw logs boot." in done.stderr
 
 
 def test_down_stops_containers_started_outside_the_user_service(host):
@@ -209,7 +224,7 @@ def test_status_shows_enabled_and_a_failed_start(host):
     done = host.dw("status")
     assert done.returncode == 1
     assert "Start at boot: enabled" in done.stdout
-    assert "Last start through the user service: failed. See journalctl --user -u daywarden." in done.stdout
+    assert "Last start through the user service: failed. See dw logs boot." in done.stdout
     assert "The Docker daemon is not answering." in done.stdout
 
 
@@ -659,3 +674,381 @@ def test_status_of_a_running_daywarden_asks_the_service_for_the_url(host):
     done = host.dw("status")
     assert "Proxy configuration URL: http://tasks.example:8088/proxy.pac" in done.stdout.splitlines()
     assert URL in _compose(host)
+
+
+# logs (S021)
+
+LOG_CHECKS = [["ps", "-a", "-q", service] for service in ("decisions", "observations", "proxy", "autoconfig")]
+EVERY_SERVICE = ["decisions", "observations", "proxy", "autoconfig"]
+NOTHING_TO_SHOW = (
+    "  dw down, dw restart, and a reboot remove the containers and what they logged.\n"
+    "  dw down --keep and dw restart --keep keep them.\n"
+)
+
+
+def _logs_calls(host):
+    return [call for call in _compose(host) if call[:1] == ["logs"]]
+
+
+def _journalctl(host):
+    return [call[1:] for call in host.calls("journalctl")]
+
+
+def test_logs_shows_the_last_100_lines_of_every_service_from_any_directory(host):
+    host.all_running()
+    host.state["logs"] = {"decisions": "decision deny GET https://www.youtube.com/ (video) for kids", "proxy": "listening"}
+    done = host.dw("logs", cwd=host.elsewhere)
+    assert done.returncode == 0, done.stderr
+    assert _compose(host) == [*LOG_CHECKS, ["logs", "--tail", "100", *EVERY_SERVICE]]
+    assert done.stdout.splitlines() == [
+        "decisions-1  | decision deny GET https://www.youtube.com/ (video) for kids",
+        "observations-1  | observations said nothing",
+        "proxy-1  | listening",
+        "autoconfig-1  | autoconfig said nothing",
+    ]
+    assert done.stderr == ""
+    assert host.calls("journalctl") == []
+    assert list(host.elsewhere.iterdir()) == []
+
+
+def test_logs_of_named_services_shows_only_those(host):
+    host.all_running()
+    done = host.dw("logs", "proxy", "decisions")
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", "--tail", "100", "proxy", "decisions"]]
+
+
+@pytest.mark.parametrize(
+    ("args", "options"),
+    [
+        (("-f",), ["--follow", "--tail", "100"]),
+        (("--follow",), ["--follow", "--tail", "100"]),
+        (("-n", "5"), ["--tail", "5"]),
+        (("--tail", "5"), ["--tail", "5"]),
+        (("-n5",), ["--tail", "5"]),
+        (("--tail=5",), ["--tail", "5"]),
+        (("--tail", "all"), ["--tail", "all"]),
+        (("--since", "10m"), ["--since", "10m"]),
+        (("--since=2h",), ["--since", "2h"]),
+        (("--since", "2026-11-08T13:00", "-n", "20"), ["--tail", "20", "--since", "2026-11-08T13:00"]),
+        (("-t",), ["--tail", "100", "--timestamps"]),
+        (("--timestamps",), ["--tail", "100", "--timestamps"]),
+        (("-ft",), ["--follow", "--tail", "100", "--timestamps"]),
+    ],
+)
+def test_logs_passes_the_options_on_as_docker_compose_logs_takes_them(host, args, options):
+    host.all_running()
+    done = host.dw("logs", *args)
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", *options, *EVERY_SERVICE]]
+
+
+@pytest.mark.parametrize("args", [("decisions", "-f", "-n", "3"), ("-f", "decisions", "-n", "3"), ("-n", "3", "-f", "decisions")])
+def test_logs_takes_options_and_names_in_any_order(host, args):
+    host.all_running()
+    done = host.dw("logs", *args)
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", "--follow", "--tail", "3", "decisions"]]
+
+
+@pytest.mark.parametrize(
+    ("args", "said"),
+    [
+        (("-n", "ten"), "dw: --tail takes a whole number of lines, or all, not 'ten'."),
+        (("--tail", "-5"), "dw: --tail takes a whole number of lines, or all, not '-5'."),
+        (("--tail=1.5",), "dw: --tail takes a whole number of lines, or all, not '1.5'."),
+        (("-n",), "dw: -n needs a value."),
+        (("--since",), "dw: --since needs a value."),
+        (("--colour",), "dw: logs has no option --colour."),
+        (("-x",), "dw: logs has no option -x."),
+        (
+            ("decisions", "squid"),
+            "dw: logs has no service named 'squid'. The names are decisions, observations, proxy, autoconfig, and boot.",
+        ),
+        (("boot", "decisions"), "dw: boot cannot be combined with other names. Run dw logs boot on its own."),
+        (("proxy", "boot"), "dw: boot cannot be combined with other names. Run dw logs boot on its own."),
+    ],
+)
+def test_a_logs_usage_mistake_exits_2_and_shows_nothing(host, args, said):
+    host.all_running()
+    host.state["journal"] = ["daywarden-service started"]
+    done = host.dw("logs", *args)
+    assert done.returncode == 2
+    assert done.stdout == ""
+    assert done.stderr == f"{said}\nRun dw logs --help for the options and the service names.\n"
+    assert host.calls("docker") == [] and host.calls("journalctl") == []
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_logs_help_lists_the_options_and_the_names(host, flag):
+    done = host.dw("logs", "decisions", flag)
+    assert done.returncode == 0
+    for option in ("-f, --follow", "-n, --tail N", "--since WHEN", "-t, --timestamps", "-h, --help"):
+        assert option in done.stdout
+    for name in (*EVERY_SERVICE, "boot"):
+        assert f"\n  {name} " in done.stdout
+    assert host.calls("docker") == []
+
+
+def test_an_invalid_since_names_the_value_and_shows_nothing(host):
+    host.all_running()
+    done = host.dw("logs", "--since", "yesterday")
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert '"yesterday"' in done.stderr
+
+
+def test_logs_works_with_ports_that_cannot_be_used(host):
+    host.all_running()
+    _set_env(host, PORT_BASE="nope")
+    done = host.dw("logs", "decisions")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "decisions-1  | decisions said nothing\n"
+
+
+def test_logs_says_when_the_docker_daemon_is_not_answering(host):
+    host.state["daemon"] = "down"
+    done = host.dw("logs")
+    assert done.returncode == 1
+    assert done.stderr == "dw: the Docker daemon is not answering, so the logs cannot be read.\n"
+    assert _compose(host) == []
+
+
+def test_logs_of_stopped_containers_shows_what_they_logged_and_a_follow_returns(host):
+    host.state["exited"] = list(EVERY_SERVICE)
+    host.state["logs"] = {"observations": "Traceback: ConfigError"}
+    host.state["follow_waits"] = True
+    done = host.dw("logs", "-f")
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", "--tail", "100", *EVERY_SERVICE]]
+    assert "observations-1  | Traceback: ConfigError" in done.stdout.splitlines()
+    assert done.stderr == "dw: none of these services is running, so there are no new lines to follow.\n"
+    assert host.dw("logs").stderr == ""
+
+
+def test_a_follow_with_one_service_running_follows(host):
+    host.state["running"] = {"decisions": "healthy"}
+    host.state["exited"] = ["observations"]
+    done = host.dw("logs", "-f", "observations", "decisions")
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", "--follow", "--tail", "100", "observations", "decisions"]]
+
+
+def test_logs_with_no_containers_says_there_is_nothing_to_show_and_mentions_keep(host):
+    done = host.dw("logs")
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert done.stderr == "dw: there is nothing to show, because daywarden has no containers.\n" + NOTHING_TO_SHOW
+    assert _logs_calls(host) == []
+
+
+@pytest.mark.parametrize(
+    ("names", "said"),
+    [(("observations",), "observations has no container"), (("observations", "autoconfig"), "observations and autoconfig have no containers")],
+)
+def test_logs_of_named_services_with_no_container_say_so(host, names, said):
+    host.state["running"] = {"decisions": "healthy", "proxy": "healthy"}
+    done = host.dw("logs", *names)
+    assert done.returncode == 1
+    assert done.stderr == f"dw: there is nothing to show, because {said}.\n" + NOTHING_TO_SHOW
+    assert _logs_calls(host) == []
+
+
+def test_logs_shows_the_services_that_have_a_container_and_names_the_others(host):
+    host.state["running"] = {"decisions": "healthy"}
+    host.state["exited"] = ["proxy"]
+    done = host.dw("logs")
+    assert done.returncode == 0, done.stderr
+    assert _logs_calls(host) == [["logs", "--tail", "100", "decisions", "proxy"]]
+    assert done.stderr == "dw: observations and autoconfig have no containers, so nothing is shown for them.\n"
+    done = host.dw("logs", "decisions", "autoconfig")
+    assert done.stderr == "dw: autoconfig has no container, so nothing is shown for it.\n"
+    assert done.stdout == "decisions-1  | decisions said nothing\n"
+
+
+@pytest.mark.parametrize("names", [(), ("boot",)])
+def test_ctrl_c_ends_a_follow_quietly(host, names):
+    host.all_running()
+    host.state["journal"] = ["Started daywarden household proxy."]
+    host.state["follow_waits"] = True
+    following = host.start_dw("logs", "-f", *names)
+    try:
+        for line in following.stdout:
+            if line == "following\n":
+                break
+        os.killpg(following.pid, signal.SIGINT)
+        _, stderr = following.communicate(timeout=20)
+    finally:
+        if following.poll() is None:
+            os.killpg(following.pid, signal.SIGKILL)
+    assert following.returncode == 0
+    assert stderr == ""
+
+
+# logs boot
+
+
+def test_logs_boot_shows_the_user_service_journal(host):
+    host.state["journal"] = ["Nov 08 06:00:01 tundra daywarden-service[812]: dw: the policy has 1 error. daywarden was not started."]
+    done = host.dw("logs", "boot", cwd=host.elsewhere)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == host.state["journal"][0] + "\n"
+    assert _journalctl(host)[-1] == ["--user", "-u", "daywarden.service", "--no-pager", "--lines", "100"]
+    assert _compose(host) == []
+
+
+@pytest.mark.parametrize(
+    ("args", "options"),
+    [
+        (("-f",), ["--follow", "--lines", "100"]),
+        (("-n", "5"), ["--lines", "5"]),
+        (("--tail", "all"), ["--no-tail"]),
+        (("--since", "10m"), ["--no-tail", "--since", "-10m"]),
+        (("--since", "1h30m", "-n", "4"), ["--lines", "4", "--since", "-1h30m"]),
+        (("--since", "2026-11-08T13:00"), ["--no-tail", "--since", "2026-11-08 13:00"]),
+        (("--since", "2026-11-08"), ["--no-tail", "--since", "2026-11-08"]),
+        (("-t",), ["--lines", "100"]),
+    ],
+)
+def test_logs_boot_passes_the_options_on_as_journalctl_takes_them(host, args, options):
+    host.state["journal"] = ["Started daywarden household proxy."]
+    done = host.dw("logs", *args, "boot")
+    assert done.returncode == 0, done.stderr
+    assert _journalctl(host)[-1] == ["--user", "-u", "daywarden.service", "--no-pager", *options]
+
+
+def test_logs_boot_says_when_the_user_service_has_logged_nothing(host):
+    done = host.dw("logs", "boot")
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert "dw: the daywarden user service has logged nothing." in done.stderr
+    assert "dw enable" in done.stderr
+
+
+def test_logs_boot_needs_the_user_manager(host):
+    host.state["systemd"]["user_manager"] = False
+    done = host.dw("logs", "boot")
+    assert done.returncode == 1
+    assert done.stderr.startswith("dw: the start-at-boot log cannot be read.\n")
+    assert "log in as tester directly, such as over ssh, and run dw enable" in done.stderr
+    assert host.calls("journalctl") == []
+
+
+# down --keep and restart --keep (S021)
+
+UP_KEEPING = [*UP, "--remove-orphans"]
+ALL_EXITED = sorted(EVERY_SERVICE)
+
+
+def test_down_keep_stops_the_containers_and_keeps_them_for_logs(host):
+    host.state["systemd"]["enabled"] = True
+    assert host.dw("up").returncode == 0
+    host.forget_calls()
+    done = host.dw("down", "--keep")
+    assert done.returncode == 0, done.stderr
+    assert _compose(host) == [["stop"]]
+    assert ["stop", "daywarden.service"] in _systemctl_user(host)
+    assert done.stdout == (
+        "daywarden is down.\n"
+        "Its containers were kept, so dw logs can still show what they logged. dw down removes them.\n"
+    )
+    assert host.state["running"] == {} and host.state["exited"] == ALL_EXITED
+    status = host.dw("status")
+    assert status.returncode == 1
+    assert status.stdout.splitlines()[-4:] == [f"  {service:<13} not running" for service in EVERY_SERVICE]
+    logs = host.dw("logs")
+    assert logs.returncode == 0, logs.stderr
+    assert len(logs.stdout.splitlines()) == 4
+
+
+def test_the_user_service_stop_leaves_kept_containers_and_still_removes_running_ones(host):
+    service = host.root / "bin" / "daywarden-service"
+    host.state["exited"] = list(EVERY_SERVICE)
+    done = host.run(service, "stop")
+    assert done.returncode == 0, done.stderr
+    assert "nothing to stop" in done.stdout
+    assert _compose(host) == []
+    assert host.state["exited"] == list(EVERY_SERVICE)
+    host.all_running()
+    assert host.run(service, "stop").returncode == 0
+    assert _compose(host) == [["down", "--timeout", "20"]]
+    assert host.state["running"] == {} and host.state["exited"] == []
+
+
+def test_down_after_down_keep_removes_the_kept_containers(host):
+    assert host.dw("up").returncode == 0
+    assert host.dw("down", "--keep").returncode == 0
+    host.forget_calls()
+    done = host.dw("down")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "daywarden is down.\n"
+    assert _compose(host) == [["down"]]
+    assert host.state["exited"] == []
+    assert host.dw("logs").returncode == 1
+
+
+def test_up_after_down_keep_checks_the_policy_and_starts_the_same_containers(host):
+    assert host.dw("up").returncode == 0
+    ids = dict(host.state["ids"])
+    assert host.dw("down", "--keep").returncode == 0
+    host.forget_calls()
+    done = host.dw("up")
+    assert done.returncode == 0, done.stderr
+    assert _compose(host) == [CHECK_BEFORE_UP, UP, URL]
+    assert host.state["ids"] == ids
+    assert host.state["recreated"] == {service: 1 for service in EVERY_SERVICE}
+    assert host.state["running"] == ALL_HEALTHY
+
+
+def test_restart_keep_checks_stops_and_starts_the_same_containers(host):
+    assert host.dw("up").returncode == 0
+    ids = dict(host.state["ids"])
+    host.forget_calls()
+    done = host.dw("restart", "--keep")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "daywarden restarted.\n" + SAID_URL
+    assert _compose(host) == [CHECK_BEFORE_RESTART, *LOG_CHECKS, ["stop"], UP_KEEPING, *LOG_CHECKS, URL]
+    assert host.state["ids"] == ids
+    assert host.state["running"] == ALL_HEALTHY
+
+
+def test_restart_keep_recreates_and_names_the_services_whose_settings_changed(host):
+    assert host.dw("up").returncode == 0
+    _set_env(host, PORT_BASE="9080")
+    done = host.dw("restart", "--keep")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[:3] == [
+        "Recreated because .env, docker-compose.yml, or the image changed: decisions, proxy, autoconfig.",
+        "  What they logged before the restart is gone.",
+        "daywarden restarted.",
+    ]
+    assert host.state["recreated"] == {"decisions": 2, "observations": 1, "proxy": 2, "autoconfig": 2}
+    assert _ports(host) == {"PROXY_PORT": "9080", "POLICY_PORT": "9084", "PROXY_CONFIG_PORT": "9088"}
+
+
+def test_restart_keep_names_a_recreated_service_even_when_it_does_not_become_healthy(host):
+    assert host.dw("up").returncode == 0
+    host.state["config_hash"] = {"proxy": "new-proxy"}
+    host.state["up_fails"] = {"proxy": "unhealthy"}
+    done = host.dw("restart", "--keep")
+    assert done.returncode == 1
+    assert "Recreated because .env, docker-compose.yml, or the image changed: proxy." in done.stdout
+    assert "dw: these services did not become healthy: proxy (unhealthy)" in done.stderr
+    assert "daywarden restarted." not in done.stdout
+
+
+def test_restart_keep_starts_a_stopped_daywarden(host):
+    done = host.dw("restart", "--keep")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "daywarden was not running, so it was started. daywarden is up.\n" + SAID_URL
+    assert host.state["running"] == ALL_HEALTHY
+
+
+def test_restart_keep_with_a_broken_policy_stops_nothing(host):
+    host.all_running()
+    host.state["policy_errors"] = BROKEN
+    done = host.dw("restart", "--keep")
+    assert done.returncode == 1
+    assert done.stderr.startswith("dw: the policy has 2 errors. Nothing was restarted.\n")
+    assert _compose(host) == [CHECK_BEFORE_RESTART]
+    assert host.state["running"] == ALL_HEALTHY

@@ -637,6 +637,86 @@ rule_sets:
     assert logged["local_time"] == "2026-10-21T11:00:00+11:00"
 
 
+DECISION_LINE_POLICY = """\
+entry: household
+timezone: Australia/Sydney
+client_groups:
+  kids:
+    addresses: ["192.0.2.40"]
+site_groups:
+  video:
+    priority: 10
+    patterns: ["*.youtube.com"]
+  games:
+    priority: 20
+    patterns: ["games.example"]
+  news:
+    priority: 30
+    patterns: ["news.example"]
+rule_sets:
+  household:
+    - condition: site_group
+      group: video
+      when_true: { action: deny, message: "No video." }
+    - condition: site_group
+      group: games
+      when_true: { action: redirect, location: "https://garden:8084/tasks/next?return=abc" }
+    - condition: site_group
+      group: news
+      when_true: { action: allow }
+"""
+
+
+@pytest.mark.parametrize(
+    ("url", "line", "decision"),
+    [
+        (
+            YOUTUBE,
+            f"decision deny GET {YOUTUBE} (video) for kids at 2026-10-21T11:00:00+11:00 by household rule 1",
+            {"action": "deny", "status": 403, "message": "No video."},
+        ),
+        (
+            "https://games.example/play",
+            "decision redirect GET https://games.example/play (games) for kids at 2026-10-21T11:00:00+11:00 "
+            "by household rule 2 to https://garden:8084/tasks/next?return=abc",
+            {"action": "redirect", "status": 302, "location": "https://garden:8084/tasks/next?return=abc"},
+        ),
+        (
+            "https://news.example/",
+            "decision allow GET https://news.example/ (news) for kids at 2026-10-21T11:00:00+11:00 by household rule 3",
+            ALLOW,
+        ),
+        (
+            "https://elsewhere.example/",
+            "decision deny GET https://elsewhere.example/ (default) for kids at 2026-10-21T11:00:00+11:00 by no rule",
+            {"action": "deny", "status": 403, "message": NO_RULE},
+        ),
+    ],
+)
+def test_the_decision_line_says_what_was_decided_and_where_a_redirect_sends_the_browser(
+    tmp_path, monkeypatch, capsys, url, line, decision
+):
+    pytest.importorskip("fastapi")
+    from policy.app import create_app
+
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(DECISION_LINE_POLICY, encoding="utf-8")
+    monkeypatch.setenv("POLICY_FILE", str(policy))
+    monkeypatch.setenv("POLICY_DB", str(tmp_path / "policy.sqlite3"))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    app = create_app()
+    capsys.readouterr()
+    status, body = _post_decision(
+        app,
+        {"client_ip": "192.0.2.40", "method": "GET", "url": url, "occurred_at": "2026-10-21T00:00:00+00:00"},
+    )
+    assert status == 200
+    assert json.loads(body) == decision
+    assert capsys.readouterr().out.splitlines() == [line]
+    logged = json.loads((tmp_path / "decisions.jsonl").read_text(encoding="utf-8"))
+    assert logged["decision"] == decision
+
+
 @pytest.mark.parametrize(
     "document",
     [
