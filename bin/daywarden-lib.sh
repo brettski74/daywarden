@@ -170,6 +170,17 @@ dw_require_running() {
     fi
 }
 
+# Print the container ID of each service that has a container, running or
+# stopped, as "service<TAB>id".
+dw_container_ids() {
+    local service id
+    for service in "${DW_SERVICES[@]}"; do
+        id=$(dw_compose ps -a -q "$service" 2>/dev/null) || id=""
+        [ -n "$id" ] && printf '%s\t%s\n' "$service" "$id"
+    done
+    return 0
+}
+
 # Print "service<TAB>state" for each service: healthy, starting, unhealthy,
 # or not running.
 dw_service_states() {
@@ -240,11 +251,12 @@ dw_compose_up() {
 }
 
 # Start the stack once the policy has been checked, and wait until every
-# service is healthy. Name each service that is not, and show why.
+# service is healthy. Name each service that is not, and show why. Any
+# arguments go to docker compose up.
 dw_start_checked() {
     local bad="" service state failed=()
     dw_make_dirs || return 1
-    if dw_compose up -d --wait --wait-timeout 180; then
+    if dw_compose up -d --wait --wait-timeout 180 "$@"; then
         return 0
     fi
     while IFS=$'\t' read -r service state; do
@@ -286,7 +298,7 @@ dw_stale_services() {
 dw_track_with_user_service() {
     if dw_user_manager && dw_enabled; then
         if ! systemctl --user start "$DW_UNIT"; then
-            echo "dw: the daywarden user service did not start. See journalctl --user -u daywarden." >&2
+            echo "dw: the daywarden user service did not start. See dw logs boot." >&2
             return 1
         fi
     fi

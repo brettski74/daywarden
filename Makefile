@@ -11,7 +11,7 @@ VENV := .venv
 VENV_PYTHON := $(VENV)/bin/python
 DIST_DIR := dist
 
-.PHONY: up down reload restart check show-env venv test dist help
+.PHONY: up down reload restart check logs show-env venv test dist help
 
 # make help lists each target that has a "## description" on its line.
 
@@ -31,6 +31,9 @@ restart: ## Check the policy, then replace every container. Applies .env changes
 
 check: ## Check the policy and list every error. Changes nothing
 	@bin/dw check
+
+logs: ## Show the last lines each service logged. Options and services with ARGS="-f decisions"
+	@bin/dw logs $(ARGS)
 
 show-env: ## Print PARENT_NAMES, the CA directory, and the data directory
 	@$(load_env); printf '%s\n' "$$PARENT_NAMES" "$$CA_VOLUME_PATH" "$$DAYWARDEN_DATA_DIR"

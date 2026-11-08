@@ -10,7 +10,7 @@ make up
 
 `make up` and `make down` run `bin/dw up` and `bin/dw down` on this checkout, so they check the policy first and use the same ports. `make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
 
-`make reload`, `make restart`, and `make check` run `bin/dw reload`, `bin/dw restart`, and `bin/dw check` on this checkout. They are described under [The policy file](#the-policy-file). `make restart` also rebuilds the policy image, so it picks up changes to the code under `policy/`. `make reload` and `make check` run in the containers that are already running, so they use the code those containers were built from. `make help` lists every target and what it does.
+`make reload`, `make restart`, and `make check` run `bin/dw reload`, `bin/dw restart`, and `bin/dw check` on this checkout. They are described under [The policy file](#the-policy-file). `make logs` runs `bin/dw logs`, and `make logs ARGS="-f decisions"` passes the options and service names through. `make restart` also rebuilds the policy image, so it picks up changes to the code under `policy/`. `make reload` and `make check` run in the containers that are already running, so they use the code those containers were built from. `make help` lists every target and what it does.
 
 The proxy listens as a normal HTTP proxy. Clients use `PROXY_PORT` on the machine that is running Compose, `PORT_BASE` from `.env`, 8080 by default. A browser can be given the configuration URL, `http://<this machine>:<PROXY_CONFIG_PORT>/proxy.pac`, instead, such as `http://garden:8088/proxy.pac`. `dw up` and `dw status` print it. See [docs/child-computer.md](docs/child-computer.md) for each browser.
 
@@ -95,7 +95,19 @@ The URL is forgotten when the proxy allows that exact URL from that computer, wh
 
 ## Decision and observation logs
 
-Each decision is appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
+`dw logs decisions` shows one line for each request the proxy asked about. The line says what was decided, the site group and client group, the household-local time, and the rule that decided. A redirect also says where it sent the browser:
+
+```text
+decisions-1  | decision deny GET https://www.youtube.com/watch?v=abc (video) for kids at 2026-11-08T19:42:10-05:00 by evening rule 2
+decisions-1  | decision redirect GET https://games.example/ (games) for kids at 2026-11-08T19:43:02-05:00 by evening rule 3 to https://garden:8084/tasks/next
+decisions-1  | decision deny GET https://elsewhere.example/ (default) for kids at 2026-11-08T19:44:15-05:00 by no rule
+```
+
+A request that no rule decided is a `deny` `by no rule`. `dw logs decisions | grep deny` lists the blocked requests, and `grep` on a host name or a client group narrows it the same way. `dw logs -f decisions` watches the decisions arrive while someone browses. `dw logs` with no names shows the last 100 lines of every service, and `dw logs --help` lists the options, which are the ones `docker compose logs` takes: `-f`, `-n` or `--tail`, `--since`, and `-t`.
+
+The lines are kept in the containers, so `dw down`, `dw restart`, and a reboot remove them. To keep them while you work out a problem, use `dw down --keep`, which stops the containers without removing them, or `dw restart --keep`, which keeps each container whose settings and image did not change and names any that had to be recreated. `dw logs` shows what a stopped container logged, and the next `dw up` carries on from it. `dw logs boot` shows what the start at boot logged.
+
+Each decision is also appended to `/tmp/decisions.jsonl` inside the `decisions` container. An entry holds the request the proxy sent, the household-local time, the client group and the site group (either of which may be `default`), the rule set and rule that decided, and the decision returned.
 
 A forwarded response is also reported to `POST /v1/observations`. Each report has the client IP, the absolute URL, the time, and how many body bytes have moved since the previous report. A short transfer is one report. A long one is reported about once a minute while bytes are still moving, and once more when it finishes. A connection that sits open without new bytes is not reported again. Denied and redirected requests are not reported. If the observation service is down, the page is still allowed, denied, or redirected as already decided. A report is filed under the classified client group and site group, including `default`, and under each quota whose rule set accepts it. School traffic stays on the school site group and does not move the entertainment quota.
 
@@ -303,8 +315,12 @@ dw reload      # check config/policy.yaml and apply it to every service without 
 dw check       # check the policy and list every error. Changes nothing
 dw restart     # check the policy, then replace every container. Applies .env changes and a new version
 dw down        # stop and remove the containers. The CA, database, configuration, and recordings stay
+dw logs        # the last 100 lines of each service. dw logs -f decisions follows the decisions
+dw logs boot   # what the start at boot logged
 add-parent ada
 ```
+
+`dw logs` takes service names, `decisions`, `observations`, `proxy`, and `autoconfig`, and the options of `docker compose logs`: `-f` to follow until Ctrl-C, `-n 20` or `--tail all` for more or fewer lines, `--since 10m` or `--since 2026-11-08T13:00`, and `-t` for the time of each line. It works with a port mistake in `.env`, and it shows what stopped containers logged. When none of the services it shows is running, `-f` shows what they logged and returns, because no new lines can come. `dw down`, `dw restart`, and a reboot remove the containers and what they logged. `dw down --keep` and `dw restart --keep` keep them. See [Decision and observation logs](#decision-and-observation-logs).
 
 A broken policy stops `dw up` and `dw restart` before anything is started or stopped, with `dw: the policy has 2 errors. daywarden was not started.` (or `Nothing was restarted.`) and every error. A running daywarden keeps running with the policy it had. `dw restart` on a stopped daywarden starts it, the same as `dw up`. Whether a parent stays signed in across `dw restart` is the same as across `dw down` and `dw up`.
 
@@ -312,7 +328,7 @@ A broken policy stops `dw up` and `dw restart` before anything is started or sto
 
 ### Start at boot
 
-`dw enable` writes the systemd user service `~/.config/systemd/user/daywarden.service`, enables it, and turns on lingering for this user (`loginctl enable-linger`), so daywarden starts at boot without anyone logging in. No `sudo` is needed. It does not start a stopped daywarden, and a running one keeps running and is tracked by the service. While enabled, `dw up` and `dw restart` also start the service, and `dw down` stops it. At boot the service waits up to two minutes for Docker, then checks the policy. If Docker does not answer, or the policy has an error, `dw status` says the last start failed and `journalctl --user -u daywarden` says why. Docker itself must start at boot: `sudo systemctl enable docker.service`. A container that crashes comes back by itself, but Docker does not start daywarden on its own after a reboot: that is only up to `dw enable`.
+`dw enable` writes the systemd user service `~/.config/systemd/user/daywarden.service`, enables it, and turns on lingering for this user (`loginctl enable-linger`), so daywarden starts at boot without anyone logging in. No `sudo` is needed. It does not start a stopped daywarden, and a running one keeps running and is tracked by the service. While enabled, `dw up` and `dw restart` also start the service, and `dw down` stops it. At boot the service waits up to two minutes for Docker, then checks the policy. If Docker does not answer, or the policy has an error, `dw status` says the last start failed and `dw logs boot` says why. `dw logs boot` takes `-f`, `-n`, and `--since`, and shows the same lines as `journalctl --user -u daywarden`. The shutdown at reboot removes the containers, as `dw down` does. Docker itself must start at boot: `sudo systemctl enable docker.service`. A container that crashes comes back by itself, but Docker does not start daywarden on its own after a reboot: that is only up to `dw enable`.
 
 `dw disable` stops daywarden starting at boot. It does not stop a running daywarden, and it leaves lingering on, because other user services may need it. `loginctl disable-linger` turns that off. A first install asks whether to enable start at boot. An upgrade keeps the current setting.
 

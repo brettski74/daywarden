@@ -3,7 +3,7 @@
 ``Host`` gives each test a temporary HOME, an /etc with a hostname and a
 resolv.conf, and a PATH that holds only the real tools the host scripts
 need plus fake ``docker``, ``systemctl``, ``loginctl``, ``getent``, ``ip``,
-``ss``, ``id``, ``ffmpeg``, and ``python3``. The fakes read the machine's
+``ss``, ``id``, ``ffmpeg``, ``python3``, and ``journalctl``. The fakes read the machine's
 state from one JSON file, record each call, and write back what a call
 changed. A test leaves a fake out to make that tool missing.
 """
@@ -25,7 +25,7 @@ from deploy.build import stage  # noqa: E402
 
 VERSION = "20261105-184500"
 NEWER = "20261106-091500"
-FAKES = ("docker", "systemctl", "loginctl", "getent", "ip", "ss", "id", "ffmpeg", "python3")
+FAKES = ("docker", "systemctl", "loginctl", "getent", "ip", "ss", "id", "ffmpeg", "python3", "journalctl")
 REAL_TOOLS = (
     "bash", "sh", "env", "cat", "cp", "mv", "rm", "mkdir", "ln", "readlink", "dirname", "basename",
     "sed", "awk", "grep", "tr", "cut", "sort", "head", "tail", "date", "sha256sum", "timeout", "sleep",
@@ -34,7 +34,7 @@ REAL_TOOLS = (
 SERVICES = ("decisions", "observations", "proxy", "autoconfig")
 
 FAKE = r'''
-import json, os, sys, time
+import json, os, re, signal, sys, time
 from pathlib import Path
 
 SERVICES = ("decisions", "observations", "proxy", "autoconfig")
@@ -107,12 +107,20 @@ def compose(args):
     if sub == "version":
         print("Docker Compose version v5.4.0")
     elif sub == "up":
+        # A stopped container is started again unless its settings changed. Any other is created.
         failing = state.get("up_fails", {})
         recreated = state.setdefault("recreated", {})
+        hashes = state.setdefault("running_hash", {})
+        exited = state.get("exited", [])
         for service in SERVICES:
-            if service not in state["running"]:
-                recreated[service] = recreated.get(service, 0) + 1
-                state.setdefault("running_hash", {})[service] = config_hash(service)
+            if service in state["running"]:
+                continue
+            if service in exited and hashes.get(service, "hash-" + service) == config_hash(service):
+                continue
+            recreated[service] = recreated.get(service, 0) + 1
+            hashes[service] = config_hash(service)
+            state.setdefault("ids", {})[service] = f"id-{service}-{recreated[service]}"
+        state["exited"] = []
         state["up_env"] = {key: os.environ.get(key) for key in (*DEFAULT_PORTS, "RESOLV_CONF_DIR", "RESOLV_CONF_NAME")}
         state["running"] = {service: failing.get(service, "healthy") for service in SERVICES}
         save()
@@ -126,19 +134,62 @@ def compose(args):
         in_container(sub, rest)
     elif sub == "down":
         state["running"] = {}
+        state["exited"] = []
+        save()
+    elif sub == "stop":
+        state["exited"] = sorted(set(state.get("exited", [])) | set(state["running"]))
+        state["running"] = {}
         save()
     elif sub == "ps" and "-q" in rest:
-        if rest[-1] in state["running"] or rest[-1] in state.get("exited", []):
-            print(f"id-{rest[-1]}")
+        named = [arg for arg in rest if not arg.startswith("-")]
+        for service in named or SERVICES:
+            if service in state["running"] or service in state.get("exited", []):
+                print(state.get("ids", {}).get(service, f"id-{service}"))
     elif sub == "ps":
         for service, health in state["running"].items():
             print(f"{service}\trunning\t{health}")
         for service in state.get("exited", []):
             print(f"{service}\texited\t")
     elif sub == "logs":
-        print(state.get("logs", {}).get(rest[-1], f"{rest[-1]} said nothing"))
+        logs(rest)
     else:
         sys.exit(f"fake docker compose: {sub} is not faked")
+
+
+def wait_for_ctrl_c(status):
+    """Follow until SIGINT, then exit with status, as docker compose logs -f (130) and journalctl -f (0) do."""
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(status))
+    print("following", flush=True)
+    while True:
+        time.sleep(1)
+
+
+def logs(rest):
+    takes_value = ("--tail", "--since")
+    if "--since" in rest:
+        since = rest[rest.index("--since") + 1]
+        if not re.fullmatch(r"(\d+(\.\d+)?(ns|us|ms|s|m|h))+|\d{4}-\d\d-\d\d(T[0-9:.]+(Z|[+-][0-9:]+)?)?", since):
+            print(f'invalid value for "since": failed to parse value as time or duration: "{since}"', file=sys.stderr)
+            sys.exit(1)
+    named = [arg for i, arg in enumerate(rest) if not arg.startswith("-") and rest[i - 1] not in takes_value]
+    for service in named:
+        said = state.get("logs", {}).get(service, f"{service} said nothing")
+        for line in said.splitlines():
+            print(line if "--no-log-prefix" in rest else f"{service}-1  | {line}")
+    if "--follow" in rest and state.get("follow_waits"):
+        wait_for_ctrl_c(130)
+
+
+def journalctl():
+    lines = state.get("journal", [])
+    if "--lines" in args:
+        count = int(args[args.index("--lines") + 1])
+        lines = lines[-count:] if count else []
+    if "-n" in args:
+        lines = lines[-int(args[args.index("-n") + 1]):]
+    print("\n".join(lines) if lines else "-- No entries --")
+    if "--follow" in args and state.get("follow_waits"):
+        wait_for_ctrl_c(0)
 
 
 def docker():
@@ -307,7 +358,7 @@ def python():
 
 
 {"docker": docker, "systemctl": systemctl, "loginctl": loginctl, "getent": getent, "ip": ip,
- "ss": ss, "id": identity, "ffmpeg": ffmpeg}.get(program, python)()
+ "ss": ss, "id": identity, "ffmpeg": ffmpeg, "journalctl": journalctl}.get(program, python)()
 '''
 
 
@@ -365,9 +416,9 @@ class Host:
     def unit(self) -> Path:
         return self.home / ".config" / "systemd" / "user" / "daywarden.service"
 
-    def run(self, *command: str | Path, input: str = "", cwd: Path | None = None, env: dict | None = None):
+    def _environment(self, env: dict | None) -> dict:
         self.state_path.write_text(json.dumps(self.state), encoding="utf-8")
-        environment = {
+        return {
             "HOME": str(self.home),
             "PATH": self.path,
             "USER": "tester",
@@ -376,17 +427,31 @@ class Host:
             "DAYWARDEN_ETC": str(self.etc),
             **(env or {}),
         }
+
+    def run(self, *command: str | Path, input: str = "", cwd: Path | None = None, env: dict | None = None):
         done = subprocess.run(
             [str(part) for part in command],
             input=input,
             cwd=cwd or self.tmp,
-            env=environment,
+            env=self._environment(env),
             text=True,
             capture_output=True,
             timeout=60,
         )
         self.state = json.loads(self.state_path.read_text(encoding="utf-8"))
         return done
+
+    def start_dw(self, *args: str) -> subprocess.Popen:
+        """Start dw in its own process group, as a terminal runs it, so a test can press Ctrl-C on the group."""
+        return subprocess.Popen(
+            [str(self.home / "bin" / "dw"), *args],
+            cwd=self.tmp,
+            env=self._environment(None),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
 
     def install(self, package: Path, *, input: str = "", **kwargs):
         return self.run(package / "install.sh", input=input, **kwargs)

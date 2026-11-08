@@ -6,7 +6,9 @@
 #   daywarden-service stop    stop and remove the containers
 # A user service cannot be ordered after the system's docker.service, so the
 # start waits for the daemon to answer. The user manager may stop after
-# Docker at shutdown, so a stop that cannot reach Docker does nothing.
+# Docker at shutdown, so a stop that cannot reach Docker does nothing. dw
+# down --keep stops the containers before it stops this service, so a stop
+# with no container running leaves the stopped ones in place.
 set -euo pipefail
 
 script=$(readlink -f -- "${BASH_SOURCE[0]}")
@@ -40,6 +42,10 @@ stop)
         exit 0
     fi
     dw_prepare daywarden-service
+    if ! dw_running; then
+        echo "daywarden-service: no daywarden container is running, so there is nothing to stop."
+        exit 0
+    fi
     timeout 100 docker compose --project-directory "$root" down --timeout 20
     ;;
 *)

@@ -184,9 +184,9 @@ Applications which pin certificates will not work through the intercepting proxy
 
 ## Check
 
-Open an `https` page in Firefox, or in Chromium. On the proxy machine, `docker compose logs decisions` shows that page's absolute URL, path included. A certificate warning means Firefox is still using its own store with the preference off and the PEM not imported, or the PEM is not in the system trust store. A page that never appears in that log is not using the proxy.
+Open an `https` page in Firefox, or in Chromium. On the proxy machine, `dw logs decisions` shows that page's absolute URL, path included, and whether it was allowed, denied, or redirected. `dw logs -f decisions` shows each one as it arrives. A certificate warning means Firefox is still using its own store with the preference off and the PEM not imported, or the PEM is not in the system trust store. A page that never appears in that log is not using the proxy.
 
-With the configuration URL, `docker compose logs autoconfig` shows each fetch of the file and the address it came from, such as `served /proxy.pac to 192.168.12.40`. A browser that never appears there has not fetched it. Open the task picker too. It opens directly, so it does not appear in the decisions log, and it should still offer that child's tasks.
+With the configuration URL, `dw logs autoconfig` shows each fetch of the file and the address it came from, such as `served /proxy.pac to 192.168.12.40`. A browser that never appears there has not fetched it. Open the task picker too. It opens directly, so it does not appear in the decisions log, and it should still offer that child's tasks.
 
 # OPNsense rule tips
 

@@ -102,6 +102,18 @@ def test_check_lists_every_error_and_starts_nothing(host):
     assert host.state["running"] == {}
 
 
+@pytest.mark.parametrize(
+    ("args", "logged"),
+    [((), ["logs", "--tail", "100", *SERVICES]), (("ARGS=-f decisions",), ["logs", "--follow", "--tail", "100", "decisions"])],
+)
+def test_logs_shows_the_local_stack_logs_with_the_options_and_services_in_args(host, args, logged):
+    host.all_running()
+    done = _make(host, "logs", *args)
+    assert done.returncode == 0, done.stderr
+    assert [call for call in _compose(host) if call[:1] == ["logs"]] == [logged]
+    assert "decisions-1  | decisions said nothing" in done.stdout.splitlines()
+
+
 def test_an_exported_value_wins_over_the_env_file(host):
     ca = host.tmp / "exported-ca"
     done = host.run("make", "--no-print-directory", "check", cwd=host.root, env={"CA_VOLUME_PATH": str(ca)})
