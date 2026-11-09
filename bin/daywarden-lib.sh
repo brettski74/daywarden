@@ -215,6 +215,124 @@ dw_config_dir() {
     printf '%s\n' "$dir"
 }
 
+# The config directory as an absolute path, for the config history.
+dw_config_path() {
+    local dir
+    dir=$(dw_config_dir)
+    case "$dir" in
+    /*) printf '%s\n' "$dir" ;;
+    *) printf '%s\n' "$root/$dir" ;;
+    esac
+}
+
+# The config history: a local git repository in the config directory, with
+# no remote. Every git call ignores the user's global and system git
+# config, so signing, hooks, templates, and a missing identity never get in
+# the way, and nothing is written to them. The author and committer are the
+# host user at daywarden.invalid, and the dates are in the household's
+# timezone when policy.yaml sets one.
+DW_HISTORY_IGNORE='# Written by daywarden. The config history leaves out editor leftovers, and
+# the .sample files that every install rewrites.
+*~
+*.swp
+*.swo
+.#*
+\#*#
+*.sample'
+
+dw_household_tz() {
+    [ -f "$1/policy.yaml" ] || return 0
+    awk '/^timezone:/ {
+        value = $0
+        sub(/^timezone:[ \t]*/, "", value)
+        sub(/[ \t]+#.*$/, "", value)
+        gsub(/^["\047]|["\047][ \t]*$/, "", value)
+        print value
+        exit
+    }' "$1/policy.yaml"
+}
+
+dw_git() {
+    local dir=$1 name zone
+    shift
+    name=$(dw_user)
+    zone=$(dw_household_tz "$dir")
+    TZ=${zone:-${TZ:-}} GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        GIT_AUTHOR_NAME=$name GIT_AUTHOR_EMAIL=$name@daywarden.invalid \
+        GIT_COMMITTER_NAME=$name GIT_COMMITTER_EMAIL=$name@daywarden.invalid \
+        git -C "$dir" "$@"
+}
+
+dw_history_warn() {
+    echo "Warning: this change to $(dw_tilde "$1") is not in the config history, because $2" >&2
+    [ -z "${3:-}" ] || printf '%s\n' "$3" | sed 's/^/  /' >&2
+}
+
+dw_tilde() {
+    printf '%s\n' "${1/#"$HOME"/\~}"
+}
+
+# Commit every uncommitted change in the config directory's own repository,
+# with the time, the host user, and the command as the message, such as
+# "2026-11-08 21:15 -0500 blg: dw reload". Does nothing without a repository
+# of its own. A failure is a warning, so what ran still counts.
+dw_history_commit() {
+    local dir=$1 command=$2 out zone stamp files=() names waited=0
+    [ -e "$dir/.git" ] || return 0
+    if ! command -v git >/dev/null 2>&1; then
+        dw_history_warn "$dir" "git is not installed. Fix: sudo pacman -S git"
+        return 0
+    fi
+    while [ -e "$dir/.git/index.lock" ] && [ "$waited" -lt 50 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if ! out=$(dw_git "$dir" add --all 2>&1); then
+        dw_history_warn "$dir" "git could not add it:" "$out"
+        return 0
+    fi
+    dw_git "$dir" diff --cached --quiet 2>/dev/null && return 0
+    mapfile -t files < <(dw_git "$dir" -c core.quotePath=false diff --cached --name-only 2>/dev/null)
+    zone=$(dw_household_tz "$dir")
+    stamp=$(TZ=${zone:-${TZ:-}} date '+%Y-%m-%d %H:%M %z')
+    if ! out=$(dw_git "$dir" commit --quiet -m "$stamp $(dw_user): $command" 2>&1); then
+        dw_history_warn "$dir" "git could not commit it:" "$out"
+        return 0
+    fi
+    printf -v names '%s, ' "${files[@]}"
+    echo "Saved in the config history: ${names%, }."
+}
+
+# Create the config history when the config directory has none, with what
+# is there as the first version. A directory inside another git work tree,
+# such as config/ in a clone of the daywarden repository, gets none: the
+# outer repository is its history. With a history already there, commit any
+# uncommitted change instead.
+dw_history_keep() {
+    local dir=$1 command=$2 out
+    [ -d "$dir" ] || return 0
+    if [ -e "$dir/.git" ]; then
+        dw_history_commit "$dir" "$command"
+        return 0
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        echo "Warning: git is not installed, so $(dw_tilde "$dir") has no config history. Fix: sudo pacman -S git" >&2
+        return 0
+    fi
+    if [ "$(dw_git "$dir" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+        echo "$(dw_tilde "$dir") is inside the git repository $(dw_tilde "$(dw_git "$dir" rev-parse --show-toplevel)"), which is its history, so it gets no config history of its own."
+        return 0
+    fi
+    [ -e "$dir/.gitignore" ] || printf '%s\n' "$DW_HISTORY_IGNORE" >"$dir/.gitignore"
+    if ! out=$(dw_git "$dir" init --quiet --initial-branch=main 2>&1); then
+        echo "Warning: the config history could not be created in $(dw_tilde "$dir"), because git init failed:" >&2
+        printf '%s\n' "$out" | sed 's/^/  /' >&2
+        return 0
+    fi
+    echo "Started the config history in $(dw_tilde "$dir"). See its history with git log there."
+    dw_history_commit "$dir" "$command" >/dev/null
+}
+
 # Create the CA and data directories, so Docker does not create them owned
 # by root.
 dw_make_dirs() {
