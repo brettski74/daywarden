@@ -68,6 +68,7 @@ def test_a_first_install_creates_the_layout_links_the_commands_and_does_not_star
     assert (root / "ca").is_dir() and (root / "data").is_dir()
     assert (root / "lib" / "policy" / "clips.py").is_file()
     assert (root / "lib" / "policy" / "requirements.txt").is_file()
+    assert not (root / "lib" / "policy" / "portal").exists()
     assert (root / "config" / "policy.yaml").read_bytes() == (ROOT / "config" / "policy.yaml").read_bytes()
     assert _env_value(root / ".env", "CA_VOLUME_PATH") == "${HOME}/daywarden/ca"
     assert _env_value(root / ".env", "DAYWARDEN_DATA_DIR") == "${HOME}/daywarden/data"

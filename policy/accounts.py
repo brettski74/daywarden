@@ -190,9 +190,24 @@ class Accounts:
             )
         return username
 
+    def end(self, token: str | None) -> None:
+        """Remove the session for token, so that key cannot be used again."""
+        key = _key_bytes(token)
+        if key is None:
+            return
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM parent_sessions WHERE key_hash = ?",
+                (hashlib.sha256(key).hexdigest(),),
+            )
+
     def cookie_header(self, token: str) -> str:
         """Return the Set-Cookie value for a session key."""
         return f"{COOKIE_NAME}={token}; Secure; HttpOnly; SameSite=Lax; Path=/"
+
+    def clear_cookie_header(self) -> str:
+        """Return the Set-Cookie value that removes the session cookie."""
+        return f"{COOKIE_NAME}=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
 
     def record_parent_check(self, client_group: str, now: datetime) -> None:
         """Store one parent_check pass. Callers check the session first."""

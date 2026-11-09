@@ -279,19 +279,18 @@ def test_a_signed_in_parent_stays_signed_in_across_a_reload(service):
     status, _body, headers = _call(
         service.app,
         "POST",
-        "/usage",
-        body=f"username=ada&password={PASSWORD}".encode(),
-        content_type="application/x-www-form-urlencoded",
+        "/parent/api/login",
+        body=json.dumps({"username": "ada", "password": PASSWORD}).encode(),
+        content_type="application/json",
         scheme="https",
     )
-    assert status == 303
+    assert status == 200
     cookie = headers["set-cookie"][0].split(";", 1)[0]
     service.edit(NO_READING, "when_true: { action: allow }")
     assert service.reload()[1]["reloaded"] is True
-    for path in ("/usage", "/attempts"):
+    for path in ("/parent/api/session", "/parent/api/usage", "/parent/api/attempts"):
         status, body, _headers = _call(service.app, "GET", path, cookie=cookie, scheme="https")
         assert status == 200, body
-        assert 'name="password"' not in body
 
 
 @pytest.mark.parametrize("apply", ["reload", "restart"])

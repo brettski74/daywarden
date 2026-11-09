@@ -7,7 +7,9 @@ manager is never touched.
 """
 
 import http.client
+import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -16,7 +18,6 @@ import subprocess
 import tarfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -105,15 +106,15 @@ class Installed:
     def ca(self) -> Path:
         return self.root / "ca" / "mitmproxy-ca-cert.pem"
 
-    def policy_page(self, method="GET", body=None):
-        """Open /usage over HTTPS, trusting only the installed CA. Retry while the parent listener starts."""
+    def policy_page(self, path="/parent/api/session", method="GET", body=None):
+        """Open a parent address over HTTPS, trusting only the installed CA. Retry while the parent listener starts."""
         context = ssl.create_default_context(cafile=str(self.ca))
         deadline = time.monotonic() + 60
         while True:
             try:
                 connection = http.client.HTTPSConnection("localhost", self.policy_port, context=context, timeout=5)
-                headers = {"Content-Type": "application/x-www-form-urlencoded"} if body else {}
-                connection.request(method, "/usage", body=body, headers=headers)
+                headers = {"Content-Type": "application/json"} if body else {}
+                connection.request(method, path, body=body, headers=headers)
                 response = connection.getresponse()
                 return response.status, dict(response.getheaders()), response.read().decode()
             except (OSError, ssl.SSLError):
@@ -122,8 +123,8 @@ class Installed:
                 time.sleep(1)
 
     def sign_in(self) -> bool:
-        body = urllib.parse.urlencode({"username": "ada", "password": PASSWORD})
-        _status, headers, _page = self.policy_page("POST", body)
+        body = json.dumps({"username": "ada", "password": PASSWORD})
+        _status, headers, _page = self.policy_page("/parent/api/login", "POST", body)
         return "parent_session=" in headers.get("set-cookie", "")
 
 
@@ -178,12 +179,21 @@ def test_make_dist_builds_a_package_that_installs_and_runs(installed):
         proxy.open("http://daywarden-install-test.invalid/", timeout=10)
     assert denied.value.code == 403
 
-    _status, _headers, page = installed.policy_page()
+    status, _headers, page = installed.policy_page()
+    assert status == 403
     assert "closed until a parent account is added" in page
     saved = installed.command("add-parent", "ada", input=PASSWORD + "\n")
     assert "parent account ada is saved" in saved.stdout
-    assert "Enter your username and password." in installed.policy_page()[2]
+    assert installed.policy_page()[0] == 401
     assert installed.sign_in()
+
+    # The package carries the built portal. The target machine has no Node.
+    status, _headers, shell = installed.policy_page("/parent/attempts")
+    assert status == 200
+    assert '<div id="root">' in shell
+    script = re.search(r'src="(/parent/assets/[^"]+\.js)"', shell)
+    assert script is not None
+    assert installed.policy_page(script.group(1))[0] == 200
 
     assert "--client" in installed.command("rm-attempts", "--help").stdout
     if shutil.which("python3"):

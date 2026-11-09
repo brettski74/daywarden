@@ -10,8 +10,10 @@ load_env = set -a; while IFS= read -r line || [ -n "$$line" ]; do case "$$line" 
 VENV := .venv
 VENV_PYTHON := $(VENV)/bin/python
 DIST_DIR := dist
+PORTAL := policy/portal
+PORTAL_INSTALLED := $(PORTAL)/node_modules/.package-lock.json
 
-.PHONY: up down reload restart check logs show-env venv test dist help
+.PHONY: up down reload restart check logs show-env venv portal-deps test dist help
 
 # make help lists each target that has a "## description" on its line.
 
@@ -46,7 +48,17 @@ $(VENV)/.installed: requirements-dev.txt policy/requirements.txt
 	$(VENV_PYTHON) -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
 	touch $@
 
-test: venv ## Run the tests. Pass pytest arguments with ARGS="tests/test_clips.py -q"
+# The portal's packages are installed once and again only when its lock file
+# changes. Without Node this does nothing and the portal tests are skipped.
+portal-deps: ## Install the parent portal's npm packages for its tests, when Node is installed
+	@if command -v npm >/dev/null 2>&1; then $(MAKE) -q $(PORTAL_INSTALLED) || $(MAKE) --no-print-directory $(PORTAL_INSTALLED); \
+	else echo "npm is not installed, so the parent portal tests will be skipped"; fi
+
+$(PORTAL_INSTALLED): $(PORTAL)/package.json $(PORTAL)/package-lock.json
+	cd $(PORTAL) && npm ci --no-audit --no-fund
+	touch $@
+
+test: venv portal-deps ## Run the tests, the portal's too. Pass pytest arguments with ARGS="tests/test_clips.py -q"
 	$(VENV_PYTHON) -m pytest $(ARGS)
 
 # Builds and saves the images. Does not change make up or .env.
@@ -54,4 +66,4 @@ dist: venv ## Package for another machine as dist/daywarden-<version>.tar.gz
 	$(VENV_PYTHON) -m deploy.build --out $(DIST_DIR)
 
 help: ## List the targets and what they do
-	@awk -F ':[^#]*## ' '/^[a-z][a-z-]*:[^=]*## / { printf "  %-9s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk -F ':[^#]*## ' '/^[a-z][a-z-]*:[^=]*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)

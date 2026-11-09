@@ -4,6 +4,9 @@ __pycache__/
 .venv/
 # make dist
 dist/
+# The parent portal's npm packages and its build, made by make test and the image build.
+node_modules/
+policy/portal/dist/
 
 # The CA private key is generated on first start. Do not commit it.
 data/ca/*
