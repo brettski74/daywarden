@@ -150,6 +150,23 @@ def test_a_silent_recording_has_no_clips():
     assert find_clips(audio).spans == ()
 
 
+@pytest.mark.parametrize("scale", [1, 100, 1000])
+def test_room_noise_alone_has_no_clips_however_loud_it_is(scale):
+    noise, _ = _audio(3000, scale=scale)
+    assert noise.max > 0
+    assert find_clips(noise) == clips.Found((), 0)
+    assert len(find_clips(_audio(1000, 400, 1600)[0]).spans) == 1
+
+
+def test_a_tone_only_15_db_above_the_noise_is_still_found():
+    rng = random.Random(1)
+    samples = array("h", (round(rng.uniform(-1000, 1000)) for _ in range(RATE)))
+    samples.extend(round(5700 * math.sin(2 * math.pi * 440 * n / RATE)) for n in range(RATE // 2))
+    samples.extend(round(rng.uniform(-1000, 1000)) for _ in range(RATE))
+    audio = AudioSegment(data=samples.tobytes(), sample_width=2, frame_rate=RATE, channels=1)
+    assert len(find_clips(audio, threshold=10).spans) == 1
+
+
 # Loudness
 
 

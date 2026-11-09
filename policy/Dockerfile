@@ -9,9 +9,10 @@ RUN npm run build
 
 FROM python:3.14-slim
 
-# git commits the parent portal's saves to the config history.
+# git commits the parent portal's saves to the config history. ffmpeg, built
+# with libopus, cuts the recordings made in the parent portal.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt

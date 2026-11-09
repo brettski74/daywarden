@@ -44,6 +44,7 @@ from policy.portal import PORTAL_DIR, client_names, install_portal
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
+from policy.recordings import Recordings
 from policy.store import PolicyStore
 from policy.task_admin import Reloads, TaskAdmin
 from policy.task_page import respond_task, task_media
@@ -246,6 +247,8 @@ def create_app() -> FastAPI:
         )
         if path is not None
     }
+    recordings = Recordings()
+    recordings.clean()
     tasks = TaskAdmin(
         policy_file,
         policy=lambda: holder.loaded.policy,
@@ -253,6 +256,7 @@ def create_app() -> FastAPI:
         attempts=attempts,
         reloads=Reloads(apply_reload, others),
         clients=lambda: client_names(holder.loaded.policy),
+        recordings=recordings,
     )
     install_portal(
         app,

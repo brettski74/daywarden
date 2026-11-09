@@ -1,8 +1,10 @@
-import { Archive, MessageSquareText, Volume2 } from "lucide-react";
+import { Archive, MessageSquareText, Mic, Volume2, WholeWord } from "lucide-react";
 import { useState } from "react";
-import { BASE } from "../api";
+import { BASE, api } from "../api";
 import { Dialog } from "../components/Dialog";
+import { RecordDialog, type Kept } from "../components/RecordDialog";
 import { label } from "../labels";
+import type { Item, Kind } from "../review";
 
 export type Pool = "current" | "revision" | "attic";
 export type SpellingWord = { key: string; word: string; pool: Pool; clip: string; sentence: string | null };
@@ -38,8 +40,19 @@ export function listedPools(filter: string): Pool[] {
   return (POOL_FILTERS.find(([option]) => option === filter) ?? POOL_FILTERS[0])[2];
 }
 
+// The recording buttons in each row: what each re-records, its label, and its icon.
+const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = [
+  { kinds: ["word", "sentence"], label: "Re-record word and sentence", icon: Mic },
+  { kinds: ["word"], label: "Re-record word", icon: WholeWord },
+  { kinds: ["sentence"], label: "Re-record sentence", icon: MessageSquareText },
+];
+
 function audioAddress(task: string, pool: Pool, file: string): string {
   return `${BASE}/api/tasks/${encodeURIComponent(task)}/audio/${pool}/${encodeURIComponent(file)}`;
+}
+
+function recordingItems(key: string, kinds: Kind[]): Item[] {
+  return kinds.map((kind) => ({ key, kind, line: kind === "word" ? key : `Sentence for ${key}` }));
 }
 
 type Props = {
@@ -52,16 +65,30 @@ type Props = {
   onMove: (key: string, pool: Pool) => void;
   onRetire: (key: string) => void;
   onPlayFailed: (message: string) => void;
+  /** A recording was kept, or the dialog closed saying why nothing changed. */
+  onRecorded: (message: string, changed: boolean) => void;
 };
 
 /** A spelling task's own settings and its word list. */
-export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, onMove, onRetire, onPlayFailed }: Props) {
+export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, onMove, onRetire, onPlayFailed, onRecorded }: Props) {
   const [retiring, setRetiring] = useState<SpellingWord | null>(null);
+  const [recording, setRecording] = useState<{ key: string; kinds: Kind[] } | null>(null);
   const listed = listedPools(filter);
   const words = data.words.filter((word) => listed.includes(word.pool));
 
   function play(pool: Pool, file: string) {
     new Audio(audioAddress(task, pool, file)).play().catch(() => onPlayFailed(`${file} could not be played.`));
+  }
+
+  async function keep(take: string, kept: Kept[]): Promise<string> {
+    const clips = Object.fromEntries(kept.map(({ item, clip }) => [item.kind, clip]));
+    const done = await api<{ message: string }>(`/tasks/${encodeURIComponent(task)}/recordings`, {
+      page: null,
+      method: "POST",
+      body: { take, word: kept[0].item.key, clips },
+      signedOut: "refuse",
+    });
+    return done.message;
   }
 
   return (
@@ -156,12 +183,26 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
                     )}
                   </td>
                   <td>
-                    {word.pool !== "attic" && (
-                      <button type="button" className="button button-quiet" onClick={() => setRetiring(word)}>
-                        <Archive aria-hidden="true" />
-                        Retire
-                      </button>
-                    )}
+                    <div className="word-actions">
+                      {RECORDINGS.map(({ kinds, label: what, icon: Icon }) => (
+                        <button
+                          key={what}
+                          type="button"
+                          className="icon-button icon-button-quiet"
+                          aria-label={`${what} for ${word.key}`}
+                          title={`${what} for ${word.key}`}
+                          onClick={() => setRecording({ key: word.key, kinds })}
+                        >
+                          <Icon aria-hidden="true" />
+                        </button>
+                      ))}
+                      {word.pool !== "attic" && (
+                        <button type="button" className="button button-quiet" onClick={() => setRetiring(word)}>
+                          <Archive aria-hidden="true" />
+                          Retire
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -181,6 +222,17 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
             setRetiring(null);
           }}
           onCancel={() => setRetiring(null)}
+        />
+      )}
+      {recording !== null && (
+        <RecordDialog
+          title={`Re-record ${recording.kinds.length === 2 ? "word and sentence" : recording.kinds[0]} for ${recording.key}`}
+          items={recordingItems(recording.key, recording.kinds)}
+          onKeep={keep}
+          onClose={(confirmed) => {
+            setRecording(null);
+            if (confirmed) onRecorded(confirmed.message, confirmed.changed);
+          }}
         />
       )}
     </section>

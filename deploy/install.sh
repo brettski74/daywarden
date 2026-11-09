@@ -6,6 +6,7 @@
 # cut-clips are linked into ~/bin. Every dependency is checked first, and
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
+# The files in config/tasks.d are created only along with a new policy.yaml.
 # The package's copies are always installed beside them as .sample files.
 # A config directory with no git history gets one, with what is there as
 # its first version.
@@ -452,7 +453,21 @@ install_file "$package/docker-compose.yml" "$root/docker-compose.yml" 644
 install_file "$scratch/env" "$root/.env.sample" 644
 keep_or_create "$root/.env.sample" "$root/.env"
 install_file "$package/config/policy.yaml" "$root/config/policy.yaml.sample" 644
+new_policy=0
+[ -e "$root/config/policy.yaml" ] || new_policy=1
 keep_or_create "$root/config/policy.yaml.sample" "$root/config/policy.yaml"
+# The sample policy includes tasks.d. Its files are created only with a new
+# policy.yaml: a kept policy may include a tasks.d of its own, where a new
+# file could define a task a second time.
+if [ -d "$package/config/tasks.d" ]; then
+    mkdir -p -- "$root/config/tasks.d"
+    for sample in "$package/config/tasks.d"/*; do
+        [ -f "$sample" ] || continue
+        target="$root/config/tasks.d/$(basename -- "$sample")"
+        install_file "$sample" "$target.sample" 644
+        [ "$new_policy" -eq 0 ] || keep_or_create "$target.sample" "$target"
+    done
+fi
 install_file "$scratch/bypass.txt" "$root/config/bypass.txt.sample" 644
 keep_or_create "$root/config/bypass.txt.sample" "$root/config/bypass.txt"
 [ -e "$root/config/.git" ] || dw_history_keep "$root/config" "install.sh"

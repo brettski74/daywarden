@@ -71,6 +71,14 @@ type DataRequest = {
   page: string | null;
   method?: "GET" | "POST";
   body?: unknown;
+  /** A recording sent as it is, with its own type, in place of a JSON body. */
+  audio?: Blob;
+  /**
+   * What a 401 does. "redirect", the default, goes to sign-in. "refuse"
+   * throws an ApiError with status 401, so a dialog can keep what it holds and
+   * ask the parent to sign in again in another tab.
+   */
+  signedOut?: "redirect" | "refuse";
   signal?: AbortSignal;
 };
 
@@ -82,15 +90,19 @@ type DataRequest = {
  * it throws a redirect to the closed sign-in screen. The request is not
  * repeated after sign-in.
  */
-export async function api<T>(path: string, { page, method = "GET", body, signal }: DataRequest): Promise<T> {
+export async function api<T>(path: string, { page, method = "GET", body, audio, signedOut = "redirect", signal }: DataRequest): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const init: RequestInit = { method, headers, signal, credentials: "same-origin" };
-  if (body !== undefined) {
+  if (audio !== undefined) {
+    headers["Content-Type"] = audio.type;
+    init.body = audio;
+  } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
   const response = await fetch(`${BASE}/api${path}`, init);
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && signedOut === "refuse") throw new ApiError(401, data.error ?? "Sign in to see this.", data);
   if (response.status === 401) throw redirect(signInAddress(page));
   if (response.status === 403 && data.closed) throw redirect(LOGIN);
   if (!response.ok) throw new ApiError(response.status, data.error ?? `The service answered ${response.status}.`, data);

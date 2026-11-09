@@ -13,8 +13,9 @@ file is written, every service reloads it as ``dw reload`` would, and the
 file is committed in the config history as the signed-in parent.
 
 Retire moves a word's recordings into the attic at once. Nothing is ever
-deleted. Moving a word or retiring one changes only the data directory, so
-neither reloads the policy nor commits anything.
+deleted, except that a kept recording replaces the word's old clip of that
+kind. Moving a word, retiring one, or keeping a recording changes only the
+data directory, so none of them reloads the policy or commits anything.
 
 The decisions service runs as root in its container. Every file and
 directory it writes keeps the owner of what it replaces, or takes the owner
@@ -24,18 +25,22 @@ commit them without sudo.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
+import shutil
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from policy import spelling
+from policy import clips, spelling
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, task_files
 from policy.history import History, HistoryError, stamp
+from policy.owned import make_directory, own_like
+from policy.recordings import GONE, Recordings
 from policy.task_edit import EditError, WrittenTask, name_list, read_task, rewrite_task, scalar
 from policy.tasks import PARENT_CHECK, AttemptStore, stored_passes
 
@@ -90,6 +95,7 @@ class TaskAdmin:
         reloads: Reloads,
         clients: Callable[[], Sequence[str]],
         data_root: Callable[[], Path] = spelling.data_root,
+        recordings: Recordings | None = None,
     ) -> None:
         self.policy_file = policy_file
         self.policy = policy
@@ -98,6 +104,7 @@ class TaskAdmin:
         self.reloads = reloads
         self.clients = clients
         self.data_root = data_root
+        self.recordings = recordings if recordings is not None else Recordings(data_root)
 
     @property
     def history(self) -> History:
@@ -220,6 +227,50 @@ class TaskAdmin:
         except OSError as error:
             return Answer(500, {"error": f"{key} could not be retired: {error}"})
         return Answer(200, {"message": f"Retired {moved[0][0]}. Its recordings are in the attic.", "warnings": []})
+
+    def keep(self, name: str, request: Mapping) -> Answer:
+        """Write the kept clips of a take as a word's new recordings, in the word's own pool directory.
+
+        ``request`` names the take, the word's entry key, and the clip kept for
+        each kind, ``word`` and ``sentence``. Each replaces the word's old clip
+        of that kind, whatever its format. The take is thrown away afterwards.
+        """
+        found = self._read(name)
+        if isinstance(found, Answer):
+            return found
+        written = found[2]
+        if written.fields.get("type") != spelling.SPELLING:
+            return Answer(400, {"error": f"{name} is not a spelling task, so it has no recordings."})
+        take, key, kept = request.get("take"), request.get("word"), request.get("clips")
+        if not isinstance(take, str) or not isinstance(key, str) or not isinstance(kept, Mapping):
+            return Answer(400, {"error": "Name the take, the word, and the clip kept for each kind."})
+        unknown = set(kept) - {spelling.WORD_CLIP, spelling.SENTENCE_CLIP}
+        if unknown or not kept or len(set(map(str, kept.values()))) != len(kept):
+            return Answer(400, {"error": "Keep a word clip, a sentence clip, or both, each a different clip."})
+        sources = {kind: self.recordings.clip(take, clip) if isinstance(clip, str) else None for kind, clip in kept.items()}
+        if any(source is None for source in sources.values()):
+            return Answer(404, {"error": GONE})
+        try:
+            settings = _settings(written)
+            entries, _problems = spelling.pool_entries(settings, self.data_root())
+        except (ValueError, OSError) as error:
+            return Answer(400, {"error": str(error)})
+        pools = [entry["pool"] for entry in entries if entry["key"].lower() == key.lower()]
+        if len(pools) > 1:
+            return self._clash()
+        if not pools:
+            return Answer(400, {"error": f"There is no word {key} in this task's pools. Reload the page to see them again."})
+        entry = next(entry for entry in entries if entry["key"].lower() == key.lower())
+        directory = self.data_root() / settings.directory(pools[0])
+        try:
+            for kind in (spelling.WORD_CLIP, spelling.SENTENCE_CLIP):
+                if kind in sources:
+                    place_clip(sources[kind], directory, entry["key"] + ("" if kind == spelling.WORD_CLIP else ".sentence"))
+        except OSError as error:
+            return Answer(500, {"error": f"The recording of {entry['key']} could not be written: {error}"})
+        self.recordings.discard(take)
+        what = " and ".join(kind for kind in (spelling.WORD_CLIP, spelling.SENTENCE_CLIP) if kind in sources)
+        return Answer(200, {"message": f"Saved the new {what} recording{'s' if len(sources) > 1 else ''} of {entry['key']}.", "warnings": []})
 
     def audio(self, name: str, pool: str, file_name: str) -> Path | None:
         """Return a recording in one of a spelling task's pools, or None."""
@@ -457,7 +508,7 @@ def replace_text(path: Path, text: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temporary, stat.S_IMODE(status.st_mode))
-        _own_like(temporary, status)
+        own_like(temporary, status)
         os.replace(temporary, path)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -480,23 +531,39 @@ def move_files(moves: Sequence[tuple[Path, Path]]) -> list[tuple[Path, Path]]:
     return done
 
 
+def place_clip(source: Path, directory: Path, name: str) -> Path:
+    """Rename a pending clip into place as ``<name>.opus``, then remove the entry's older clips of that kind.
+
+    The new clip takes the owner of the clip it replaces, or of the directory.
+    Where the pending clip is on another file system, it is copied to a hidden
+    file beside its target first, so a scan never sees half a clip.
+    """
+    make_directory(directory)
+    old = clips.existing_clips(directory, name)
+    target = directory / (name + clips.EXTENSION)
+    owner = (old[0] if old else directory).stat()
+    try:
+        os.replace(source, target)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        temporary = directory / f".{target.name}.{os.getpid()}.part"
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        source.unlink()
+    own_like(target, owner)
+    for path in old:
+        if path.exists() and not path.samefile(target):
+            path.unlink()
+    return target
+
+
 def undo_moves(done: Sequence[tuple[Path, Path]]) -> None:
     for source, target in reversed(done):
         try:
             os.rename(target, source)
         except OSError as error:
             print(f"could not move {target} back to {source}: {error}", flush=True)
-
-
-def make_directory(directory: Path) -> None:
-    """Create a directory and any missing parents, each owned like the directory it is made in."""
-    if directory.is_dir():
-        return
-    make_directory(directory.parent)
-    directory.mkdir()
-    _own_like(directory, directory.parent.stat())
-
-
-def _own_like(path: Path, status: os.stat_result) -> None:
-    if os.geteuid() == 0 and (status.st_uid, status.st_gid) != (0, 0):
-        os.chown(path, status.st_uid, status.st_gid)

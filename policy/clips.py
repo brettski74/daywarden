@@ -14,7 +14,8 @@ clip's name:
     bin/cut-clips words-1.m4a words-2.m4a --out ~/daywarden/spelling/current
 
 It needs ffmpeg built with libopus, and pydub with audioop-lts from
-``policy/requirements.txt``. The policy service does not import this module.
+``policy/requirements.txt``. The policy service cuts the parent portal's
+browser recordings with the library half, through ``policy.recordings``.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ SHORTEST_GUARD_MS = 10
 MIN_SILENCE_MS = 700
 SHORTEST_SILENCE_MS = 200
 THRESHOLD_DB = 35.0
+CONTRAST_DB = 15.0
 MIN_SPEECH_MS = 150
 LOUDNESS_LUFS = -18.0
 QUIETEST_LUFS = -40.0
@@ -237,6 +239,10 @@ def find_clips(
     level is above ``threshold`` decibels below the loudest sample. Sound
     frames separated by less than ``min_silence`` ms belong to one stretch,
     and a stretch shorter than ``min_speech`` ms is counted as ignored.
+
+    A recording whose loudest frame is less than ``CONTRAST_DB`` above its
+    quietest tenth of frames is only room noise, however loud, and has no
+    clips.
     """
     if min_silence < SHORTEST_SILENCE_MS:
         raise ValueError(f"min_silence must be at least {SHORTEST_SILENCE_MS} ms")
@@ -246,10 +252,14 @@ def find_clips(
     if peak == 0:
         return Found((), 0)
     floor = peak * 10 ** (-threshold / 20)
+    frames = [(start, min(start + FRAME_MS, length)) for start in range(0, length, FRAME_MS)]
+    levels = [audio[start:end].rms for start, end in frames]
+    quiet = sorted(levels)[len(levels) // 10]
+    if max(levels) < quiet * 10 ** (CONTRAST_DB / 20):
+        return Found((), 0)
     stretches: list[list[int]] = []
-    for start in range(0, length, FRAME_MS):
-        end = min(start + FRAME_MS, length)
-        if audio[start:end].rms <= floor:
+    for (start, end), level in zip(frames, levels):
+        if level <= floor:
             continue
         if stretches and start - stretches[-1][1] < min_silence:
             stretches[-1][1] = end
@@ -330,12 +340,21 @@ def write_clip(
     as an older ``rope.mp3``, are removed once the new clip is in place.
     """
     check_name(name)
-    if not _BITRATE.fullmatch(bitrate):
-        raise ValueError(f"{bitrate}: a bitrate is a number of bits per second, such as 32k")
     folder = Path(directory)
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / (name + EXTENSION)
-    temporary = folder / f".{name}{EXTENSION}.{secrets.token_hex(4)}.part"
+    target = encode_clip(clip, folder / (name + EXTENSION), bitrate=bitrate)
+    for old in map(Path, replace):
+        if old.exists() and not old.samefile(target):
+            old.unlink()
+    return target
+
+
+def encode_clip(clip: AudioSegment, target: str | os.PathLike, *, bitrate: str = BITRATE) -> Path:
+    """Encode a clip as Ogg Opus at ``target``, through a hidden file renamed into place. The name is not checked."""
+    if not _BITRATE.fullmatch(bitrate):
+        raise ValueError(f"{bitrate}: a bitrate is a number of bits per second, such as 32k")
+    target = Path(target)
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(4)}.part")
     try:
         _ffmpeg(
             [
@@ -348,9 +367,6 @@ def write_clip(
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
-    for old in map(Path, replace):
-        if old.exists() and not old.samefile(target):
-            old.unlink()
     return target
 
 
@@ -481,7 +497,7 @@ def _cut(recording: str, args: argparse.Namespace, stdin: TextIO, out: TextIO, e
         audio = load_recording(recording)
         if not args.no_normalize:
             normalized = normalize(audio, args.loudness)
-            print(_loudness_line(normalized), file=out)
+            print(loudness_line(normalized), file=out)
             audio = normalized.audio
         found = find_clips(audio, min_silence=args.min_silence, threshold=args.threshold, min_speech=args.min_speech)
     except ClipError as exc:
@@ -596,7 +612,7 @@ def _bitrate(text: str) -> str:
     return text
 
 
-def _loudness_line(normalized: Normalized) -> str:
+def loudness_line(normalized: Normalized) -> str:
     if not normalized.before.measured:
         return "Loudness could not be measured (silent, or shorter than 0.4 s), so the recording is left as it is."
     verb = "raised" if normalized.gain >= 0 else "lowered"

@@ -71,6 +71,9 @@
   --unsaved-text: var(--palette-navy);
   --dialog-bg: var(--palette-white);
   --dialog-backdrop: color-mix(in srgb, var(--palette-navy) 45%, transparent);
+  --recording: var(--palette-brick);
+  --kbd-bg: var(--palette-ivory);
+  --kbd-text: var(--palette-navy);
 
   --shadow: 0 0.1rem 0.6rem color-mix(in srgb, var(--palette-navy) 25%, transparent);
 }

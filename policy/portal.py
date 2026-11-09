@@ -9,9 +9,13 @@ Household data comes only from JSON under /parent/api/, and the spelling
 recordings the task pages play. Those endpoints need a parent session from
 S007.1. With no session they answer 401, and with no parent account 403,
 with no data. They never redirect: only the portal's own code reacts to
-those answers. Sign-in, sign-out, the parent check, a task save, and Retire
-are JSON POSTs, and a POST whose body is not application/json is refused, so
-a form on another site cannot use the parent's cookie to act.
+those answers. Sign-in, sign-out, the parent check, a task save, Retire, and
+cutting or keeping a recording are JSON POSTs, and a POST whose body is not
+application/json is refused, so a form on another site cannot use the
+parent's cookie to act. The one exception is the upload of a recording,
+which is the raw audio, and must be audio/webm or audio/ogg. A form cannot
+send either, and a script on another site would need a CORS preflight,
+which is never approved.
 
 Sign-in returns a page address for the portal to open. ``safe_next`` keeps
 that to a portal page, never a data address, a file, the sign-in screen, or
@@ -29,9 +33,11 @@ from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value
 from policy.hierarchy import Policy
+from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
 from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
@@ -106,11 +112,13 @@ def install_portal(
     """Add the portal, its data endpoints, and the old parent addresses to app.
 
     loaded returns the policy in force, with ``policy`` and ``clock``.
-    tasks reads and saves the task pages.
+    tasks reads and saves the task pages, and keeps recordings.
     Handlers are async so they stay on the event-loop thread, where this
-    process's SQLite connection lives.
+    process's SQLite connection lives. Storing and cutting a recording run on
+    a worker thread, so ffmpeg never holds up the proxy's decisions.
     """
     root = portal_dir.resolve()
+    recordings = tasks.recordings if tasks is not None else Recordings()
 
     def guard(request: Request) -> tuple[str | None, Response | None]:
         """Return the signed-in username, or the refusal to send instead."""
@@ -270,6 +278,79 @@ def install_portal(
         answer = tasks.retire(name, body.get("word"))
         return _json(answer.status, answer.body)
 
+    @app.post("/parent/api/tasks/{name}/recordings")
+    async def task_keep(request: Request, name: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = tasks.keep(name, body)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/recordings")
+    async def recording_upload(request: Request) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        extension = take_type(request.headers.get("content-type", ""))
+        if extension is None:
+            return _json(415, {"error": "Send a recording as audio/webm or audio/ogg."})
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        body, refused = await _limited_body(request, LONGEST_TAKE_BYTES)
+        if refused is not None:
+            return refused
+        try:
+            take = await run_in_threadpool(recordings.store, body, extension)
+        except RecordingError as error:
+            return _refused(error)
+        return _json(200, {"take": take})
+
+    @app.post("/parent/api/recordings/{take}/cut")
+    async def recording_cut(request: Request, take: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        try:
+            settings = cut_settings(body.get("settings"))
+            return _json(200, await run_in_threadpool(recordings.cut, take, settings))
+        except RecordingError as error:
+            return _refused(error)
+
+    @app.post("/parent/api/recordings/{take}/discard")
+    async def recording_discard(request: Request, take: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        _body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        recordings.discard(take)
+        return _json(200, {"discarded": True})
+
+    @app.get("/parent/api/recordings/{take}/{file_name}")
+    async def recording_clip(request: Request, take: str, file_name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        found = recordings.clip(take, file_name.removesuffix(".opus")) if file_name.endswith(".opus") else None
+        if found is None:
+            return _json(404, {"error": "There is no such recording."})
+        return FileResponse(found, media_type="audio/ogg", headers={"cache-control": "private, no-store"})
+
     @app.get("/parent/api/tasks/{name}/audio/{pool}/{file_name}")
     async def task_audio(request: Request, name: str, pool: str, file_name: str) -> Response:
         _username, refused = guard(request)
@@ -345,6 +426,31 @@ def _cookie(request: Request) -> str | None:
 
 def _json(status: int, body: dict) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers={"cache-control": "no-store"})
+
+
+def _refused(error: RecordingError) -> JSONResponse:
+    body: dict = {"error": str(error)}
+    if error.errors:
+        body["errors"] = error.errors
+    return _json(error.status, body)
+
+
+async def _limited_body(request: Request, limit: int) -> tuple[bytes, Response | None]:
+    """Return a POST body, or a 413 as soon as it is known to be longer than limit."""
+    try:
+        declared = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        declared = 0
+    if declared > limit:
+        return b"", _json(413, {"error": TOO_LONG})
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            return b"", _json(413, {"error": TOO_LONG})
+        chunks.append(chunk)
+    return b"".join(chunks), None
 
 
 async def _json_body(request: Request) -> tuple[dict, Response | None]:

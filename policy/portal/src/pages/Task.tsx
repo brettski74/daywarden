@@ -4,6 +4,7 @@ import {
   useBlocker,
   useFetcher,
   useLoaderData,
+  useRevalidator,
   useSearchParams,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
@@ -28,7 +29,7 @@ export type TaskData = {
 };
 
 export type Result = {
-  intent: "save" | "retire";
+  intent: "save" | "retire" | "record";
   ok: boolean;
   message?: string;
   warnings?: string[];
@@ -65,9 +66,10 @@ export async function taskLoader({ request, params }: LoaderFunctionArgs): Promi
  *
  * Nor is it after a refused save. A file changed on the server since the page
  * opened must stay refused until the parent reloads the page and sees it.
+ * A kept recording fetches it again on the same address, to list the new clips.
  */
 export function taskShouldRevalidate({ currentUrl, nextUrl, formMethod, actionResult, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
-  if (!formMethod && currentUrl.pathname === nextUrl.pathname) return false;
+  if (!formMethod && currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search) return false;
   if ((actionResult as Result | undefined)?.ok === false) return false;
   return defaultShouldRevalidate;
 }
@@ -105,6 +107,7 @@ function TaskEditor({ data }: { data: TaskData }) {
   const [asking, setAsking] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<Result>();
+  const revalidator = useRevalidator();
   const handled = useRef<Result | undefined>(undefined);
   useTitle(data.name);
   const dirty = changed(data, edits);
@@ -284,6 +287,10 @@ function TaskEditor({ data }: { data: TaskData }) {
           onMove={(key, to) => setEdits((current) => ({ ...current, moves: { ...current.moves, [key]: to } }))}
           onRetire={retire}
           onPlayFailed={(message) => setResult({ intent: "retire", ok: false, error: message })}
+          onRecorded={(message, written) => {
+            setResult({ intent: "record", ok: true, message, warnings: [] });
+            if (written) void revalidator.revalidate();
+          }}
         />
       ) : (
         <p>Task-specific administration for {data.type} tasks is not built yet.</p>

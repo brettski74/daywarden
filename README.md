@@ -129,7 +129,9 @@ Attempts in the sidebar opens `/parent/attempts`, which is also the portal home.
 
 ### Tasks
 
-Task Administration in the sidebar lists every task. Open one, such as `/parent/tasks/spelling`, to change its client groups, cooldowns, limits, and dates. Leave a box empty to leave that rule off. A spelling task's page also has its spelling settings and its word list, with a Pool pull-down in the context bar to show Current and revision words, either one, or the Attic. Click a word to hear it, and Play beside it to hear its sentence. Change a word's pool to move it between Current and Revision, or out of the Attic. Retire is the only way into the attic: it asks first, then moves the word's recordings into `spelling/attic` at once. Nothing is ever deleted.
+Task Administration in the sidebar lists every task. Open one, such as `/parent/tasks/spelling`, to change its client groups, cooldowns, limits, and dates. Leave a box empty to leave that rule off. A spelling task's page also has its spelling settings and its word list, with a Pool pull-down in the context bar to show Current and revision words, either one, or the Attic. Click a word to hear it, and Play beside it to hear its sentence. Change a word's pool to move it between Current and Revision, or out of the Attic. Retire is the only way into the attic: it asks first, then moves the word's recordings into `spelling/attic` at once. Nothing is ever deleted, except that a recording kept from the browser replaces the word's old one.
+
+Each word has three recording buttons: Re-record word and sentence, Re-record word, and Re-record sentence. Each opens a dialog that records from the computer's microphone, which the browser asks for the first time. Press any key, wait for "Get ready…" to turn into the recording indicator half a second later, so the key itself is not recorded, then say each line it shows with a pause after it, and press Enter to stop. Nothing needs typing while recording. The service cuts the take as `bin/cut-clips` would, with the same defaults, and plays each clip with what it is meant to be, such as `Playing: rope (word)`. Keep (K) it, Junk (J) it as noise and hear the next clip, Discard (D) it as a poor take of the item, mark the item Missing (M) to try the same clip for the next item, Replay (R) it, or go Back (B). The Advanced section changes the cut settings, and Cut cuts the same take again without recording it again. Confirm writes the kept clips into the word's own pool directory as `<word>.opus` and `<word>.sentence.opus`, replacing an older recording of that kind in any format, such as `rope.mp3`. Cancel changes nothing. Takes and clips waiting for Confirm are kept in `.recordings` in the data directory, and anything left there for a day is removed. If the parent session ends while recording, the dialog keeps the take: sign in again in another tab and press Upload.
 
 Save in the context bar, or Ctrl+S, saves every change on the page. The task is rewritten in whichever policy file defines it, with its comments and layout kept, checked as `dw check` would, and applied to every service as `dw reload` would. A save the policy would refuse is refused, and the status bar says why. A change made by hand on the server since the page opened stops the save until the page is reloaded. Leaving the page with unsaved changes asks first. See [Editing a task from the parent portal](docs/hierarchical-policy.md#editing-a-task-from-the-parent-portal).
 
@@ -257,6 +259,8 @@ If the count is wrong, tune the detection and list again:
 - A soft ending such as the "s" in "ess" is cut short, or a quiet item is missing: raise `--threshold` (default `35`, in decibels below the loudest point). Background noise counted as a clip: lower it.
 - A real item is ignored as a short sound: lower `--min-speech` (default `150` ms).
 
+A take with no item in it, only room noise however loud, has no clips: the loudest moment must be at least 15 dB above the quietest tenth of the take.
+
 Then cut the take into a pool directory and name each clip as it is offered:
 
 ```sh
@@ -313,7 +317,8 @@ The installer checks everything first and changes nothing if something it needs 
 | `~/daywarden/docker-compose.yml`, `VERSION` | Always replaced |
 | `~/daywarden/.env` | Created only if missing. Never overwritten |
 | `~/daywarden/config/policy.yaml`, `config/bypass.txt` | Created only if missing. Never overwritten |
-| `~/daywarden/.env.sample`, `config/*.sample` | Always replaced with the package's copy |
+| `~/daywarden/config/tasks.d/*.yaml`, the task files the sample `policy.yaml` includes | Created only along with a new `policy.yaml`, and only if missing. Never overwritten |
+| `~/daywarden/.env.sample`, `config/*.sample`, `config/tasks.d/*.sample` | Always replaced with the package's copy |
 | `~/daywarden/config/.git`, `config/.gitignore` | The [config history](#config-history). Created only if missing |
 | `~/daywarden/ca/` | The CA, created by the first `dw up` |
 | `~/daywarden/data/` | Recordings, such as `data/spelling/current` |
