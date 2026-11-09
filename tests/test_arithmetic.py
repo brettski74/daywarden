@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from conftest import needs_node, run_page  # noqa: E402
-from policy.accounts import Accounts  # noqa: E402
 from policy.arithmetic import (  # noqa: E402
     NETWORK_ALLOWANCE_MS,
     Session,
@@ -24,7 +23,7 @@ from policy.arithmetic import (  # noqa: E402
 )
 from policy.engine import decide  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
-from policy.review import respond_attempt  # noqa: E402
+from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, respond_task  # noqa: E402
@@ -797,21 +796,9 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path)
         "issued": "2026-11-02T16:00:00.000-05:00",
     }
     assert quiz.detail()["settings"]["operation"] == "addition"
-    accounts = Accounts(quiz.store.connection)
-    accounts.set_password("ada", "s3cret-pass")
-    key = accounts.login("ada", "s3cret-pass", START)
-    page = respond_attempt(
-        accounts,
-        attempt_id=str(quiz.attempt().id),
-        method="GET",
-        query={},
-        cookie=key,
-        form={},
-        now=START,
-        attempts=quiz.store,
-    )
-    assert "6 + 7 =" in page.body
-    assert "correct" in page.body
+    page = json.dumps(attempt_report(quiz.store, str(quiz.attempt().id), now=START))
+    assert "6 + 7 =" in page
+    assert "correct" in page
 
 
 # Helpers

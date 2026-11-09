@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 from policy.accounts import Accounts  # noqa: E402
 from policy.engine import decide  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
-from policy.review import respond_attempt, respond_attempts, respond_parent_check  # noqa: E402
+from policy.review import attempt_report, attempts_report, record_parent_check  # noqa: E402
 from policy.selection import read_turn  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, NOTHING, respond_task  # noqa: E402
@@ -454,7 +454,6 @@ def test_uc3_without_a_failure_cooldown_only_parent_checks_make_up_the_count(tmp
         store = AttemptStore(connection=saved.connection)
         accounts = Accounts(saved.connection)
         accounts.set_password("ada", PASSWORD)
-        key = accounts.login("ada", PASSWORD, now)
         for name in ("spelling", "addition"):
             _pass_by_page(now, name, policy, store)
         _open(now, "/tasks/parts_of_speech", policy, store)
@@ -462,7 +461,7 @@ def test_uc3_without_a_failure_cooldown_only_parent_checks_make_up_the_count(tmp
         assert _score(store, policy, now) == 0
         assert _youtube(store, policy, now)["location"] == PICKER
         for expected in (1, 2):
-            respond_parent_check(accounts, cookie=key, form={"client": "younger"}, now=now, tasks=policy.tasks)
+            assert record_parent_check(accounts, store, "younger", now=now, tasks=policy.tasks) is None
             assert _score(store, policy, now) == expected
         assert _youtube(store, policy, now) == {"action": "allow"}
         assert [row.task_set for row in store.attempts("younger", "credit")] == ["parent_check", "parent_check"]
@@ -673,15 +672,11 @@ def test_giving_up_again_abandons_again_and_the_parent_sees_each_give_up_and_ret
             ("16:05", "16:10"),
             ("16:15", "16:20"),
         ]
-        accounts = Accounts(saved.connection)
-        accounts.set_password("ada", PASSWORD)
-        key = accounts.login("ada", PASSWORD, now)
-        page = respond_attempt(
-            accounts, attempt_id=str(attempt.id), method="GET", query={}, cookie=key, form={}, now=now, attempts=store
-        )
-        assert "Given up and carried on" in page.body
-        assert page.body.count("<tr><td>") == 2
-        assert "16:15" in page.body and "16:20" in page.body
+        page = attempt_report(store, str(attempt.id), now=now)
+        assert [(event["gave_up"][-5:], event["came_back"][-5:]) for event in page["reopened"]] == [
+            ("16:05", "16:10"),
+            ("16:15", "16:20"),
+        ]
 
 
 # An attempt belongs to one day
@@ -755,26 +750,17 @@ def test_the_attempts_page_shows_each_set_unfinished_attempts_and_where_today_st
         _pass_by_page(now + timedelta(minutes=5), "words", policy, store)
         accounts = Accounts(saved.connection)
         accounts.set_password("ada", PASSWORD)
-        key = accounts.login("ada", PASSWORD, now)
-        respond_parent_check(accounts, cookie=key, form={"client": "younger"}, now=now, tasks=policy.tasks)
-        page = respond_attempts(
-            accounts,
-            method="GET",
-            query={"client": "younger"},
-            cookie=key,
-            form={},
-            now=now,
-            attempts=store,
-            clients=("younger", "older"),
-            tasks=policy.tasks,
-        )
-        body = page.body
-        assert "<dt>Today&#x27;s score</dt><dd>1</dd>" in body or "<dt>Today's score</dt><dd>1</dd>" in body
-        assert "<dt>Required tasks outstanding</dt><dd>due</dd>" in body
-        assert "<dt>Potential tasks available</dt><dd>sums, left</dd>" in body
-        assert "<dt>Potential passes waiting on required tasks</dt><dd>words</dd>" in body
+        assert record_parent_check(accounts, store, "younger", now=now, tasks=policy.tasks) is None
+        page = attempts_report(store, ("younger", "older"), "younger", now=now, tasks=policy.tasks)
+        assert page["summary"] == [
+            {"label": "Today's score", "value": "1"},
+            {"label": "Required tasks outstanding", "value": "due"},
+            {"label": "Potential tasks available", "value": "sums, left"},
+            {"label": "Potential passes waiting on required tasks", "value": "words"},
+        ]
+        shown = {row["set"] for row in page["attempts"]} | {row["outcome"] for row in page["attempts"]}
         for label in ("Potential", "Practice", "Parent check", "Unfinished"):
-            assert f"<td>{label}</td>" in body
+            assert label in shown
         assert _score(store, policy, now) == 1
 
 

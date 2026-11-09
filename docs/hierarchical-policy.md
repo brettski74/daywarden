@@ -254,11 +254,11 @@ When he opens a task within an hour of giving it up, on the household day the at
 
 ### An attempt belongs to one day
 
-An attempt left in progress, for example when he closed the tab partway through, carries on only on the household day it started. When he opens that task on a later day, the old attempt is closed as unfinished and a new one starts in the set the task is in now. Like an abandonment, an unfinished attempt scores nothing, starts no cooldown, and does not count toward `max_passes`, and it is a skip day for the day it started. A quiz already on the screen when the day ends carries on, and a pass scores on the day it passes. `/attempts` shows an attempt from an earlier day that was never finished as Unfinished.
+An attempt left in progress, for example when he closed the tab partway through, carries on only on the household day it started. When he opens that task on a later day, the old attempt is closed as unfinished and a new one starts in the set the task is in now. Like an abandonment, an unfinished attempt scores nothing, starts no cooldown, and does not count toward `max_passes`, and it is a skip day for the day it started. A quiz already on the screen when the day ends carries on, and a pass scores on the day it passes. `/parent/attempts` shows an attempt from an earlier day that was never finished as Unfinished.
 
 ### Parent checks and the attempts page
 
-An authenticated parent records a `parent_check` pass for a client group from `/attempts`. That pass scores one point and is listed with the group's other attempts. The child has no request that records one. For the chosen client group, `/attempts` shows today's score, which is the one the rules use at that moment, the required tasks still outstanding, the potential tasks still available, and the potential passes waiting on the required tasks. Each attempt there, and the attempt page it opens, says whether it was Required, Potential, Practice, or a Parent check.
+An authenticated parent records a `parent_check` pass for a client group from `/parent/attempts` in the parent portal. That pass scores one point and is listed with the group's other attempts. The child has no request that records one. For the chosen client group, `/parent/attempts` shows today's score, which is the one the rules use at that moment, the required tasks still outstanding, the potential tasks still available, and the potential passes waiting on the required tasks. Each attempt there, and the attempt page it opens, says whether it was Required, Potential, Practice, or a Parent check.
 
 ### Arithmetic tasks
 

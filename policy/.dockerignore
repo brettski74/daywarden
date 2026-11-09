@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 Dockerfile
 .dockerignore
+portal/node_modules/
+portal/dist/

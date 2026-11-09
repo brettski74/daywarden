@@ -1,4 +1,4 @@
-"""S007.1: parent accounts, sessions, and the pages they guard."""
+"""S007.1 and S007.4: parent accounts, sessions, and the portal data they guard."""
 
 import hashlib
 import hmac
@@ -15,13 +15,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from asgi import call, session_cookie  # noqa: E402
 from policy import accounts as accounts_module  # noqa: E402
 from policy.accounts import Accounts, _DUMMY, session_limits  # noqa: E402
-from policy.hierarchy import load  # noqa: E402
 from policy.observations import status_for  # noqa: E402
-from policy.report import respond  # noqa: E402
-from policy.review import respond_attempts, respond_parent_check  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
+from policy.tasks import AttemptStore  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
 PASSWORD = "s3cret-pass"
@@ -49,23 +48,40 @@ def _accounts(store: PolicyStore, **limits) -> Accounts:
     return accounts
 
 
-def _policy(directory: Path):
-    path = directory / "policy.yaml"
-    path.write_text(HOUSE, encoding="utf-8")
-    return load(path)
+@pytest.fixture
+def service(tmp_path, monkeypatch):
+    """The decisions app on a fresh database with the household policy and no account yet."""
+    pytest.importorskip("fastapi")
+    from policy.app import create_app
+
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(HOUSE, encoding="utf-8")
+    database = tmp_path / "policy.sqlite3"
+    monkeypatch.setenv("POLICY_FILE", str(policy))
+    monkeypatch.setenv("POLICY_DB", str(database))
+    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    monkeypatch.delenv("PARENT_IDLE", raising=False)
+    monkeypatch.delenv("PARENT_LIFETIME", raising=False)
+
+    class Service:
+        def __init__(self):
+            self.database = database
+
+        def app(self, *, account=True):
+            if account:
+                with PolicyStore(database) as store:
+                    Accounts(store.connection).set_password("ada", PASSWORD)
+            return create_app()
+
+        def count(self, table):
+            with sqlite3.connect(database) as connection:
+                return connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    return Service()
 
 
-def _usage(store: PolicyStore, accounts: Accounts, method: str, **kwargs):
-    return respond(
-        kwargs.get("policy"),
-        UsageStore(connection=store.connection),
-        accounts,
-        method=method,
-        query=kwargs.get("query", {}),
-        cookie=kwargs.get("cookie"),
-        form=kwargs.get("form", {}),
-        now=kwargs.get("now", NOW),
-    )
+def _sign_in(app, password=PASSWORD, username="ada", **kwargs):
+    return call(app, "POST", "/parent/api/login", json_body={"username": username, "password": password}, **kwargs)
 
 
 def test_a_missing_limit_uses_the_default_and_a_bad_one_stops_startup():
@@ -128,77 +144,63 @@ def test_an_unknown_username_still_runs_a_password_check(monkeypatch):
     assert seen[1].startswith("$argon2id$")
 
 
-def test_unknown_username_and_wrong_password_look_the_same(tmp_path):
-    policy = _policy(tmp_path)
-    with PolicyStore(":memory:") as store:
-        accounts = _accounts(store)
-        unknown = _usage(
-            store,
-            accounts,
-            "POST",
-            policy=policy,
-            query={"view": "site", "client": "younger", "site": "entertainment"},
-            form={"username": "nobody", "password": PASSWORD},
-        )
-        wrong = _usage(
-            store,
-            accounts,
-            "POST",
-            policy=policy,
-            query={"view": "site", "client": "younger", "site": "entertainment"},
-            form={"username": "ada", "password": "wrong-password"},
-        )
-        assert unknown.status == wrong.status == 401
-        assert unknown.body == wrong.body
-        assert "That username or password is not right." in unknown.body
-        assert "<h2>" not in unknown.body
-        assert "<option" not in unknown.body
-        assert "set-cookie" not in dict(unknown.headers)
-        assert "set-cookie" not in dict(wrong.headers)
+def test_unknown_username_and_wrong_password_look_the_same(service):
+    app = service.app()
+    unknown = _sign_in(app, username="nobody")
+    wrong = _sign_in(app, password="wrong-password")
+    assert unknown[0] == wrong[0] == 401
+    assert unknown[1] == wrong[1]
+    assert json.loads(unknown[1]) == {"error": "Username or password incorrect."}
+    assert "set-cookie" not in unknown[2]
+    assert "set-cookie" not in wrong[2]
+    assert service.count("parent_sessions") == 0
 
 
-def test_the_right_password_sets_a_secure_cookie_and_the_next_page_opens(tmp_path):
-    policy = _policy(tmp_path)
-    with PolicyStore(":memory:") as store:
-        accounts = _accounts(store)
-        opened = _usage(
-            store,
-            accounts,
-            "POST",
-            query={"view": "client", "client": "younger"},
-            form={"username": "ada", "password": PASSWORD},
-        )
-        assert dict(opened.headers)["location"] == "/usage?view=client&client=younger"
-        assert opened.status == 303
-        header = dict(opened.headers)["set-cookie"]
-        assert header.startswith("parent_session=")
-        assert "Secure" in header
-        assert "HttpOnly" in header
-        token = header.split(";", 1)[0].split("=", 1)[1]
-        page = _usage(
-            store, accounts, "GET", policy=policy, cookie=token, query={"view": "client", "client": "younger"}
-        )
-        assert page.status == 200
-        assert "Enter your username and password." not in page.body
-        assert "<h2>younger</h2>" in page.body
+def test_the_right_password_sets_a_secure_cookie_and_the_data_opens(service):
+    app = service.app()
+    status, body, headers = _sign_in(app)
+    assert status == 200
+    header = headers["set-cookie"][0]
+    assert header.startswith("parent_session=")
+    for part in ("Secure", "HttpOnly", "SameSite=Lax", "Path=/"):
+        assert part in header
+    assert headers["cache-control"] == ["no-store"]
+    cookie = session_cookie(headers)
+    status, body, _headers = call(app, "GET", "/parent/api/session", cookie=cookie)
+    assert (status, json.loads(body)) == (200, {"username": "ada"})
+    status, body, _headers = call(app, "GET", "/parent/api/attempts", query="client=younger", cookie=cookie)
+    assert status == 200
+    assert json.loads(body)["client"] == "younger"
 
 
-def test_a_query_string_password_and_an_old_gate_cookie_do_not_sign_in():
-    with PolicyStore(":memory:") as store:
-        accounts = _accounts(store)
-        from_query = _usage(
-            store,
-            accounts,
-            "GET",
-            query={"username": "ada", "password": PASSWORD},
-        )
-        assert from_query.status == 200
-        assert "Enter your username and password." in from_query.body
-        assert "set-cookie" not in dict(from_query.headers)
-        old = hmac.new(PASSWORD.encode(), b"daywarden-parent", hashlib.sha256).hexdigest()
-        forged = _usage(store, accounts, "GET", cookie=old)
-        assert "Enter your username and password." in forged.body
-        assert "set-cookie" not in dict(forged.headers)
+def test_a_query_string_password_a_form_post_and_an_old_gate_cookie_do_not_sign_in(service):
+    app = service.app()
+    status, _body, headers = call(app, "POST", "/parent/api/login", query=f"username=ada&password={PASSWORD}")
+    assert status == 415
+    assert "set-cookie" not in headers
+    status, _body, headers = call(
+        app,
+        "POST",
+        "/parent/api/login",
+        query=f"username=ada&password={PASSWORD}",
+        json_body={},
+    )
+    assert status == 401
+    assert "set-cookie" not in headers
+    status, _body, headers = call(
+        app,
+        "POST",
+        "/parent/api/login",
+        body=f"username=ada&password={PASSWORD}".encode(),
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert status == 415
+    assert "set-cookie" not in headers
+    old = hmac.new(PASSWORD.encode(), b"daywarden-parent", hashlib.sha256).hexdigest()
+    status, _body, headers = call(app, "GET", "/parent/api/session", cookie=f"parent_session={old}")
+    assert status == 401
+    assert "set-cookie" not in headers
+    assert service.count("parent_sessions") == 0
 
 
 def test_a_second_sign_in_leaves_the_older_key_valid():
@@ -279,52 +281,61 @@ def test_configured_shorter_limits_are_the_ones_that_expire_the_session():
         assert accounts.accept(fresh, NOW + timedelta(minutes=5, seconds=1)) is None
 
 
-def test_a_parent_check_without_a_session_does_not_record_a_pass():
-    with PolicyStore(":memory:") as store:
-        accounts = _accounts(store)
-        accounts.record_parent_check("younger", NOW)
-        missing = respond_parent_check(
-            accounts, cookie=None, form={"client": "older"}, now=NOW
-        )
-        assert "Enter your username and password." in missing.body
-        assert "older" not in missing.body
-        assert "younger" not in missing.body
-        key = accounts.login("ada", PASSWORD, NOW)
-        expired_at = NOW + timedelta(minutes=15, seconds=1)
-        expired = respond_parent_check(
-            accounts, cookie=key, form={"client": "older"}, now=expired_at
-        )
-        assert "Enter your username and password." in expired.body
-        assert "older" not in expired.body
-        names = [row[0] for row in store.connection.execute("SELECT client_group FROM parent_checks")]
-        assert names == ["younger"]
-        assert accounts.accept(key, NOW + timedelta(minutes=15)) is None
+def test_a_parent_check_without_a_session_or_a_json_body_does_not_record_a_pass(service):
+    app = service.app()
+    check = {"client": "younger"}
+    status, body, _headers = call(app, "POST", "/parent/api/parent-check", json_body=check)
+    assert status == 401
+    assert "younger" not in body
+    cookie = session_cookie(_sign_in(app)[2])
+    with sqlite3.connect(service.database) as connection:
+        connection.execute("UPDATE parent_sessions SET last_seen_at = '2000-01-01T00:00:00+00:00'")
+    status, _body, _headers = call(app, "POST", "/parent/api/parent-check", json_body=check, cookie=cookie)
+    assert status == 401
+    assert service.count("parent_checks") == 0
+    assert service.count("parent_sessions") == 0
 
-        fresh = accounts.login("ada", PASSWORD, NOW)
-        recorded = respond_parent_check(
-            accounts, cookie=fresh, form={"client": "older"}, now=NOW + timedelta(minutes=1)
+    cookie = session_cookie(_sign_in(app)[2])
+    for content_type in ("application/x-www-form-urlencoded", "text/plain", "multipart/form-data; boundary=x"):
+        status, _body, _headers = call(
+            app,
+            "POST",
+            "/parent/api/parent-check",
+            body=b"client=younger",
+            content_type=content_type,
+            cookie=cookie,
         )
-        assert "older" in recorded.body
-        names = [
-            row[0]
-            for row in store.connection.execute(
-                "SELECT client_group FROM parent_checks ORDER BY id"
-            )
-        ]
-        assert names == ["younger", "older"]
+        assert status == 415
+    status, body, _headers = call(app, "POST", "/parent/api/parent-check", json_body={"client": "stranger"}, cookie=cookie)
+    assert (status, json.loads(body)) == (400, {"error": "That client group is not in the household."})
+    assert service.count("parent_checks") == 0
+
+    status, body, _headers = call(app, "POST", "/parent/api/parent-check", json_body=check, cookie=cookie)
+    assert (status, json.loads(body)) == (200, {"message": "Recorded a parent check for younger."})
+    assert service.count("parent_checks") == 1
+    with PolicyStore(service.database) as store:
+        assert [row.task_set for row in AttemptStore(connection=store.connection).attempts("younger")] == ["parent_check"]
 
 
-def test_attempts_without_an_account_or_a_session_show_no_attempts():
-    with PolicyStore(":memory:") as store:
-        bare = Accounts(store.connection)
-        closed = respond_attempts(bare, method="GET", query={}, cookie=None, form={}, now=NOW)
-        assert closed.status == 403
-        assert "No attempts" not in closed.body
-        accounts = _accounts(store)
-        accounts.record_parent_check("younger", NOW)
-        unsigned = respond_attempts(accounts, method="GET", query={}, cookie=None, form={}, now=NOW)
-        assert "Enter your username and password." in unsigned.body
-        assert "younger" not in unsigned.body
+def test_without_an_account_or_a_session_the_data_endpoints_show_nothing(service):
+    closed = service.app(account=False)
+    with PolicyStore(service.database) as store:
+        AttemptStore(connection=store.connection).record("younger", "words", "pass", NOW, detail={"answers": ["wombat"]})
+    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage", "view=client&client=younger"), ("/parent/api/session", "")):
+        status, body, _headers = call(closed, "GET", path, query=query)
+        assert status == 403, path
+        assert json.loads(body) == {"error": "The parent portal is closed until a parent account is added.", "closed": True}
+    status, _body, headers = _sign_in(closed)
+    assert status == 403
+    assert "set-cookie" not in headers
+
+    app = service.app()
+    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage", "view=client&client=younger")):
+        status, body, headers = call(app, "GET", path, query=query)
+        assert status == 401, path
+        assert "wombat" not in body and "words" not in body and "younger" not in body
+        assert "location" not in headers
+        assert headers["cache-control"] == ["no-store"]
 
 
 def test_the_command_stores_a_hash_and_does_not_write_the_policy_file(tmp_path):
@@ -399,82 +410,34 @@ def test_the_decision_and_observation_apis_do_not_record_a_pass():
         assert store.connection.execute("SELECT COUNT(*) FROM parent_checks").fetchone()[0] == 0
 
 
-def test_parent_pages_over_http_do_not_set_a_cookie_or_record_a_pass(tmp_path, monkeypatch):
-    pytest.importorskip("fastapi")
-    from policy.app import create_app
-
-    database = tmp_path / "policy.sqlite3"
-    monkeypatch.setenv("POLICY_FILE", str(tmp_path / "policy.yaml"))
-    monkeypatch.setenv("POLICY_DB", str(database))
-    monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
-    monkeypatch.delenv("PARENT_IDLE", raising=False)
-    monkeypatch.delenv("PARENT_LIFETIME", raising=False)
-    with PolicyStore(database) as store:
-        Accounts(store.connection).set_password("ada", PASSWORD)
-    app = create_app()
+def test_plain_http_does_not_sign_in_show_data_or_record_a_pass(service):
+    app = service.app()
     assert app.state.idle == timedelta(minutes=15)
     assert app.state.lifetime == timedelta(minutes=180)
 
-    status, body, headers = _call(app, "GET", "/quiz")
+    status, body, headers = call(app, "GET", "/quiz", scheme="http")
     assert status == 200
     assert "Revision" in body
     assert "set-cookie" not in headers
 
-    status, body, headers = _call(app, "GET", "/usage")
-    assert status == 403
-    assert "Open this page over HTTPS." in body
-    assert "Younger child" not in body
-    assert "set-cookie" not in headers
-
-    status, _body, headers = _call(
-        app,
-        "POST",
-        "/usage",
-        body=f"username=ada&password={PASSWORD}".encode(),
-        content_type="application/x-www-form-urlencoded",
-    )
+    status, _body, headers = _sign_in(app, scheme="http")
     assert status == 403
     assert "set-cookie" not in headers
+    assert service.count("parent_sessions") == 0
 
-    status, body, headers = _call(
-        app,
-        "POST",
-        "/usage",
-        body=f"username=ada&password={PASSWORD}".encode(),
-        content_type="application/x-www-form-urlencoded",
-        scheme="https",
-    )
-    assert status == 303
-    cookie = headers["set-cookie"][0]
-    assert "Secure" in cookie and "HttpOnly" in cookie
-    token = cookie.split(";", 1)[0].split("=", 1)[1]
+    cookie = session_cookie(_sign_in(app)[2])
+    for path in ("/parent/api/session", "/parent/api/attempts", "/parent/api/usage", "/parent/", "/parent/attempts", "/usage", "/attempts/1"):
+        status, body, headers = call(app, "GET", path, query="client=younger", cookie=cookie, scheme="http")
+        assert status == 403, path
+        assert "Open this page over HTTPS." in body
+        assert "younger" not in body
+        assert "set-cookie" not in headers
+        assert "location" not in headers
 
-    status, body, headers = _call(
-        app,
-        "POST",
-        "/attempts/parent-check",
-        body=b"client=younger",
-        content_type="application/x-www-form-urlencoded",
-        cookie=f"parent_session={token}",
-    )
+    status, _body, headers = call(app, "POST", "/parent/api/parent-check", json_body={"client": "younger"}, cookie=cookie, scheme="http")
     assert status == 403
     assert "set-cookie" not in headers
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM parent_checks").fetchone()[0] == 0
-
-    status, body, _headers = _call(
-        app,
-        "POST",
-        "/attempts/parent-check",
-        body=b"client=younger",
-        content_type="application/x-www-form-urlencoded",
-        cookie=f"parent_session={token}",
-        scheme="https",
-    )
-    assert status == 200
-    assert "younger" in body
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM parent_checks").fetchone()[0] == 1
+    assert service.count("parent_checks") == 0
 
     decision = json.dumps(
         {
@@ -484,12 +447,9 @@ def test_parent_pages_over_http_do_not_set_a_cookie_or_record_a_pass(tmp_path, m
             "occurred_at": "2026-10-31T12:00:00+00:00",
         }
     ).encode()
-    status, _body, _headers = _call(
-        app, "POST", "/v1/decisions", body=decision, content_type="application/json"
-    )
+    status, _body, _headers = call(app, "POST", "/v1/decisions", body=decision, content_type="application/json", scheme="http")
     assert status == 200
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM parent_checks").fetchone()[0] == 1
+    assert service.count("parent_checks") == 0
 
 
 def test_the_service_uses_the_configured_session_limits(tmp_path, monkeypatch):
@@ -517,46 +477,3 @@ def test_a_bad_session_limit_stops_the_service(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         create_app()
 
-
-def _call(app, method, path, *, query="", body=b"", cookie=None, content_type=None, scheme="http"):
-    messages = []
-    sent = False
-
-    async def receive():
-        nonlocal sent
-        if sent:
-            return {"type": "http.disconnect"}
-        sent = True
-        return {"type": "http.request", "body": body, "more_body": False}
-
-    async def send(message):
-        messages.append(message)
-
-    headers = []
-    if content_type:
-        headers.append((b"content-type", content_type.encode()))
-    if cookie:
-        headers.append((b"cookie", cookie.encode()))
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": method,
-        "scheme": scheme,
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": query.encode(),
-        "headers": headers,
-        "client": ("127.0.0.1", 12345),
-        "server": ("127.0.0.1", 443 if scheme == "https" else 80),
-        "root_path": "",
-    }
-    import asyncio
-
-    asyncio.run(app(scope, receive, send))
-    start = next(item for item in messages if item["type"] == "http.response.start")
-    payload = b"".join(item.get("body", b"") for item in messages if item["type"] == "http.response.body")
-    found: dict[str, list[str]] = {}
-    for key, value in start["headers"]:
-        found.setdefault(key.decode(), []).append(value.decode())
-    return start["status"], payload.decode(), found

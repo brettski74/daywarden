@@ -2,7 +2,7 @@ Ticket: S007
 Title: Parent administration
 Status: Draft
 Story Points: 42
-Last Updated: 2026-11-08 15:30:00
+Last Updated: 2026-11-08 19:45:00
 ---
 
 # User Voice
@@ -20,7 +20,7 @@ As a parent, I want to change the rules, the word lists, and which client group 
 
 - [ ] S007.1 is part of the initial build, so usage reports and attempt review are behind a password.
 - [ ] S007.2 and S007.3 are not part of the initial build. The policy and the quiz content are edited in config files.
-- [ ] When S007.4 is done, the attempt review and the usage report are pages in the parent portal, and every parent page is reached from its sidebar.
+- [x] When S007.4 is done, the attempt review and the usage report are pages in the parent portal, and every parent page is reached from its sidebar.
 - [ ] When S007.2 and S007.3 are done, everything the sample policy and the quiz stories can express in their stores can be changed from these pages.
 - [ ] The child, using only the task site, cannot open a parent page or change a rule.
 
@@ -30,8 +30,11 @@ As a parent, I want to change the rules, the word lists, and which client group 
 | --- | --- | --- |
 | S007.1 | Parent sign-in | 5 |
 | S007.2 | Edit the hierarchical policy (later) | 8 |
-| S007.3 | Edit tasks and assignments (later) | 8 |
+| S007.3 | Edit the other task types (placeholder, later) | 8 |
 | S007.4 | Parent portal layout, sign-in screen, and the attempts and usage pages | 21 |
+
+S023 is the task administration epic: the task pages, the common task settings, and spelling. S007.3 holds what is left
+for the other task types, which are expected to become stories or epics of their own.
 
 # Notes
 

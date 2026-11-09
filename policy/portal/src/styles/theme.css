@@ -1,0 +1,67 @@
+/*
+ * The Daywarden theme. Every colour the portal uses is set here, and nowhere
+ * else. Palette properties name the raw colours and are used only in this
+ * file. Role properties say what a colour is for, and the layout stylesheet
+ * and components use only those. A later theme is another stylesheet with
+ * its own data-theme value on <html>.
+ *
+ * Text contrast is WCAG AA or better: gold on navy about 7.8:1, navy on teal
+ * about 7.2:1, navy on ivory about 12:1. Navy text on lavender is only about
+ * 3.9:1, so lavender is for borders, hover, and tints, never a background
+ * behind text.
+ */
+
+:root,
+:root[data-theme="daywarden"] {
+  --palette-navy: #17243a;
+  --palette-gold: #d4b477;
+  --palette-teal: #80b9c5;
+  --palette-ivory: #e9e2d2;
+  --palette-lavender: #777e9c;
+  --palette-white: #ffffff;
+  --palette-brick: #8a2c2c;
+
+  color-scheme: light;
+
+  --sidebar-bg: var(--palette-navy);
+  --sidebar-text: var(--palette-gold);
+  --sidebar-hover-bg: color-mix(in srgb, var(--palette-lavender) 30%, var(--palette-navy));
+  --sidebar-active-bg: var(--palette-gold);
+  --sidebar-active-text: var(--palette-navy);
+  --sidebar-handle: var(--palette-lavender);
+  --sidebar-focus-ring: var(--palette-gold);
+  --sidebar-logo: url("../assets/logo.webp");
+
+  --bar-bg: var(--palette-teal);
+  --bar-text: var(--palette-navy);
+  --bar-link: var(--palette-navy);
+
+  --content-bg: var(--palette-ivory);
+  --content-text: var(--palette-navy);
+  --link: var(--palette-navy);
+  --border: var(--palette-lavender);
+  --row-hover: color-mix(in srgb, var(--palette-lavender) 18%, var(--palette-ivory));
+  --table-head-bg: color-mix(in srgb, var(--palette-teal) 35%, var(--palette-ivory));
+  --focus-ring: var(--palette-navy);
+
+  --button-bg: var(--palette-navy);
+  --button-text: var(--palette-ivory);
+  --button-hover-bg: color-mix(in srgb, var(--palette-lavender) 35%, var(--palette-navy));
+  --button-disabled-bg: color-mix(in srgb, var(--palette-lavender) 45%, var(--palette-ivory));
+  --button-disabled-text: var(--palette-navy);
+  --button-quiet-bg: transparent;
+  --button-quiet-text: var(--palette-navy);
+
+  --input-bg: var(--palette-white);
+  --input-text: var(--palette-navy);
+  --input-border: var(--palette-lavender);
+
+  --signin-bg: var(--palette-ivory);
+  --signin-panel-bg: var(--palette-white);
+  --signin-panel-border: var(--palette-lavender);
+  --signin-logo: url("../assets/logo.webp");
+  --failure-text: var(--palette-brick);
+  --done-text: var(--palette-navy);
+
+  --shadow: 0 0.1rem 0.6rem color-mix(in srgb, var(--palette-navy) 25%, transparent);
+}

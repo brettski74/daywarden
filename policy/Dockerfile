@@ -1,9 +1,19 @@
+# The parent portal is built in a Node stage. The Python image copies in only
+# the built files, so the image, and the make dist package, need no Node.
+FROM node:24.22.2-slim AS portal
+WORKDIR /portal
+COPY portal/package.json portal/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY portal/ ./
+RUN npm run build
+
 FROM python:3.14-slim
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY . /opt/daywarden/policy
+COPY --exclude=portal . /opt/daywarden/policy
+COPY --from=portal /portal/dist /opt/daywarden/policy/portal/dist
 WORKDIR /opt/daywarden
 ENV PYTHONUNBUFFERED=1
 

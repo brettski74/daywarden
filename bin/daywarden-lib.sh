@@ -141,8 +141,11 @@ dw_config_url() {
     printf '%s\n' "$url"
 }
 
+# Without the default build attestations, rebuilding unchanged source gives
+# the same image ID. With them, every build is a new image, so Compose would
+# recreate containers that dw restart --keep and dw up mean to keep.
 dw_compose() {
-    docker compose --project-directory "$root" "$@"
+    BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose --project-directory "$root" "$@"
 }
 
 dw_data_dir() {

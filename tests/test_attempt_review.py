@@ -1,12 +1,13 @@
-"""S003.3: a parent reviews attempts and records a parent check."""
+"""S003.3 and S007.4: a parent reviews attempts and records a parent check."""
 
-import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from asgi import call, session_cookie
 from policy.accounts import Accounts
-from policy.review import respond_attempt, respond_attempts, respond_parent_check
+from policy.review import attempt_report, attempts_report, record_parent_check
 from policy.store import PolicyStore
 from policy.tasks import PARENT_CHECK, AttemptStore, Task
 
@@ -58,42 +59,68 @@ def _plant(store: AttemptStore) -> None:
     )
 
 
+def _row(report: dict, task: str) -> dict:
+    return next(row for row in report["attempts"] if row["task"] == task)
+
+
 def test_a_pass_a_failure_and_an_abandonment_show_outcome_and_local_times():
-    with PolicyStore(":memory:") as saved:
-        accounts = _accounts(saved)
-        store = AttemptStore(connection=saved.connection)
+    with AttemptStore(":memory:") as store:
         _plant(store)
-        key = accounts.login("ada", PASSWORD, NOW)
-        page = respond_attempts(
-            accounts,
-            method="GET",
-            query={"client": "younger"},
-            cookie=key,
-            form={},
-            now=NOW,
-            attempts=store,
-            clients=CLIENTS,
+        report = attempts_report(store, CLIENTS, "younger", now=NOW, timezone="Australia/Sydney")
+        assert report["client"] == "younger"
+        assert report["clients"] == ["younger", "older"]
+        assert report["times"] == "Times are Australia/Sydney."
+        assert [row["task"] for row in report["attempts"]] == ["open-task", "later", "middle", "early"]
+        assert "private-task" not in json.dumps(report)
+        assert "platypus" not in json.dumps(report)
+        assert _row(report, "open-task") | {"id": 0} == {
+            "id": 0,
+            "task": "open-task",
+            "set": "Required",
+            "started": "Saturday 31 October 2026, 17:00",
+            "finished": "still going",
+            "outcome": "in_progress",
+            "duration": "still going",
+        }
+        later = _row(report, "later")
+        assert (later["started"], later["finished"], later["outcome"], later["duration"]) == (
+            "Saturday 31 October 2026, 16:00",
+            "Saturday 31 October 2026, 16:12:30",
+            "pass",
+            "12m 30s",
         )
-        body = page.body
-        assert page.status == 200
-        assert body.index("open-task") < body.index("later") < body.index("middle") < body.index("early")
-        assert "private-task" not in body
-        assert "platypus" not in body
-        assert ">in_progress<" in body
-        assert ">pass<" in body
-        assert ">failure<" in body
-        assert ">abandoned<" in body
-        assert "Saturday 31 October 2026, 17:00" in body
-        assert "Saturday 31 October 2026, 16:00" in body
-        assert "Saturday 31 October 2026, 16:12:30" in body
-        assert "Saturday 31 October 2026, 15:00" in body
-        assert "Saturday 31 October 2026, 15:05" in body
-        assert "Saturday 31 October 2026, 14:10" in body
-        assert "Saturday 31 October 2026, 14:10:45" in body
-        assert "still going" in body
-        assert "12m 30s" in body
-        assert "5m" in body
-        assert "45s" in body
+        middle = _row(report, "middle")
+        assert (middle["finished"], middle["outcome"], middle["duration"]) == (
+            "Saturday 31 October 2026, 15:05",
+            "failure",
+            "5m",
+        )
+        early = _row(report, "early")
+        assert (early["started"], early["finished"], early["outcome"], early["duration"]) == (
+            "Saturday 31 October 2026, 14:10",
+            "Saturday 31 October 2026, 14:10:45",
+            "abandoned",
+            "45s",
+        )
+        assert [item["label"] for item in report["summary"]] == [
+            "Today's score",
+            "Required tasks outstanding",
+            "Potential tasks available",
+            "Potential passes waiting on required tasks",
+        ]
+
+
+def test_no_group_or_a_stranger_group_lists_nothing():
+    with AttemptStore(":memory:") as store:
+        _plant(store)
+        waiting = attempts_report(store, CLIENTS, "", now=NOW)
+        assert (waiting["message"], waiting["summary"], waiting["attempts"]) == ("Choose a client group.", None, None)
+        assert waiting["times"] == "Times are the timezone of this machine."
+        stranger = attempts_report(store, CLIENTS, "stranger", now=NOW)
+        assert stranger["message"] == "That client group is not in the household."
+        assert stranger["attempts"] is None
+        quiet = attempts_report(AttemptStore(":memory:"), CLIENTS, "older", now=NOW)
+        assert quiet["attempts"] == []
 
 
 def test_an_attempt_shows_each_answer_and_a_parent_check_shows_its_record():
@@ -101,207 +128,62 @@ def test_an_attempt_shows_each_answer_and_a_parent_check_shows_its_record():
         accounts = _accounts(saved)
         store = AttemptStore(connection=saved.connection)
         _plant(store)
-        key = accounts.login("ada", PASSWORD, NOW)
         passed = next(row for row in store.recent("younger") if row.task == "later")
-        page = respond_attempt(
-            accounts,
-            attempt_id=str(passed.id),
-            method="GET",
-            query={},
-            cookie=key,
-            form={},
-            now=NOW,
-            attempts=store,
-        )
-        assert page.status == 200
-        assert ">pass<" in page.body
-        assert page.body.index("wombat") < page.body.index("kangaroo")
+        page = attempt_report(store, str(passed.id), now=NOW)
+        assert page["task"] == "later"
+        assert page["client"] == "younger"
+        assert {"label": "Outcome", "value": "pass"} in page["summary"]
+        assert page["answers"] == ["wombat", "kangaroo"]
+        assert page["record"] == {"result": "pass"}
         failed = next(row for row in store.recent("younger") if row.task == "middle")
-        detail = respond_attempt(
-            accounts,
-            attempt_id=str(failed.id),
-            method="GET",
-            query={},
-            cookie=key,
-            form={},
-            now=NOW,
-            attempts=store,
-        )
-        assert ">failure<" in detail.body
-        assert "2 + 2" in detail.body
-        assert ">5<" in detail.body
-        assert ">false<" in detail.body
-        recorded = respond_parent_check(
-            accounts,
-            cookie=key,
-            form={"client": "younger"},
-            now=NOW,
-            tasks=(CREDIT,),
-            attempts=store,
-            clients=CLIENTS,
-        )
-        assert ">pass<" in recorded.body
-        assert "credit" in recorded.body
+        detail = attempt_report(store, str(failed.id), now=NOW)
+        assert {"label": "Outcome", "value": "failure"} in detail["summary"]
+        assert detail["answers"] == [{"prompt": "2 + 2", "answer": "5", "correct": False}]
+        assert detail["record"] is None
+        abandoned = next(row for row in store.recent("younger") if row.task == "early")
+        assert attempt_report(store, str(abandoned.id), now=NOW)["answers"] == []
+
+        assert record_parent_check(accounts, store, "younger", now=NOW, tasks=(CREDIT,), clients=CLIENTS) is None
         credit = next(row for row in store.recent("younger") if row.task == "credit")
-        opened = respond_attempt(
-            accounts,
-            attempt_id=str(credit.id),
-            method="GET",
-            query={},
-            cookie=key,
-            form={},
-            now=NOW,
-            attempts=store,
-        )
-        assert "recorded_by" in opened.body
-        assert "parent" in opened.body
+        opened = attempt_report(store, str(credit.id), now=NOW)
+        assert opened["record"] == {"recorded_by": "parent"}
+        assert {"label": "Set", "value": "Parent check"} in opened["summary"]
         assert store.passes_on("younger", NOW.date()) == 2
 
 
-def test_a_missing_idle_or_expired_session_shows_the_form_and_no_attempts():
-    with PolicyStore(":memory:") as saved:
-        bare = Accounts(saved.connection)
-        store = AttemptStore(connection=saved.connection)
+def test_an_attempt_number_that_is_not_stored_is_none():
+    with AttemptStore(":memory:") as store:
         _plant(store)
-        closed = respond_attempts(
-            bare, method="GET", query={"client": "younger"}, cookie=None, form={}, now=NOW, attempts=store
-        )
-        assert closed.status == 403
-        assert "No attempts" not in closed.body
-        assert "wombat" not in closed.body
-        assert "later" not in closed.body
-
-        accounts = _accounts(saved)
-        missing = respond_attempt(
-            accounts,
-            attempt_id="1",
-            method="GET",
-            query={},
-            cookie=None,
-            form={},
-            now=NOW,
-            attempts=store,
-        )
-        assert "Enter your username and password." in missing.body
-        assert "wombat" not in missing.body
-        assert "later" not in missing.body
-        listed = respond_attempts(
-            accounts,
-            method="GET",
-            query={"client": "younger"},
-            cookie=None,
-            form={},
-            now=NOW,
-            attempts=store,
-            clients=CLIENTS,
-        )
-        assert "Enter your username and password." in listed.body
-        assert "wombat" not in listed.body
-        assert "later" not in listed.body
-
-        idle = accounts.login("ada", PASSWORD, NOW)
-        expired_at = NOW + timedelta(minutes=15, seconds=1)
-        idle_page = respond_attempts(
-            accounts,
-            method="GET",
-            query={"client": "younger"},
-            cookie=idle,
-            form={},
-            now=expired_at,
-            attempts=store,
-            clients=CLIENTS,
-        )
-        assert "Enter your username and password." in idle_page.body
-        assert "later" not in idle_page.body
-        assert "wombat" not in idle_page.body
-        assert accounts.accept(idle, NOW + timedelta(minutes=15)) is None
-
-        kept = accounts.login("ada", PASSWORD, NOW)
-        still = respond_attempt(
-            accounts,
-            attempt_id=str(next(row.id for row in store.recent("younger") if row.task == "later")),
-            method="GET",
-            query={},
-            cookie=kept,
-            form={},
-            now=NOW + timedelta(minutes=15),
-            attempts=store,
-        )
-        assert "wombat" in still.body
-
-        lifetime = accounts.login("ada", PASSWORD, NOW)
-        for minute in range(0, 181, 10):
-            page = respond_attempts(
-                accounts,
-                method="GET",
-                query={"client": "younger"},
-                cookie=lifetime,
-                form={},
-                now=NOW + timedelta(minutes=minute),
-                attempts=store,
-                clients=CLIENTS,
-            )
-            assert "later" in page.body
-        ended = respond_attempt(
-            accounts,
-            attempt_id="1",
-            method="GET",
-            query={},
-            cookie=lifetime,
-            form={},
-            now=NOW + timedelta(minutes=180, seconds=1),
-            attempts=store,
-        )
-        assert "Enter your username and password." in ended.body
-        assert "wombat" not in ended.body
-        assert "later" not in ended.body
-        assert "platypus" not in ended.body
+        for asked in ("999999", "0", "-1", "01", "abc", ""):
+            assert attempt_report(store, asked, now=NOW) is None
 
 
 def test_a_parent_records_a_parent_check_and_a_stranger_group_does_not():
     with PolicyStore(":memory:") as saved:
         accounts = _accounts(saved)
         store = AttemptStore(connection=saved.connection)
-        key = accounts.login("ada", PASSWORD, NOW)
-        unsigned = respond_parent_check(
-            accounts,
-            cookie=None,
-            form={"client": "younger"},
-            now=NOW,
-            tasks=(CREDIT,),
-            attempts=store,
-            clients=CLIENTS,
+        assert record_parent_check(accounts, store, "stranger", now=NOW, tasks=(CREDIT,), clients=CLIENTS) == (
+            "That client group is not in the household."
         )
-        assert "Enter your username and password." in unsigned.body
+        assert record_parent_check(accounts, store, "  ", now=NOW, clients=CLIENTS) == "Choose a client group."
+        assert record_parent_check(accounts, store, None, now=NOW, clients=CLIENTS) == "Choose a client group."
         assert store.attempts("younger") == ()
-        stranger = respond_parent_check(
-            accounts,
-            cookie=key,
-            form={"client": "stranger"},
-            now=NOW,
-            tasks=(CREDIT,),
-            attempts=store,
-            clients=CLIENTS,
+        assert record_parent_check(accounts, store, "younger", now=NOW, tasks=(CREDIT,), clients=CLIENTS) is None
+        report = attempts_report(store, CLIENTS, "younger", now=NOW, tasks=(CREDIT,))
+        top = report["attempts"][0]
+        assert (top["task"], top["set"], top["outcome"], top["started"]) == (
+            "credit",
+            "Parent check",
+            "pass",
+            "Saturday 31 October 2026, 12:00",
         )
-        assert "That client group is not in the household." in stranger.body
-        assert store.attempts("younger") == ()
-        recorded = respond_parent_check(
-            accounts,
-            cookie=key,
-            form={"client": "younger"},
-            now=NOW,
-            tasks=(CREDIT,),
-            attempts=store,
-            clients=CLIENTS,
-        )
-        assert "credit" in recorded.body
-        assert ">pass<" in recorded.body
-        assert "Saturday 31 October 2026, 12:00" in recorded.body
         assert store.passes_on("younger", NOW.date()) == 1
         assert [row.outcome for row in store.attempts("younger")] == ["pass"]
+        assert accounts.parent_checks()[0][0] == "younger"
 
 
-def test_plain_http_does_not_show_an_attempt(tmp_path, monkeypatch):
+@pytest.fixture
+def service(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from policy.app import create_app
 
@@ -309,75 +191,43 @@ def test_plain_http_does_not_show_an_attempt(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_FILE", str(tmp_path / "missing.yaml"))
     monkeypatch.setenv("POLICY_DB", str(database))
     monkeypatch.setenv("DECISION_LOG", str(tmp_path / "decisions.jsonl"))
+    monkeypatch.setenv("PARENT_IDLE", "1m")
     with PolicyStore(database) as saved:
-        accounts = Accounts(saved.connection)
-        accounts.set_password("ada", PASSWORD)
-        AttemptStore(connection=saved.connection).record(
-            "younger",
-            "later",
-            "pass",
-            NOW,
-            detail={"answers": ["wombat"]},
-        )
-        key = accounts.login("ada", PASSWORD, datetime.now(timezone.utc))
+        Accounts(saved.connection).set_password("ada", PASSWORD)
+        AttemptStore(connection=saved.connection).record("younger", "later", "pass", NOW, detail={"answers": ["wombat"]})
     app = create_app()
+    app.state.database = database
+    return app
 
-    status, body, headers = _call(app, "GET", "/attempts/1")
+
+def test_an_attempt_is_shown_only_over_https_with_a_session(service):
+    status, body, headers = call(service, "GET", "/parent/api/attempts/1", scheme="http")
     assert status == 403
-    assert "Open this page over HTTPS." in body
     assert "wombat" not in body
     assert "set-cookie" not in headers
-
-    status, body, _headers = _call(
-        app,
-        "GET",
-        "/attempts/1",
-        cookie=f"parent_session={key}",
-        scheme="https",
-    )
-    assert status == 200
-    assert "wombat" in body
-    status, body, _headers = _call(app, "GET", "/attempts", query=b"client=younger", scheme="https")
-    assert "Enter your username and password." in body
+    status, body, _headers = call(service, "GET", "/parent/api/attempts/1")
+    assert status == 401
     assert "wombat" not in body
-    assert "later" not in body
+
+    _status, _body, headers = call(service, "POST", "/parent/api/login", json_body={"username": "ada", "password": PASSWORD})
+    cookie = session_cookie(headers)
+    status, body, _headers = call(service, "GET", "/parent/api/attempts/1", cookie=cookie)
+    assert status == 200
+    assert json.loads(body)["answers"] == ["wombat"]
+    status, body, _headers = call(service, "GET", "/parent/api/attempts", query="client=younger", cookie=cookie)
+    assert [row["task"] for row in json.loads(body)["attempts"]] == ["later"]
 
 
-def _call(app, method, path, *, body=b"", cookie=None, scheme="http", query=b""):
-    messages = []
-    sent = False
+def test_an_idle_session_shows_no_attempts_and_cannot_be_used_again(service):
+    import sqlite3
 
-    async def receive():
-        nonlocal sent
-        if sent:
-            return {"type": "http.disconnect"}
-        sent = True
-        return {"type": "http.request", "body": body, "more_body": False}
-
-    async def send(message):
-        messages.append(message)
-
-    headers = []
-    if cookie:
-        headers.append((b"cookie", cookie.encode()))
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": method,
-        "scheme": scheme,
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": query,
-        "headers": headers,
-        "client": ("127.0.0.1", 12345),
-        "server": ("127.0.0.1", 8443),
-        "root_path": "",
-    }
-    asyncio.run(app(scope, receive, send))
-    start = next(item for item in messages if item["type"] == "http.response.start")
-    payload = b"".join(item.get("body", b"") for item in messages if item["type"] == "http.response.body")
-    found: dict[str, list[str]] = {}
-    for name, value in start["headers"]:
-        found.setdefault(name.decode(), []).append(value.decode())
-    return start["status"], payload.decode(), found
+    _status, _body, headers = call(service, "POST", "/parent/api/login", json_body={"username": "ada", "password": PASSWORD})
+    cookie = session_cookie(headers)
+    idle = (datetime.now(timezone.utc) - timedelta(minutes=1, seconds=5)).replace(microsecond=0).isoformat()
+    with sqlite3.connect(service.state.database) as connection:
+        connection.execute("UPDATE parent_sessions SET last_seen_at = ?", (idle,))
+    status, body, _headers = call(service, "GET", "/parent/api/attempts", query="client=younger", cookie=cookie)
+    assert status == 401
+    assert "wombat" not in body and "later" not in body
+    status, _body, _headers = call(service, "GET", "/parent/api/attempts/1", cookie=cookie)
+    assert status == 401

@@ -12,7 +12,8 @@ directory, daywarden-<version>/, holding:
     env.sample            the repository's .env, with paths under ~/daywarden
     config/               the repository's policy.yaml and bypass.txt
     bin/                  the host commands
-    lib/policy/           the Python source cut-clips runs, with requirements.txt
+    lib/policy/           the Python source cut-clips runs, with requirements.txt,
+                          and not the parent portal, which is built into the image
 
 The repository's .env, compose file, and make up are not changed.
 
@@ -57,7 +58,8 @@ def installed_compose(text: str, version: str) -> str:
     document = yaml.safe_load(text)
     services = document["services"]
     for service in services.values():
-        if service.pop("build", None) == "./policy":
+        service.pop("build", None)
+        if str(service.get("image", "")).startswith(f"{POLICY_IMAGE}:"):
             service["image"] = f"{POLICY_IMAGE}:{version}"
         service["pull_policy"] = "never"
         service["restart"] = "on-failure"
@@ -103,7 +105,8 @@ def _copy_policy(destination: Path) -> None:
     shutil.copytree(
         ROOT / "policy",
         destination,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "Dockerfile", ".dockerignore"),
+        # cut-clips needs only the Python. The portal is built into the image.
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "Dockerfile", ".dockerignore", "portal"),
     )
 
 

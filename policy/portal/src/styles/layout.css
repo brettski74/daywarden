@@ -1,0 +1,518 @@
+/*
+ * Portal layout: structure, sizes, spacing, and type. No colours. Every colour
+ * comes from a role property in the theme stylesheet.
+ *
+ * The window never scrolls. The sidebar, context bar, and status bar stay in
+ * place, and only the content pane scrolls. Record lists keep their column
+ * headers at the top of the content pane.
+ */
+
+/*
+ * Every expand and collapse animates with these, like jQuery's swing easing
+ * over half a second. src/motion.ts reads the duration, so the code that
+ * waits for an animation waits as long as the CSS runs it.
+ */
+:root {
+  --expand-duration: 500ms;
+  --expand-easing: cubic-bezier(0.37, 0, 0.63, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --expand-duration: 0ms;
+  }
+}
+
+@keyframes fold-in {
+  from {
+    opacity: 0;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.45;
+  background: var(--content-bg);
+  color: var(--content-text);
+}
+
+svg {
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+}
+
+a {
+  color: var(--link);
+}
+
+:focus-visible {
+  outline: 0.15rem solid var(--focus-ring);
+  outline-offset: 0.1rem;
+}
+
+/* Buttons and fields */
+
+.button,
+.icon-button,
+.sign-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 0.3rem;
+}
+
+.button {
+  padding: 0.3rem 0.8rem;
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  background: var(--button-disabled-bg);
+  color: var(--button-disabled-text);
+}
+
+.button-quiet {
+  background: var(--button-quiet-bg);
+  color: var(--button-quiet-text);
+  box-shadow: inset 0 0 0 0.08rem var(--border);
+}
+
+.button-quiet:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+select,
+input {
+  font: inherit;
+  padding: 0.2rem 0.4rem;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--input-bg);
+  color: var(--input-text);
+}
+
+/* The portal frame */
+
+.portal {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/*
+ * Collapsing narrows the sidebar to the strip while its expanded content
+ * fades. data-strip arrives when the collapse has finished, and leaves at the
+ * start of an expand. Width only animates while data-moving is set, so a drag
+ * or a window resize follows the pointer at once.
+ */
+.sidebar {
+  position: relative;
+  flex: none;
+  height: 100%;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+}
+
+.sidebar[data-collapsed] {
+  width: 3rem;
+}
+
+.sidebar[data-moving] {
+  transition: width var(--expand-duration) var(--expand-easing);
+}
+
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebar[data-strip] .sidebar-inner {
+  align-items: center;
+}
+
+.sidebar-fold {
+  transition: opacity var(--expand-duration) var(--expand-easing);
+}
+
+.sidebar[data-collapsed] .sidebar-fold {
+  opacity: 0;
+}
+
+.sidebar[data-moving]:not([data-collapsed]) .sidebar-fold {
+  animation: fold-in var(--expand-duration) var(--expand-easing);
+}
+
+.sidebar :focus-visible {
+  outline-color: var(--sidebar-focus-ring);
+}
+
+.sidebar-top {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.5rem;
+}
+
+.sidebar[data-strip] .sidebar-top {
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+
+.icon-button {
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.icon-button:hover,
+.sign-out:hover {
+  background: var(--sidebar-hover-bg);
+}
+
+.sidebar-logo {
+  flex: none;
+  width: 80%;
+  max-width: 13rem;
+  aspect-ratio: 512 / 531;
+  margin: 0 auto 1rem;
+  background: var(--sidebar-logo) center / contain no-repeat;
+}
+
+.sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.5rem;
+}
+
+.sidebar-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.15rem;
+  border-radius: 0.3rem;
+  color: var(--sidebar-text);
+  text-decoration: none;
+}
+
+.sidebar-nav a:hover {
+  background: var(--sidebar-hover-bg);
+}
+
+.sidebar-nav a.active {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-text);
+  font-weight: 600;
+}
+
+.sidebar-bottom {
+  flex: none;
+  margin-top: auto;
+  padding: 0.75rem;
+  border-top: 0.06rem solid var(--sidebar-handle);
+}
+
+.sidebar[data-strip] .sidebar-bottom {
+  padding: 0.5rem 0;
+  border-top: 0;
+}
+
+.sidebar-user {
+  margin: 0 0 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-nav a,
+.sign-out {
+  white-space: nowrap;
+}
+
+.sign-out {
+  padding: 0.35rem 0.6rem;
+  background: transparent;
+  color: inherit;
+  box-shadow: inset 0 0 0 0.06rem var(--sidebar-handle);
+}
+
+.sidebar[data-strip] .sign-out {
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  box-shadow: none;
+}
+
+.sidebar-handle {
+  position: absolute;
+  top: 0;
+  right: -0.25rem;
+  bottom: 0;
+  z-index: 2;
+  width: 0.5rem;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-handle:hover,
+.sidebar-handle:focus-visible {
+  background: var(--sidebar-handle);
+  outline: none;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.context-bar,
+.status-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.7rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.85rem;
+  background: var(--bar-bg);
+  color: var(--bar-text);
+}
+
+.status-bar {
+  min-height: 2rem;
+  font-size: 0.9rem;
+}
+
+.context-bar a {
+  color: var(--bar-link);
+}
+
+.bar-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.bar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.bar-field select {
+  field-sizing: content;
+  max-width: 11rem;
+}
+
+.bar-form {
+  margin: 0;
+}
+
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.crumbs li + li::before {
+  content: "›";
+  margin: 0 0.5rem;
+}
+
+.crumbs .bar-title {
+  display: inline;
+}
+
+.status-done {
+  color: var(--done-text);
+  font-weight: 600;
+}
+
+.status-refused {
+  color: var(--failure-text);
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 1.5rem 1.5rem;
+  background: var(--content-bg);
+  color: var(--content-text);
+}
+
+.content > :first-child {
+  margin-top: 1rem;
+}
+
+.content h2 {
+  font-size: 1.25rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.content h3 {
+  font-size: 1.05rem;
+  margin: 1.25rem 0 0.25rem;
+}
+
+/* Records */
+
+.records {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  margin: 0.4rem 0 1.2rem;
+}
+
+.records th,
+.records td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.3rem 0.8rem 0.3rem 0.5rem;
+  border-bottom: 0.06rem solid var(--border);
+}
+
+.records thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--table-head-bg);
+  font-weight: 600;
+}
+
+.records tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.summary,
+.fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1.25rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.summary > div,
+.fields > div {
+  display: contents;
+}
+
+.summary dt,
+.fields dt {
+  font-weight: 600;
+}
+
+.summary dd,
+.fields dd {
+  margin: 0;
+}
+
+.fields .fields {
+  margin: 0;
+}
+
+.loading {
+  height: 100%;
+}
+
+/* The sign-in screen */
+
+.signin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  overflow: auto;
+  padding: 1.5rem;
+  background: var(--signin-bg);
+}
+
+.signin-panel {
+  width: min(22rem, 100%);
+  padding: 1.75rem;
+  border: 0.06rem solid var(--signin-panel-border);
+  border-radius: 0.5rem;
+  background: var(--signin-panel-bg);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.signin-logo {
+  width: 70%;
+  aspect-ratio: 512 / 531;
+  margin: 0 auto 1rem;
+  background: var(--signin-logo) center / contain no-repeat;
+}
+
+.signin h1 {
+  font-size: 1.3rem;
+  margin: 0 0 1rem;
+}
+
+.signin-form {
+  display: grid;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+.signin-form input {
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.signin-failure {
+  margin: 0 0 0.5rem;
+  color: var(--failure-text);
+  font-weight: 600;
+}
+
+.signin-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+}

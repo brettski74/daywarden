@@ -19,9 +19,10 @@
 # ceiling, and the access rules no longer allow it, the service answers
 # with a cut and the proxy stops that transfer. Any other answer leaves it
 # running.
-# POLICY_PORT publishes the policy pages over HTTPS: the usage report, the
-# attempt review, and the task pages. Accounts are added with
-# `python -m policy.accounts` inside the decisions container. The decision
+# POLICY_PORT publishes the policy pages over HTTPS: the parent portal at
+# /parent/, with its usage report and attempt review, and the task pages.
+# Accounts are added with `python -m policy.accounts` inside the decisions
+# container. The decision
 # API stays on plain HTTP inside the compose network. It does not show the
 # report and does not edit policy.
 # The autoconfig service serves the proxy auto-config file browsers fetch,
@@ -50,7 +51,7 @@ services:
       PROXY_CONFIG_PORT: ${PROXY_CONFIG_PORT:-8088}
       DAYWARDEN_DATA_DIR: /var/lib/daywarden/data
     ports:
-      # Clients open https://<this machine>:POLICY_PORT/usage. 8090 inside
+      # Clients open https://<this machine>:POLICY_PORT/parent/. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
       # 8443 is where the HTTPS listener is bound.
       - "${POLICY_PORT:-8084}:8443"
@@ -87,9 +88,11 @@ services:
     restart: unless-stopped
 
   observations:
-    build: ./policy
+    # The decisions service builds this image. Compose labels a build with
+    # its service, so a second build of the same tag would be another image,
+    # and up would recreate the containers built from the first.
     image: daywarden-policy:local
-    pull_policy: build
+    pull_policy: never
     command:
       - python
       - -m
@@ -174,9 +177,9 @@ services:
     restart: unless-stopped
 
   autoconfig:
-    build: ./policy
+    # Built by the decisions service, as for observations.
     image: daywarden-policy:local
-    pull_policy: build
+    pull_policy: never
     command:
       - python
       - -m

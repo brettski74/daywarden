@@ -1,12 +1,11 @@
 """The policy service. The container runs: python -m policy.serve
 
 On start, POLICY_FILE is loaded. The household file is
-/etc/daywarden/policy.yaml. Requests are decided by its nested rule sets,
-and GET /usage slices recent usage by site group, client group, or quota.
+/etc/daywarden/policy.yaml. Requests are decided by its nested rule sets.
 A POLICY_FILE that does not end in .yaml or .yml stops the service. A
-missing file leaves it running with nothing allowed. Parent pages stay
-closed until a parent account is added, and they are served only over
-HTTPS. The quiz sound sets are read once at start, from SOUND_DIR or the
+missing file leaves it running with nothing allowed. The parent portal under
+/parent/ stays closed until a parent account is added, and it is served only
+over HTTPS. Its built files are read from PORTAL_DIR. The quiz sound sets are read once at start, from SOUND_DIR or the
 image's policy/static/sounds. Spelling words are read from
 DAYWARDEN_DATA_DIR each time a run starts.
 
@@ -29,16 +28,16 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
-from policy.accounts import COOKIE_NAME, Accounts, cookie_value, session_limits
+from policy.accounts import Accounts, session_limits
 from policy.check import household_zone, load_required, summary_lines
 from policy.clients import normalize_ip
 from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
-from policy.report import parse_form, respond
+from policy.portal import PORTAL_DIR, install_portal
 from policy.returns import ReturnPages, way_back
-from policy.review import QUIZ_PAGE, https_only_page, respond_attempt, respond_attempts, respond_parent_check
+from policy.review import QUIZ_PAGE
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.store import PolicyStore
 from policy.task_page import respond_task, task_media
@@ -230,97 +229,14 @@ def create_app() -> FastAPI:
                 response.headers[name] = value
         return response
 
-    @app.api_route("/usage", methods=["GET", "POST"])
-    async def usage_page(request: Request) -> Response:
-        return await _parent_page(request, _usage_page)
-
-    @app.api_route("/attempts", methods=["GET", "POST"])
-    async def attempts_page(request: Request) -> Response:
-        return await _parent_page(request, _attempts_page)
-
-    @app.api_route("/attempts/parent-check", methods=["POST"])
-    async def parent_check_page(request: Request) -> Response:
-        return await _parent_page(request, _parent_check_page)
-
-    @app.api_route("/attempts/{attempt_id}", methods=["GET", "POST"])
-    async def attempt_page(request: Request, attempt_id: str) -> Response:
-        def render(request: Request, raw: bytes, now: Loaded) -> object:
-            return _attempt_page(request, raw, now, attempt_id)
-
-        return await _parent_page(request, render)
-
-    async def _parent_page(request: Request, render) -> Response:
-        # Stay on the event-loop thread. A sync endpoint would run in a
-        # threadpool, and this process's SQLite connection is not shared.
-        # Plain HTTP does not return the page, set the cookie, or act.
-        if request.url.scheme != "https":
-            refused = Response(
-                https_only_page(),
-                status_code=403,
-                media_type="text/html; charset=utf-8",
-            )
-            refused.headers["cache-control"] = "no-store"
-            return refused
-        now = holder.loaded
-        raw = await request.body() if request.method == "POST" else b""
-        page = render(request, raw, now)
-        response = Response(page.body, status_code=page.status, media_type="text/html; charset=utf-8")
-        for name, value in page.headers:
-            if name == "set-cookie":
-                response.headers.append("set-cookie", value)
-            else:
-                response.headers[name] = value
-        return response
-
-    def _usage_page(request: Request, raw: bytes, now: Loaded):
-        cookie = cookie_value(request.headers.get("cookie"), COOKIE_NAME)
-        return respond(
-            now.policy,
-            usage_store,
-            accounts,
-            method=request.method,
-            query=_query(request, ("view", "client", "site", "quota")),
-            cookie=cookie,
-            form=parse_form(raw),
-            now=now.clock.local(),
-        )
-
-    def _attempts_page(request: Request, raw: bytes, now: Loaded):
-        return respond_attempts(
-            accounts,
-            method=request.method,
-            query=_query(request, ("client",)),
-            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-            form=parse_form(raw),
-            now=now.clock.local(),
-            attempts=attempts,
-            clients=_client_names(now.policy),
-            tasks=() if now.policy is None else now.policy.tasks,
-        )
-
-    def _attempt_page(request: Request, raw: bytes, now: Loaded, attempt_id: str):
-        return respond_attempt(
-            accounts,
-            attempt_id=attempt_id,
-            method=request.method,
-            query={},
-            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-            form=parse_form(raw),
-            now=now.clock.local(),
-            attempts=attempts,
-        )
-
-    def _parent_check_page(request: Request, raw: bytes, now: Loaded):
-        return respond_parent_check(
-            accounts,
-            cookie=cookie_value(request.headers.get("cookie"), COOKIE_NAME),
-            form=parse_form(raw),
-            now=now.clock.local(),
-            tasks=() if now.policy is None else now.policy.tasks,
-            attempts=attempts,
-            clients=_client_names(now.policy),
-        )
-
+    install_portal(
+        app,
+        loaded=lambda: holder.loaded,
+        accounts=accounts,
+        attempts=attempts,
+        usage_store=usage_store,
+        portal_dir=Path(os.environ.get("PORTAL_DIR", str(PORTAL_DIR))),
+    )
     return app
 
 
@@ -353,9 +269,9 @@ def _announce(lines) -> None:
 
 def _announce_parents(accounts: Accounts) -> None:
     if accounts.count():
-        print("usage report is /usage", flush=True)
+        print("parent portal is /parent/", flush=True)
     else:
-        print("usage report is closed until a parent account is added", flush=True)
+        print("parent portal is closed until a parent account is added", flush=True)
 
 
 def _load_policy(policy_file: Path, localtime: Path) -> Loaded:
@@ -378,16 +294,6 @@ def _load_policy(policy_file: Path, localtime: Path) -> Loaded:
 
 def _empty_policy() -> Policy:
     return Policy(entry="", rule_sets=())
-
-
-def _client_names(policy: Policy | None) -> tuple[str, ...]:
-    """Return the client groups a parent can review, including ``default``."""
-    if policy is None:
-        return ()
-    names = [group.name for group in policy.client_groups]
-    if "default" not in names:
-        names.append("default")
-    return tuple(names)
 
 
 def _client_address(request: Request, policy: Policy | None) -> str:

@@ -18,10 +18,9 @@ sys.path.insert(0, str(ROOT))
 from conftest import write_alphabet, write_wav  # noqa: E402
 
 from policy import spelling  # noqa: E402
-from policy.accounts import Accounts  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
-from policy.review import respond_attempt  # noqa: E402
+from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.spelling import (  # noqa: E402
     CURRENT,
@@ -991,22 +990,10 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path,
     }
     run = quiz.detail()["runs"][0]
     assert (run["current_total"], run["current_required"], run["revision_required"]) == (1, 1, 0)
-    accounts = Accounts(quiz.store.connection)
-    accounts.set_password("ada", "s3cret-pass")
-    key = accounts.login("ada", "s3cret-pass", START)
-    page = respond_attempt(
-        accounts,
-        attempt_id=str(quiz.attempt().id),
-        method="GET",
-        query={},
-        cookie=key,
-        form={},
-        now=START,
-        attempts=quiz.store,
-    )
-    assert "sentence_plays" in page.body
-    assert "requeued" in page.body
-    assert "4250" in page.body
+    page = json.dumps(attempt_report(quiz.store, str(quiz.attempt().id), now=START))
+    assert "sentence_plays" in page
+    assert "requeued" in page
+    assert "4250" in page
 
 
 # Audio through the proxy and the service

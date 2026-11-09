@@ -141,7 +141,7 @@ with UsageStore("/var/lib/daywarden/policy.sqlite3") as usage:
 GET_USAGE = """
 import json, urllib.error, urllib.request
 request = urllib.request.Request(
-    "http://127.0.0.1:8090/usage",
+    "http://127.0.0.1:8090/parent/api/usage?view=client&client=younger",
     headers={"X-Forwarded-Proto": "https"},
 )
 try:
@@ -371,7 +371,7 @@ def test_the_usage_report_is_closed_without_a_parent_account(stack):
     assert "Open this page over HTTPS." in answer["body"]
     assert "younger" not in answer["body"]
     assert answer["set_cookie"] is None
-    assert "usage report is closed until a parent account is added" in stack.logs()
+    assert "parent portal is closed until a parent account is added" in stack.logs()
 
 
 def test_the_policy_and_stored_usage_survive_new_containers(stack):

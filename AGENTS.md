@@ -43,6 +43,20 @@ Many tests start Docker Compose, so the full suite needs access to Docker. Agent
 full suite outside it. It takes several minutes, so run it in the background. Tests that need `ffmpeg` or `node` are
 skipped when those tools are not installed.
 
+# Parent Portal
+
+The parent pages are one React Router app under `/parent/`, with its source in `policy/portal/`. Read
+`docs/parent-portal.md` before changing or adding a parent page. The rules there are binding. In short:
+
+- Every navigation is a real `<a href>`, every page and choice has its own URL, and every action is a `<button>`.
+- Signing in always returns to a portal page, never to a data address under `/parent/api/`. Data endpoints answer 401
+  or 403 and never redirect.
+- The portal makes no background requests that keep a session alive.
+- Colours come only from role properties in the theme stylesheet. Components name no colour values.
+- Icons come from Lucide. The portal loads nothing from outside the parent port.
+- Every expand and collapse animates with `--expand-duration` and `--expand-easing`, 500ms of swing easing.
+- The child's task pages are not part of the portal. Do not change their layout or design as part of portal work.
+
 # Testing
 
 Any new feature or bugfix must implement or update at least one automated test. Implement as many tests are are required
@@ -91,8 +105,8 @@ Story point values should be estimated based on:
 S006.1, S006.2, and S006.3 were implemented one after another in a single session, and together they used about 40% of
 the context window. Together they were 14 points (3 + 8 + 3) and 39 acceptance criteria. They covered a new task type
 and its policy-file checks, a drag-and-drop quiz page with a timer, scoring, and resume, and the red marks and answer
-table after a wrong try. That work should have been one story, and one story can hold somewhat more than that. Size
-single stories against this reference. 13 and 21 are normal sizes for one story. 1 to 5 points is a small change.
+table after a wrong try. That work should have been one story, and one story can hold somewhat more than that. S007.4
+used about 475k tokens which is still less than 50% of the context window and was a 21 point story. Size single stories against these references. 13 and 21 are normal sizes for one story. 1 to 5 points is a small change.
 
 ## Acceptance through external interfaces
 
