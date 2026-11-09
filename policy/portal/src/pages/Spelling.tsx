@@ -41,13 +41,13 @@ export function listedPools(filter: string): Pool[] {
 }
 
 // The recording buttons in each row: what each re-records, its label, and its icon.
-const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = [
+export const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = [
   { kinds: ["word", "sentence"], label: "Re-record word and sentence", icon: Mic },
   { kinds: ["word"], label: "Re-record word", icon: WholeWord },
   { kinds: ["sentence"], label: "Re-record sentence", icon: MessageSquareText },
 ];
 
-function audioAddress(task: string, pool: Pool, file: string): string {
+export function audioAddress(task: string, pool: Pool, file: string): string {
   return `${BASE}/api/tasks/${encodeURIComponent(task)}/audio/${pool}/${encodeURIComponent(file)}`;
 }
 

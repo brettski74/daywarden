@@ -1,58 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RecordDialog, START_DELAY_MS } from "./components/RecordDialog";
 import { SPELLING, fakeService, renderPortal, shown, type Call, type Reply } from "./test/portal";
+import { FakeRecorder, media, useFakeMedia } from "./test/recorder";
 
 const TAKE = "TakeTakeTakeTake";
 
-class FakeRecorder {
-  static isTypeSupported = (type: string) => type === "audio/webm;codecs=opus";
-  static last: FakeRecorder | null = null;
-  state: "inactive" | "recording" = "inactive";
-  mimeType: string;
-  ondataavailable: ((event: { data: Blob }) => void) | null = null;
-  onstop: (() => void) | null = null;
-
-  constructor(_stream: unknown, options?: { mimeType?: string }) {
-    this.mimeType = options?.mimeType ?? "";
-    FakeRecorder.last = this;
-  }
-
-  start() {
-    this.state = "recording";
-  }
-
-  stop() {
-    this.state = "inactive";
-    this.ondataavailable?.({ data: new Blob(["the take"], { type: this.mimeType }) });
-    this.onstop?.();
-  }
-}
-
-let played: string[] = [];
-let microphone: () => Promise<unknown>;
-
-beforeEach(() => {
-  played = [];
-  FakeRecorder.last = null;
-  microphone = async () => ({ getTracks: () => [{ stop: () => undefined }] });
-  vi.stubGlobal("MediaRecorder", FakeRecorder);
-  Object.defineProperty(window.navigator, "mediaDevices", {
-    configurable: true,
-    value: { getUserMedia: () => microphone() },
-  });
-  vi.spyOn(window.HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
-    played.push(new URL(this.src).pathname);
-    return Promise.resolve();
-  });
-  vi.spyOn(window.HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
-});
-
-afterEach(() => {
-  delete (window.navigator as { mediaDevices?: unknown }).mediaDevices;
-});
+useFakeMedia();
 
 function clips(count: number, mark = "aaaaaa") {
   return Array.from({ length: count }, (_, index) => ({ id: `${mark}-${index + 1}`, start: index * 1000, ms: 600 }));
@@ -135,7 +91,7 @@ describe("the recording buttons on each word", () => {
 
 describe("recording", () => {
   it("says so when the browser refuses the microphone, and records nothing", async () => {
-    microphone = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+    media.microphone = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
     const { calls } = await openSpelling();
     await userEvent.click(screen.getByRole("button", { name: "Re-record word for rope" }));
     const dialog = await screen.findByRole("dialog");
@@ -149,7 +105,7 @@ describe("recording", () => {
   });
 
   it("says so when there is no microphone", async () => {
-    microphone = () => Promise.reject(new DOMException("none", "NotFoundError"));
+    media.microphone = () => Promise.reject(new DOMException("none", "NotFoundError"));
     await openSpelling();
     await userEvent.click(screen.getByRole("button", { name: "Re-record word for rope" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("No microphone was found, so nothing can be recorded.");
@@ -181,7 +137,7 @@ describe("recording", () => {
     expect(posts(calls, `/parent/api/recordings/${TAKE}/cut`)[0].body).toEqual({
       settings: { min_silence: 700, threshold: 35, min_speech: 150, guard: 100, loudness: -18 },
     });
-    expect(played).toEqual([`/parent/api/recordings/${TAKE}/aaaaaa-1.opus`]);
+    expect(media.played).toEqual([`/parent/api/recordings/${TAKE}/aaaaaa-1.opus`]);
   });
 
   it("starts and stops with the buttons too", async () => {
@@ -253,14 +209,14 @@ describe("reviewing the clips", () => {
     expect(within(dialog).getByText("Playing: rope (word)")).toBeInTheDocument();
     await userEvent.keyboard("j");
     expect(within(dialog).getByText("Playing: rope (word)")).toBeInTheDocument();
-    expect(within(dialog).getByText("Clip 2 of 3, item 1 of 2")).toBeInTheDocument();
+    expect(within(dialog).getByText("1 of 2: rope (word). Clip 2 of 3.")).toBeInTheDocument();
     await userEvent.keyboard("k");
     expect(within(dialog).getByText("Playing: rope (sentence)")).toBeInTheDocument();
     await userEvent.keyboard("k");
     await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toHaveLength(1));
     expect(posts(calls, "/parent/api/tasks/spelling/recordings")[0].body).toMatchObject({ clips: { word: "aaaaaa-2", sentence: "aaaaaa-3" } });
-    expect(played).toEqual(["aaaaaa-1", "aaaaaa-2", "aaaaaa-3"].map((id) => `/parent/api/recordings/${TAKE}/${id}.opus`));
+    expect(media.played).toEqual(["aaaaaa-1", "aaaaaa-2", "aaaaaa-3"].map((id) => `/parent/api/recordings/${TAKE}/${id}.opus`));
   });
 
   it("moves straight to the sentence with the same clip on Missing", async () => {
@@ -269,7 +225,7 @@ describe("reviewing the clips", () => {
     await recordAndReview(dialog);
     await userEvent.click(within(dialog).getByRole("button", { name: "Missing" }));
     expect(within(dialog).getByText("Playing: rope (sentence)")).toBeInTheDocument();
-    expect(within(dialog).getByText("Clip 1 of 1, item 2 of 2")).toBeInTheDocument();
+    expect(within(dialog).getByText("2 of 2: rope (sentence). Clip 1 of 1.")).toBeInTheDocument();
     await userEvent.keyboard("k");
     expect(within(dialog).getByRole("row", { name: "rope (word) Missing" })).toBeInTheDocument();
     expect(within(dialog).getByRole("row", { name: "rope (sentence) Kept" })).toBeInTheDocument();
@@ -286,10 +242,10 @@ describe("reviewing the clips", () => {
     await userEvent.keyboard("k");
     await userEvent.click(within(dialog).getByRole("button", { name: "Back" }));
     expect(within(dialog).getByText("Playing: rope (word)")).toBeInTheDocument();
-    expect(within(dialog).getByText("Clip 1 of 2, item 1 of 2")).toBeInTheDocument();
+    expect(within(dialog).getByText("1 of 2: rope (word). Clip 1 of 2.")).toBeInTheDocument();
     await userEvent.keyboard("r");
     await userEvent.click(within(dialog).getByRole("button", { name: "Replay" }));
-    expect(played.filter((path) => path.endsWith("aaaaaa-1.opus"))).toHaveLength(4);
+    expect(media.played.filter((path) => path.endsWith("aaaaaa-1.opus"))).toHaveLength(4);
     await userEvent.keyboard("dk");
     expect(within(dialog).getByRole("row", { name: "rope (word) Discarded" })).toBeInTheDocument();
     await userEvent.keyboard("b");
@@ -529,8 +485,8 @@ describe("the Advanced settings", () => {
     await userEvent.click(guard);
     await userEvent.keyboard("kjdmrb");
     expect(within(dialog).getByText("Playing: rope (word)")).toBeInTheDocument();
-    expect(within(dialog).getByText("Clip 1 of 2, item 1 of 1")).toBeInTheDocument();
-    expect(played).toHaveLength(1);
+    expect(within(dialog).getByText("1 of 1: rope (word). Clip 1 of 2.")).toBeInTheDocument();
+    expect(media.played).toHaveLength(1);
     expect(guard).toHaveValue("100kjdmrb");
   });
 
@@ -548,10 +504,10 @@ describe("the Advanced settings", () => {
     await openAdvanced(dialog);
     fireEvent.change(within(dialog).getByRole("slider", { name: "Threshold" }), { target: { value: "45" } });
     await userEvent.click(within(dialog).getByRole("button", { name: "Cut" }));
-    expect(await within(dialog).findByText("Clip 1 of 3, item 1 of 1")).toBeInTheDocument();
+    expect(await within(dialog).findByText("1 of 1: rope (word). Clip 1 of 3.")).toBeInTheDocument();
     expect(posts(calls, "/parent/api/recordings")).toHaveLength(1);
     const sent = posts(calls, `/parent/api/recordings/${TAKE}/cut`).map((call) => (call.body as { settings: { threshold: number } }).settings.threshold);
     expect(sent).toEqual([35, 45]);
-    expect(played[played.length - 1]).toBe(`/parent/api/recordings/${TAKE}/bbbbbb-1.opus`);
+    expect(media.played[media.played.length - 1]).toBe(`/parent/api/recordings/${TAKE}/bbbbbb-1.opus`);
   });
 });

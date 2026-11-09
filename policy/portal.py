@@ -9,8 +9,9 @@ Household data comes only from JSON under /parent/api/, and the spelling
 recordings the task pages play. Those endpoints need a parent session from
 S007.1. With no session they answer 401, and with no parent account 403,
 with no data. They never redirect: only the portal's own code reacts to
-those answers. Sign-in, sign-out, the parent check, a task save, Retire, and
-cutting or keeping a recording are JSON POSTs, and a POST whose body is not
+those answers. Sign-in, sign-out, the parent check, a task save, Retire,
+cutting or keeping a recording, and each step of a new week's spelling words
+are JSON POSTs, and a POST whose body is not
 application/json is refused, so a form on another site cannot use the
 parent's cookie to act. The one exception is the upload of a recording,
 which is the raw audio, and must be audio/webm or audio/ogg. A form cannot
@@ -44,6 +45,7 @@ from policy.sounds import media_type
 from policy.task_admin import TaskAdmin
 from policy.tasks import AttemptStore
 from policy.usage import UsageStore
+from policy.week import Weeks
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal" / "dist"
 HOME = "/parent/"
@@ -119,6 +121,7 @@ def install_portal(
     """
     root = portal_dir.resolve()
     recordings = tasks.recordings if tasks is not None else Recordings()
+    weeks = Weeks(tasks) if tasks is not None else None
 
     def guard(request: Request) -> tuple[str | None, Response | None]:
         """Return the signed-in username, or the refusal to send instead."""
@@ -292,6 +295,78 @@ def install_portal(
             return _json(404, {"error": f"There is no task named {name}."})
         answer = tasks.keep(name, body)
         return _json(answer.status, answer.body)
+
+    async def acting(request: Request) -> tuple[dict, str, Response | None]:
+        """Return a state-changing request's JSON body and the signed-in username, or the refusal to send instead."""
+        if request.url.scheme != "https":
+            return {}, "", _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return {}, "", refused
+        username, refused = guard(request)
+        if refused is not None:
+            return {}, "", refused
+        return body, username or "", None
+
+    @app.get("/parent/api/tasks/{name}/week")
+    async def week_page(request: Request, name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if weeks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = weeks.page(name)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}/week")
+    async def week_save(request: Request, name: str) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if weeks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = weeks.save(name, body)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}/week/recordings")
+    async def week_keep(request: Request, name: str) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if weeks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = weeks.keep(name, body)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}/week/cancel")
+    async def week_cancel(request: Request, name: str) -> Response:
+        _body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if weeks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = weeks.cancel(name)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}/week/apply")
+    async def week_apply(request: Request, name: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if weeks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = weeks.apply(name, body, username)
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/tasks/{name}/week/clips/{file_name}")
+    async def week_clip(request: Request, name: str, file_name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        found = None if weeks is None else weeks.clip(name, file_name)
+        if found is None:
+            return _json(404, {"error": "There is no such recording."})
+        return FileResponse(found, media_type="audio/ogg", headers={"cache-control": "private, no-store"})
 
     @app.post("/parent/api/recordings")
     async def recording_upload(request: Request) -> Response:

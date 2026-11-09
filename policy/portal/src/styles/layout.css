@@ -86,6 +86,12 @@ a {
   color: var(--button-text);
 }
 
+/* A link to another page, drawn like the buttons beside it. */
+a.button {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .button:hover:not(:disabled) {
   background: var(--button-hover-bg);
 }
@@ -864,6 +870,88 @@ input[data-changed],
   gap: 0.35rem;
 }
 
+/* The new week's words */
+
+.week-entry {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.week-add {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0.6rem;
+}
+
+.week-add textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+}
+
+.week-hint {
+  margin: 0.35rem 0;
+}
+
+.week-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.week-blocked {
+  margin: 0;
+  font-weight: 600;
+}
+
+.week-words .button {
+  white-space: nowrap;
+}
+
+.week-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.week-key {
+  width: 11rem;
+}
+
+.week-sentence {
+  width: 100%;
+  min-width: 14rem;
+}
+
+.week-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+}
+
+.week-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.9rem;
+  margin: 0.35rem 0 0;
+  padding: 0.3rem 0.6rem 0.5rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.3rem;
+}
+
+.week-choices legend {
+  padding: 0 0.25rem;
+  font-size: 0.9rem;
+}
+
+.week-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 kbd {
   display: inline-block;
   min-width: 1.1em;
@@ -928,6 +1016,12 @@ kbd {
   margin: 0 0 0.75rem;
   padding-left: 1.75rem;
   font-size: 1.25rem;
+}
+
+.record-expected {
+  margin: 0.25rem 0;
+  font-size: 1.1rem;
+  font-style: italic;
 }
 
 .record-progress,

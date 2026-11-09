@@ -419,8 +419,9 @@ export function RecordDialog({ title, items, onKeep, onClose }: Props) {
               Playing: {itemName(item)}
             </p>
             <p className="record-progress">
-              Clip {review.clip + 1} of {clips.length}, item {review.item + 1} of {items.length}
+              {review.item + 1} of {items.length}: {itemName(item)}. Clip {review.clip + 1} of {clips.length}.
             </p>
+            {item.line !== item.key && <p className="record-expected">{item.line}</p>}
             <div className="review-controls">
               {CONTROLS.map(({ action, label, key, icon: Icon, title: hint }) => (
                 <button

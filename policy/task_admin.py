@@ -156,6 +156,34 @@ class TaskAdmin:
             return Answer(400, {"error": str(error)})
         if new_text == text and not moves:
             return Answer(200, {"message": "Nothing has changed, so nothing was saved.", "warnings": []})
+        return self.write(
+            name, path, text, new_text, moves, username,
+            confirmed=bool(request.get("confirmed")), moved=_moved_words(moved) if moved else None,
+        )
+
+    def write(
+        self,
+        name: str,
+        path: Path,
+        text: str,
+        new_text: str,
+        moves: list[tuple[Path, Path]],
+        username: str,
+        *,
+        confirmed: bool,
+        moved: str | None,
+        failed: str = "The words could not be moved, so nothing was saved",
+        moved_all: Callable[[], None] | None = None,
+    ) -> Answer:
+        """Check and make a save: the task's new text and the planned file moves, as one change.
+
+        Hand edits in the config directory are checked and committed first.
+        The whole policy is loaded with the new text and the files already
+        moved, and refused when it would not load. Then the files move, the
+        text is written, every service reloads, and the save is committed.
+        When a move or the write fails, the moves already made are reversed.
+        ``moved_all`` runs once every file has moved and the text is written.
+        """
         history = self.history
         try:
             hand = history.changed() if history.kept else []
@@ -171,7 +199,7 @@ class TaskAdmin:
             return refused
         checked = self._checked
         task = None if checked is None else checked.task(name)
-        if task is not None and task.due_date is not None and not request.get("confirmed"):
+        if task is not None and task.due_date is not None and not confirmed:
             passed = [group for group in task.groups if stored_passes(name, group, self.attempts.history(group))]
             if passed:
                 return Answer(409, {"confirm": _due_warning(name, passed), "groups": passed})
@@ -182,13 +210,15 @@ class TaskAdmin:
         try:
             done = move_files(moves)
         except OSError as error:
-            return Answer(500, {"error": f"The words could not be moved, so nothing was saved: {error}"})
+            return Answer(500, {"error": f"{failed}: {error}"})
         if new_text != text:
             try:
                 replace_text(path, new_text)
             except OSError as error:
                 undo_moves(done)
                 return Answer(500, {"error": f"{path} could not be written, so nothing was saved: {error}"})
+        if moved_all is not None:
+            moved_all()
         parts = []
         if new_text != text or hand:
             applied = self._reload(warnings)
@@ -196,7 +226,7 @@ class TaskAdmin:
                 return applied
             parts.append(f"Saved {name}. The decisions, observations, and autoconfig services are using it.")
         if moved:
-            parts.append(_moved_words(moved))
+            parts.append(moved)
         if new_text != text:
             relative = _within(path, self.policy_file.parent)
             if relative is not None and history.kept:
@@ -335,10 +365,19 @@ class TaskAdmin:
         return []
 
     def _check(self, moves: list[tuple[Path, Path]], overrides: Mapping[Path, str]) -> Answer | None:
-        """Refuse a save or a retire that would leave the policy unable to load."""
-        if any(target.exists() for _source, target in moves):
+        """Refuse a save or a retire that would leave the policy unable to load.
+
+        A target is free when it is missing, or when an earlier move in the
+        same plan takes the file there away.
+        """
+        cleared: set[Path] = set()
+        taken = None
+        for source, target in moves:
+            if taken is None and target.exists() and target not in cleared:
+                taken = target
+            cleared.add(source)
+        if taken is not None:
             problems = self._problems()
-            taken = next(target for _source, target in moves if target.exists())
             problems = problems or [f"{taken} is already there, and a recording is never replaced."]
             return Answer(400, {"error": BROKEN, "errors": problems})
         with spelling.planned_moves(moves):
