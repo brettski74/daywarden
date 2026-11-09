@@ -1,9 +1,11 @@
-import { PencilLine, Save } from "lucide-react";
+import { CalendarPlus, PencilLine, Save } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Link,
   useBlocker,
   useFetcher,
   useLoaderData,
+  useLocation,
   useRevalidator,
   useSearchParams,
   type ActionFunctionArgs,
@@ -53,9 +55,12 @@ const GROUPS: { legend: string; keys: string[] }[] = [
 ];
 const PLACEHOLDERS: Record<string, string> = { pass_cooldown: "1", available_from: "yyyy-mm-dd", due_date: "yyyy-mm-dd" };
 
-function taskPath(name: string): string {
+export function taskPath(name: string): string {
   return `/tasks/${encodeURIComponent(name)}`;
 }
+
+/** What another page, such as the new week's words, reports on the task page it opens. */
+export type Reported = { message: string; warnings: string[] };
 
 export async function taskLoader({ request, params }: LoaderFunctionArgs): Promise<TaskData> {
   return api<TaskData>(taskPath(params.name ?? ""), { page: pageOf(request), signal: request.signal });
@@ -102,8 +107,9 @@ function changed(data: TaskData, edits: Edits): boolean {
 }
 
 function TaskEditor({ data }: { data: TaskData }) {
+  const reported = useLocation().state as Reported | null;
   const [edits, setEdits] = useState<Edits>(NO_EDITS);
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(reported?.message ? { intent: "record", ok: true, ...reported } : null);
   const [asking, setAsking] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<Result>();
@@ -206,6 +212,12 @@ function TaskEditor({ data }: { data: TaskData }) {
               ))}
             </select>
           </label>
+        )}
+        {data.spelling && (
+          <Link className="button button-quiet" to={`${taskPath(data.name)}/week`}>
+            <CalendarPlus aria-hidden="true" />
+            New week's words
+          </Link>
         )}
         <div className="bar-end bar-actions">
           {dirty && (
@@ -328,7 +340,8 @@ function TaskEditor({ data }: { data: TaskData }) {
   );
 }
 
-function Outcome({ result }: { result: Result }) {
+/** The status bar's report of the last action: what it did, with any warnings, or why it was refused. */
+export function Outcome({ result }: { result: Pick<Result, "ok" | "message" | "warnings" | "error" | "errors"> }) {
   if (result.ok) {
     return (
       <>

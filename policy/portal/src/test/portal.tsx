@@ -100,6 +100,28 @@ export const SPELLING = {
   },
 };
 
+const NO_CLIPS = { word: null, sentence: null };
+const WEEK_WORD = { becomes: null, renames: null, sentence_clip: null, kept: NO_CLIPS, choices: [], new_key: null };
+
+/** A week's list with a word of each kind: new, new with a sentence kept, current, revision, and attic. */
+export const WEEK = {
+  name: "spelling",
+  version: "v1",
+  file: "/etc/daywarden/policy.yaml",
+  targets: { current_required: "", revision_required: "1" },
+  current: 2,
+  needs: ["frog", "toad"],
+  ambiguous: [],
+  problems: [],
+  words: [
+    { ...WEEK_WORD, key: "frog", word: "frog", pool: null, clip: null, sentence: "The frog jumped." },
+    { ...WEEK_WORD, key: "toad", word: "toad", pool: null, clip: null, kept: { word: null, sentence: "00c0ffee.opus" }, sentence: "A toad sat." },
+    { ...WEEK_WORD, key: "rope", word: "rope", pool: "current", clip: "rope.wav", sentence: "Pull the rope." },
+    { ...WEEK_WORD, key: "fish", word: "fish", pool: "revision", clip: "fish.wav", sentence_clip: "fish.sentence.wav", sentence: "A fish swims." },
+    { ...WEEK_WORD, key: "owl", word: "owl", pool: "attic", clip: "owl.wav", sentence: "" },
+  ],
+};
+
 export const CHECK = {
   name: "check",
   type: "parent_check",
@@ -148,6 +170,8 @@ function standard(call: Call): Reply {
       return { body: TASKS };
     case "/parent/api/tasks/spelling":
       return { body: SPELLING };
+    case "/parent/api/tasks/spelling/week":
+      return { body: WEEK };
     case "/parent/api/tasks/check":
       return { body: CHECK };
     case "/parent/api/tasks/sums":
