@@ -341,11 +341,34 @@ input {
 
 .bar-field select {
   field-sizing: content;
-  max-width: 11rem;
+  max-width: 13rem;
 }
 
 .bar-form {
   margin: 0;
+}
+
+/* Pushes itself, and anything after it, to the right-hand end of the context bar. */
+.bar-end {
+  margin-left: auto;
+}
+
+.bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.unsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 1rem;
+  background: var(--unsaved-bg);
+  color: var(--unsaved-text);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .crumbs ol {
@@ -515,4 +538,308 @@ input {
   justify-content: center;
   gap: 0.75rem;
   margin-top: 0.4rem;
+}
+
+/* The Task Administration group in the sidebar. Its list opens and closes like every other expand. */
+
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.15rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sidebar-text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-group-toggle:hover {
+  background: var(--sidebar-hover-bg);
+}
+
+.nav-group-toggle[aria-disabled] {
+  cursor: default;
+}
+
+.nav-chevron {
+  margin-left: auto;
+  transition: transform var(--expand-duration) var(--expand-easing);
+}
+
+.nav-group[data-open] .nav-chevron {
+  transform: rotate(90deg);
+}
+
+@keyframes nav-sub-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+
+.nav-sub {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand-duration) var(--expand-easing);
+}
+
+.nav-group[data-open] .nav-sub {
+  grid-template-rows: 1fr;
+}
+
+.nav-group[data-open][data-moving] .nav-sub {
+  animation: nav-sub-open var(--expand-duration) var(--expand-easing);
+}
+
+.sidebar-nav .nav-sub ul {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0 0 1.75rem;
+}
+
+.sidebar-nav .nav-sub a {
+  padding: 0.35rem 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Task pages */
+
+.task-common {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+  align-items: start;
+  margin: 1rem 0;
+}
+
+.spelling .task-common {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-common fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.9rem 0.9rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.task-common legend {
+  padding: 0 0.3rem;
+  font-weight: 600;
+}
+
+.task-common .fields {
+  margin: 0.25rem 0 0.5rem;
+}
+
+/* A pull-down list where any number of options can be chosen. It opens over what is below it. */
+
+.multi-select {
+  position: relative;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.multi-select-label {
+  font-weight: 600;
+}
+
+.multi-select-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.2rem 0.4rem;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.multi-select-button[data-changed] {
+  background: var(--changed-bg);
+}
+
+.multi-select-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-select-chevron {
+  transition: transform var(--expand-duration) var(--expand-easing);
+}
+
+.multi-select[data-open] .multi-select-chevron {
+  transform: rotate(180deg);
+}
+
+.multi-select-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 0.15rem;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--expand-duration) var(--expand-easing),
+    opacity var(--expand-duration) var(--expand-easing);
+}
+
+.multi-select[data-open] .multi-select-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+@keyframes multi-select-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.multi-select[data-open][data-moving] .multi-select-panel {
+  animation: multi-select-open var(--expand-duration) var(--expand-easing);
+}
+
+.multi-select-panel ul {
+  min-height: 0;
+  overflow: hidden auto;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--input-bg);
+  color: var(--input-text);
+  box-shadow: var(--shadow);
+}
+
+.multi-select-panel ul:focus-visible {
+  outline-offset: 0;
+}
+
+.multi-select-panel li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.multi-select-panel li:hover {
+  background: var(--row-hover);
+}
+
+.multi-select-panel li[aria-selected="true"] {
+  background: var(--option-selected-bg);
+  color: var(--option-selected-text);
+  font-weight: 600;
+}
+
+.multi-select-panel li svg {
+  visibility: hidden;
+}
+
+.multi-select-panel li[aria-selected="true"] svg {
+  visibility: visible;
+}
+
+.multi-select-panel ul:focus-visible li[data-active] {
+  outline: 0.12rem solid var(--focus-ring);
+  outline-offset: -0.12rem;
+}
+
+/* Each setting's name, then its box, lined up down the group. */
+.settings {
+  display: grid;
+  grid-template-columns: max-content minmax(5.5rem, 14rem);
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+  margin: 0.35rem 0;
+}
+
+.setting {
+  display: contents;
+}
+
+.setting input {
+  width: 100%;
+  min-width: 0;
+}
+
+input[data-changed],
+.records tr[data-changed] {
+  background: var(--changed-bg);
+}
+
+.task-divider {
+  width: 60%;
+  margin: 1.5rem auto;
+  border: 0;
+  border-top: 0.08rem solid var(--divider);
+}
+
+.words td {
+  vertical-align: middle;
+}
+
+.problem {
+  color: var(--failure-text);
+  font-weight: 600;
+}
+
+.status-errors {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+/* Confirmation dialogs */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dialog-backdrop);
+}
+
+.dialog {
+  width: min(28rem, 90vw);
+  padding: 1.25rem 1.5rem;
+  border-radius: 0.5rem;
+  background: var(--dialog-bg);
+  color: var(--content-text);
+  box-shadow: var(--shadow);
+}
+
+.dialog h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
 }

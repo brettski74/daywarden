@@ -14,6 +14,10 @@ so a request is decided by the old policy or the new one, never a mix. A
 policy with errors is refused and the one in force stays. Only a plain HTTP
 request from inside this container is accepted. Any other peer gets 404,
 because the proxy can reach this port on the compose network.
+
+A save on a parent portal task page reloads the same way, then asks the
+observations and autoconfig services to reload through the Unix sockets at
+OBSERVATIONS_SOCKET and AUTOCONFIG_SOCKET. See ``policy.task_admin``.
 """
 
 from __future__ import annotations
@@ -35,11 +39,13 @@ from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
-from policy.portal import PORTAL_DIR, install_portal
+from policy import control
+from policy.portal import PORTAL_DIR, client_names, install_portal
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.store import PolicyStore
+from policy.task_admin import Reloads, TaskAdmin
 from policy.task_page import respond_task, task_media
 from policy.tasks import AttemptStore
 from policy.usage import UsageStore
@@ -91,19 +97,14 @@ def create_app() -> FastAPI:
     def health() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
-    @app.post("/v1/reload")
-    async def reload(request: Request) -> Response:
-        # Stays on the event-loop thread, where this process's SQLite connection lives.
-        peer = request.client.host if request.client is not None else ""
-        if request.url.scheme != "http" or peer not in LOOPBACK:
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
+    def apply_reload() -> dict:
         warnings: list[str] = []
         try:
             policy = load_required(policy_file, holder.loaded.policy, warn=warnings.append)
         except ConfigError as error:
             print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
             _announce(error.problems)
-            return JSONResponse({"reloaded": False, "errors": list(error.problems), "warnings": warnings})
+            return {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
         zone, source = household_zone(policy.timezone, localtime)
         clock = HouseholdClock(zone)
         usage_store.install_length(policy.bucket_length, clock.local())
@@ -111,7 +112,15 @@ def create_app() -> FastAPI:
         summary = summary_lines(policy, clock, source)
         print(f"reloaded {policy_file}", flush=True)
         _announce([*summary, *warnings])
-        return JSONResponse({"reloaded": True, "summary": summary, "warnings": warnings})
+        return {"reloaded": True, "summary": summary, "warnings": warnings}
+
+    @app.post("/v1/reload")
+    async def reload(request: Request) -> Response:
+        # Stays on the event-loop thread, where this process's SQLite connection lives.
+        peer = request.client.host if request.client is not None else ""
+        if request.url.scheme != "http" or peer not in LOOPBACK:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return JSONResponse(apply_reload())
 
     @app.post("/v1/decisions")
     async def decisions(request: Request) -> Response:
@@ -229,12 +238,29 @@ def create_app() -> FastAPI:
                 response.headers[name] = value
         return response
 
+    others = {
+        name: (lambda path=path, name=name: control.ask("reload", path, service=f"{name} service"))
+        for name, path in (
+            ("observations", control.socket_path("OBSERVATIONS_SOCKET")),
+            ("autoconfig", control.socket_path("AUTOCONFIG_SOCKET")),
+        )
+        if path is not None
+    }
+    tasks = TaskAdmin(
+        policy_file,
+        policy=lambda: holder.loaded.policy,
+        now=lambda: holder.loaded.clock.local(),
+        attempts=attempts,
+        reloads=Reloads(apply_reload, others),
+        clients=lambda: client_names(holder.loaded.policy),
+    )
     install_portal(
         app,
         loaded=lambda: holder.loaded,
         accounts=accounts,
         attempts=attempts,
         usage_store=usage_store,
+        tasks=tasks,
         portal_dir=Path(os.environ.get("PORTAL_DIR", str(PORTAL_DIR))),
     )
     return app

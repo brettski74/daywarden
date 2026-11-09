@@ -55,6 +55,63 @@ export const USAGE = {
   message: "Choose a site group, a client group, or a quota.",
 };
 
+export const TASKS = { tasks: ["check", "spelling", "sums"] };
+
+const COMMON = {
+  pass_cooldown: "1",
+  failure_cooldown: "",
+  max_skips: "3",
+  max_passes: "",
+  available_from: "",
+  due_date: "",
+};
+
+export const SPELLING = {
+  name: "spelling",
+  type: "spelling",
+  file: "/etc/daywarden/policy.yaml",
+  version: "v1",
+  groups: ["younger"],
+  clients: ["younger", "older", "default"],
+  fields: COMMON,
+  spelling: {
+    settings: {
+      timeout: "30s",
+      maximum_replays: "",
+      maximum_sentence_plays: "",
+      current_required: "",
+      revision_required: "1",
+      letter_pause: "",
+      word_pause: "",
+    },
+    directories: {
+      current_dir: "spelling/current",
+      revision_dir: "spelling/revision",
+      attic_dir: "spelling/attic",
+      alphabet_dir: "spelling/alphabet",
+    },
+    words: [
+      { key: "rope", word: "rope", pool: "current", clip: "rope.wav", sentence: "rope.sentence.wav" },
+      { key: "cat", word: "cat", pool: "current", clip: "cat.wav", sentence: null },
+      { key: "fish", word: "fish", pool: "revision", clip: "fish.wav", sentence: null },
+      { key: "owl", word: "owl", pool: "attic", clip: "owl.wav", sentence: null },
+    ],
+    problems: [],
+  },
+};
+
+export const CHECK = {
+  name: "check",
+  type: "parent_check",
+  file: "/etc/daywarden/policy.yaml",
+  version: "v1",
+  groups: ["younger"],
+  clients: ["younger", "older", "default"],
+  fields: { pass_cooldown: "0", failure_cooldown: "" },
+};
+
+export const SUMS = { ...CHECK, name: "sums", type: "worksheet", fields: COMMON };
+
 /** Stand in for the decisions service: a signed-in parent unless handler answers otherwise. */
 export function fakeService(handler: Handler = () => undefined) {
   const calls: Call[] = [];
@@ -87,6 +144,14 @@ function standard(call: Call): Reply {
       return { body: ATTEMPT };
     case "/parent/api/usage":
       return { body: USAGE };
+    case "/parent/api/tasks":
+      return { body: TASKS };
+    case "/parent/api/tasks/spelling":
+      return { body: SPELLING };
+    case "/parent/api/tasks/check":
+      return { body: CHECK };
+    case "/parent/api/tasks/sums":
+      return { body: SUMS };
     case "/parent/api/logout":
       return { body: { signed_out: true } };
     default:

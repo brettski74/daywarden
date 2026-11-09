@@ -63,5 +63,14 @@
   --failure-text: var(--palette-brick);
   --done-text: var(--palette-navy);
 
+  --changed-bg: color-mix(in srgb, var(--palette-gold) 35%, var(--palette-ivory));
+  --divider: var(--palette-lavender);
+  --option-selected-bg: var(--palette-teal);
+  --option-selected-text: var(--palette-navy);
+  --unsaved-bg: var(--palette-gold);
+  --unsaved-text: var(--palette-navy);
+  --dialog-bg: var(--palette-white);
+  --dialog-backdrop: color-mix(in srgb, var(--palette-navy) 45%, transparent);
+
   --shadow: 0 0.1rem 0.6rem color-mix(in srgb, var(--palette-navy) 25%, transparent);
 }

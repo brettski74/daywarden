@@ -8,13 +8,15 @@ export const HOME_ROUTE = "/";
 
 const NOT_PAGES = new Set(["api", "assets", "login"]);
 
-/** An answer from a data endpoint that the page shows instead of its data. */
+/** An answer from a data endpoint that the page shows instead of its data. ``data`` is the whole answer. */
 export class ApiError extends Error {
   readonly status: number;
+  readonly data: Record<string, unknown>;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, data: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -91,7 +93,7 @@ export async function api<T>(path: string, { page, method = "GET", body, signal 
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) throw redirect(signInAddress(page));
   if (response.status === 403 && data.closed) throw redirect(LOGIN);
-  if (!response.ok) throw new ApiError(response.status, data.error ?? `The service answered ${response.status}.`);
+  if (!response.ok) throw new ApiError(response.status, data.error ?? `The service answered ${response.status}.`, data);
   return data as T;
 }
 

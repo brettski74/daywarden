@@ -4,6 +4,7 @@ import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Login, loginLoader } from "./pages/Login";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
+import { Task, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Usage, usageLoader } from "./pages/Usage";
 
 export const BASENAME = "/parent";
@@ -27,6 +28,13 @@ export const routes: RouteObject[] = [
           { path: "attempts", element: <Attempts />, loader: attemptsLoader, action: attemptsAction },
           { path: "attempts/:id", element: <Attempt />, loader: attemptLoader },
           { path: "usage", element: <Usage />, loader: usageLoader },
+          {
+            path: "tasks/:name",
+            element: <Task />,
+            loader: taskLoader,
+            action: taskAction,
+            shouldRevalidate: taskShouldRevalidate,
+          },
           { path: "*", element: <NotFound /> },
         ],
       },

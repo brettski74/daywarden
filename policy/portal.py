@@ -5,12 +5,13 @@ that is not a built file and not under /parent/api/ returns its index.html,
 so a deep link and Reload open the right page. The shell and its files carry
 no household data.
 
-Household data comes only from JSON under /parent/api/. Those endpoints need
-a parent session from S007.1. With no session they answer 401, and with no
-parent account 403, with no data. They never redirect: only the portal's own
-code reacts to those answers. Sign-in, sign-out, and the parent check are
-JSON POSTs, and a POST whose body is not application/json is refused, so a
-form on another site cannot use the parent's cookie to act.
+Household data comes only from JSON under /parent/api/, and the spelling
+recordings the task pages play. Those endpoints need a parent session from
+S007.1. With no session they answer 401, and with no parent account 403,
+with no data. They never redirect: only the portal's own code reacts to
+those answers. Sign-in, sign-out, the parent check, a task save, and Retire
+are JSON POSTs, and a POST whose body is not application/json is refused, so
+a form on another site cannot use the parent's cookie to act.
 
 Sign-in returns a page address for the portal to open. ``safe_next`` keeps
 that to a portal page, never a data address, a file, the sign-in screen, or
@@ -33,6 +34,8 @@ from policy.accounts import COOKIE_NAME, Accounts, cookie_value
 from policy.hierarchy import Policy
 from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
+from policy.sounds import media_type
+from policy.task_admin import TaskAdmin
 from policy.tasks import AttemptStore
 from policy.usage import UsageStore
 
@@ -97,11 +100,13 @@ def install_portal(
     accounts: Accounts,
     attempts: AttemptStore,
     usage_store: UsageStore,
+    tasks: TaskAdmin | None = None,
     portal_dir: Path = PORTAL_DIR,
 ) -> None:
     """Add the portal, its data endpoints, and the old parent addresses to app.
 
     loaded returns the policy in force, with ``policy`` and ``clock``.
+    tasks reads and saves the task pages.
     Handlers are async so they stay on the event-loop thread, where this
     process's SQLite connection lives.
     """
@@ -217,6 +222,63 @@ def install_portal(
         now = loaded()
         query = {key: request.query_params[key] for key in USAGE_KEYS if key in request.query_params}
         return _json(200, usage_report(now.policy, usage_store, query, now.clock.local()))
+
+    @app.get("/parent/api/tasks")
+    async def task_list(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        return _json(200, {"tasks": [] if tasks is None else tasks.names()})
+
+    @app.get("/parent/api/tasks/{name}")
+    async def task_page(request: Request, name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = tasks.page(name)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}")
+    async def task_save(request: Request, name: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = tasks.save(name, body, username)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{name}/retire")
+    async def task_retire(request: Request, name: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": f"There is no task named {name}."})
+        answer = tasks.retire(name, body.get("word"))
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/tasks/{name}/audio/{pool}/{file_name}")
+    async def task_audio(request: Request, name: str, pool: str, file_name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        found = None if tasks is None else tasks.audio(name, pool, file_name)
+        if found is None:
+            return _json(404, {"error": "There is no such recording."})
+        return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, no-store"})
 
     @app.api_route("/parent/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def unknown_data(request: Request, rest: str) -> Response:

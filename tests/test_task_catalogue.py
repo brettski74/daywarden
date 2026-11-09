@@ -573,7 +573,7 @@ def test_a_task_the_loader_cannot_read_is_a_load_error(tmp_path, task_body, mess
         _policy(text, tmp_path)
 
 
-def test_a_task_needs_a_type_a_pass_cooldown_and_a_client_group(tmp_path):
+def test_a_task_needs_a_type_and_a_client_group(tmp_path):
     base = (
         "entry: open\n"
         "tasks:\n"
@@ -585,9 +585,30 @@ def test_a_task_needs_a_type_a_pass_cooldown_and_a_client_group(tmp_path):
         "    - condition: always\n"
         "      when_true: { action: allow }\n"
     )
-    with pytest.raises(ConfigError, match="pass_cooldown"):
-        _policy(base, tmp_path)
     with pytest.raises(ConfigError, match="type is required"):
         _policy(base.replace("    type: worksheet\n", ""), tmp_path)
     with pytest.raises(ConfigError, match="group or groups"):
         _policy(base.replace("    group: default\n", "    pass_cooldown: 1\n"), tmp_path)
+
+
+def test_a_task_without_a_pass_cooldown_is_offered_again_the_next_household_day(tmp_path):
+    text = (
+        "entry: open\n"
+        "tasks:\n"
+        "  quiz:\n"
+        "    type: worksheet\n"
+        "    group: younger\n"
+        "client_groups:\n"
+        "  younger:\n"
+        '    addresses: ["192.0.2.40"]\n'
+        "rule_sets:\n"
+        "  open:\n"
+        "    - condition: always\n"
+        "      when_true: { action: allow }\n"
+    )
+    task = _policy(text, tmp_path).task("quiz")
+    assert task.pass_cooldown == 1
+    with AttemptStore(":memory:") as store:
+        store.record("younger", task.name, "pass", _at(5, 9))
+        assert not store.is_eligible(task, "younger", _day(5))
+        assert store.is_eligible(task, "younger", _day(6))
