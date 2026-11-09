@@ -18,7 +18,7 @@ Every request is sent to the policy service (the Compose service `decisions`) as
 
 ## The policy file
 
-`config/policy.yaml` is the household policy. Edit it, then run `dw reload` (`bin/dw reload` in a clone). It checks the whole policy and lists every error it finds, each with its file and line, such as `config/policy.yaml:42:5: unknown setting timezon`, and changes nothing until they are all fixed. A good policy is used for the next request through the proxy, and no container restarts. A quiz in progress, a download or video already running, a parent signed in to the parent pages, and the usage recorded so far all carry on. A running transfer keeps the deadline and byte ceiling recorded when it was allowed, and is walked again with the reloaded policy when it reaches them. `dw check` checks the policy and changes nothing. `dw up` and the start at boot check it first, so a broken policy does not start daywarden.
+`config/policy.yaml` is the household policy. Edit it, then run `dw reload` (`bin/dw reload` in a clone). On an installed machine, each version it applies is kept in the [config history](#config-history). It checks the whole policy and lists every error it finds, each with its file and line, such as `config/policy.yaml:42:5: unknown setting timezon`, and changes nothing until they are all fixed. A good policy is used for the next request through the proxy, and no container restarts. A quiz in progress, a download or video already running, a parent signed in to the parent pages, and the usage recorded so far all carry on. A running transfer keeps the deadline and byte ceiling recorded when it was allowed, and is walked again with the reloaded policy when it reaches them. `dw check` checks the policy and changes nothing. `dw up` and the start at boot check it first, so a broken policy does not start daywarden.
 
 `config/bypass.txt` is read on every request, and spelling recordings whenever a quiz run starts, so neither needs a reload or a restart. A change to `.env` or `docker-compose.yml`, such as `PORT_BASE`, `PARENT_NAMES`, or `OBSERVATION_INTERVAL`, needs `dw restart`, which checks the policy and then replaces every container. `dw reload` warns when that is needed and names the services still running with the old settings. See [Applying an edit](docs/hierarchical-policy.md#applying-an-edit) for the details.
 
@@ -300,7 +300,7 @@ cd daywarden-20261105-184500
 ./install.sh
 ```
 
-The installer checks everything first and changes nothing if something it needs is missing. Docker, the `docker compose` plugin, a running Docker daemon this user can reach without `sudo`, a package built for this machine's CPU architecture, and no file of its own in `~/bin` named like one of the commands below are required. Each problem is printed with the command that fixes it, such as `sudo pacman -S docker-compose`. Docker not enabled at boot, no user systemd manager (in a `su` session), a port from `.env` already in use, worked out from `PORT_BASE` as `dw` does, `~/bin` missing from the `PATH`, and a missing `python3` or Opus-capable `ffmpeg` are warnings: the install carries on. It never edits `~/.bashrc`. It then loads the images and lays out:
+The installer checks everything first and changes nothing if something it needs is missing. Docker, the `docker compose` plugin, a running Docker daemon this user can reach without `sudo`, `git`, for the [config history](#config-history), a package built for this machine's CPU architecture, and no file of its own in `~/bin` named like one of the commands below are required. Each problem is printed with the command that fixes it, such as `sudo pacman -S docker-compose`. Docker not enabled at boot, no user systemd manager (in a `su` session), a port from `.env` already in use, worked out from `PORT_BASE` as `dw` does, `~/bin` missing from the `PATH`, and a missing `python3` or Opus-capable `ffmpeg` are warnings: the install carries on. It never edits `~/.bashrc`. It then loads the images and lays out:
 
 | Path | On install |
 | --- | --- |
@@ -308,6 +308,7 @@ The installer checks everything first and changes nothing if something it needs 
 | `~/daywarden/.env` | Created only if missing. Never overwritten |
 | `~/daywarden/config/policy.yaml`, `config/bypass.txt` | Created only if missing. Never overwritten |
 | `~/daywarden/.env.sample`, `config/*.sample` | Always replaced with the package's copy |
+| `~/daywarden/config/.git`, `config/.gitignore` | The [config history](#config-history). Created only if missing |
 | `~/daywarden/ca/` | The CA, created by the first `dw up` |
 | `~/daywarden/data/` | Recordings, such as `data/spelling/current` |
 | `~/daywarden/bin/`, `lib/` | Always replaced. The commands, and the Python source `cut-clips` runs |
@@ -344,7 +345,29 @@ A broken policy stops `dw up` and `dw restart` before anything is started or sto
 
 ### Upgrading
 
-Run the newer package's `./install.sh` the same way, overnight if you can, while the child is not using the computer. `.env`, `policy.yaml`, and `bypass.txt` are kept byte for byte, and the new copies land beside them as `.sample` files, so `diff ~/daywarden/.env ~/daywarden/.env.sample` shows what changed. If daywarden is running, the installer asks `Daywarden is running. Restart it to finish the upgrade? [y/N]` before it changes anything. Anything but `y` stops with nothing changed. A yes installs the files, then runs `dw restart`. If the new version refuses the policy, the restart stops before anything is stopped, and the old version keeps running until the policy is fixed and `dw restart` is run again.
+Run the newer package's `./install.sh` the same way, overnight if you can, while the child is not using the computer. `.env`, `policy.yaml`, and `bypass.txt` are kept byte for byte, and the new copies land beside them as `.sample` files, so `diff ~/daywarden/.env ~/daywarden/.env.sample` shows what changed. If daywarden is running, the installer asks `Daywarden is running. Restart it to finish the upgrade? [y/N]` before it changes anything. Anything but `y` stops with nothing changed. A yes installs the files, then runs `dw restart`. If the new version refuses the policy, the restart stops before anything is stopped, and the old version keeps running until the policy is fixed and `dw restart` is run again. The config history is kept, and the new `.sample` files make no commit.
+
+### Config history
+
+`~/daywarden/config` is a local git repository, so every version of `policy.yaml`, `bypass.txt`, and any included policy file can be got back. It has no remote, and nothing is pushed anywhere. The installer creates it, with the files as they are as its first version, and `dw up` creates it again if `config/.git` is removed. Its `.gitignore` leaves out editor leftovers, such as `policy.yaml~`, `.policy.yaml.swp`, and `.#policy.yaml`, and the `.sample` files every install rewrites.
+
+After `dw reload`, `dw up`, or `dw restart` has applied the policy, any uncommitted change in the config directory is committed, and `dw` names the files, such as `Saved in the config history: policy.yaml.` The message is the time in the household's timezone, the user who ran it, and the command, such as `2026-11-08 21:15 -0500 blg: dw reload`. The author is that user at `daywarden.invalid`, and no git setup is needed: `dw` sets the name and email for each commit and changes nothing in `~/.gitconfig`. A policy with an error commits nothing, so a broken edit never becomes a version, and `dw check` never commits. If the commit fails, the reload still applies, and `dw` warns that the change is not in the history, and why.
+
+To get an old version back:
+
+```sh
+cd ~/daywarden/config
+git log --stat                         # find the version, such as 3f2a9c1
+git show 3f2a9c1:policy.yaml           # read policy.yaml as it was then
+git checkout 3f2a9c1 -- policy.yaml    # put that version back
+dw reload                              # check and apply it
+```
+
+The reload commits the restored file as a new version, so the later versions stay in `git log` too.
+
+In a clone of this repository, `config/` is already inside the repository's own history, so `make up` and `dw up` make no repository of their own there, and say so. Commit changes to `config/` as with any other file in the clone.
+
+The recordings under `~/daywarden/data` are not part of this history.
 
 ### Cutting clips on the installed machine
 

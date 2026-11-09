@@ -49,6 +49,20 @@ def test_up_and_down_start_and_stop_every_service_on_the_ports_dw_uses(host):
     assert host.state["running"] == {}
 
 
+def test_up_in_a_clone_makes_no_history_of_its_own_and_says_so(host):
+    shutil.copytree(ROOT / "config", host.root / "config", ignore=shutil.ignore_patterns(".git"))
+    identity = {"GIT_AUTHOR_NAME": "dev", "GIT_AUTHOR_EMAIL": "dev@example.invalid", "GIT_COMMITTER_NAME": "dev", "GIT_COMMITTER_EMAIL": "dev@example.invalid"}
+    for command in (["init", "--quiet"], ["add", "--all"], ["commit", "--quiet", "-m", "clone"]):
+        assert host.run("git", *command, cwd=host.root, env=identity).returncode == 0
+    done = _make(host, "up")
+    assert done.returncode == 0, done.stderr
+    assert f"{host.root}/config is inside the git repository {host.root}, which is its history" in done.stdout
+    assert not (host.root / "config" / ".git").exists()
+    assert host.run("git", "status", "--porcelain", cwd=host.root).stdout == ""
+    _make(host, "reload")
+    assert host.run("git", "log", "--oneline", cwd=host.root).stdout.count("\n") == 1
+
+
 def test_reload_applies_the_policy_to_every_service_without_restarting_a_container(host):
     host.all_running()
     done = _make(host, "reload")

@@ -5,7 +5,7 @@ resolv.conf, and a PATH that holds only the real tools the host scripts
 need plus fake ``docker``, ``systemctl``, ``loginctl``, ``getent``, ``ip``,
 ``ss``, ``id``, ``ffmpeg``, ``python3``, and ``journalctl``. The fakes read the machine's
 state from one JSON file, record each call, and write back what a call
-changed. A test leaves a fake out to make that tool missing.
+changed. A test leaves a fake or a real tool out to make that tool missing.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ FAKES = ("docker", "systemctl", "loginctl", "getent", "ip", "ss", "id", "ffmpeg"
 REAL_TOOLS = (
     "bash", "sh", "env", "cat", "cp", "mv", "rm", "mkdir", "ln", "readlink", "dirname", "basename",
     "sed", "awk", "grep", "tr", "cut", "sort", "head", "tail", "date", "sha256sum", "timeout", "sleep",
-    "chmod", "mktemp", "touch", "wc", "uname", "tee", "stat", "ls", "cmp", "realpath", "printf", "true",
+    "chmod", "mktemp", "touch", "wc", "uname", "tee", "stat", "ls", "cmp", "realpath", "printf", "true", "git",
 )
 SERVICES = ("decisions", "observations", "proxy", "autoconfig")
 
@@ -407,7 +407,7 @@ class Host:
         self.tools.mkdir()
         for name in REAL_TOOLS:
             real = shutil.which(name)
-            if real:
+            if real and name not in without:
                 (self.tools / name).symlink_to(real)
         self.path = f"{self.home / 'bin'}:{self.fakes}:{self.tools}"
         self.root = self.home / "daywarden"

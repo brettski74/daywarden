@@ -7,6 +7,8 @@
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
 # The package's copies are always installed beside them as .sample files.
+# A config directory with no git history gets one, with what is there as
+# its first version.
 set -euo pipefail
 
 package=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
@@ -73,6 +75,12 @@ check_docker() {
     else
         problem "The Docker daemon is not running, or this user cannot reach it." \
             "sudo systemctl enable --now docker.service, or sudo usermod -aG docker $user, then log out and back in"
+    fi
+}
+
+check_git() {
+    if ! command -v git >/dev/null 2>&1; then
+        problem "git is not installed. It keeps the history of every change to ~/daywarden/config." "sudo pacman -S git"
     fi
 }
 
@@ -390,6 +398,7 @@ print_list() {
 
 check_package
 check_docker
+check_git
 check_bin
 DW_PROJECT=$(
     dw_load_env "$(env_file)" 2>/dev/null || true
@@ -446,6 +455,7 @@ install_file "$package/config/policy.yaml" "$root/config/policy.yaml.sample" 644
 keep_or_create "$root/config/policy.yaml.sample" "$root/config/policy.yaml"
 install_file "$scratch/bypass.txt" "$root/config/bypass.txt.sample" 644
 keep_or_create "$root/config/bypass.txt.sample" "$root/config/bypass.txt"
+[ -e "$root/config/.git" ] || dw_history_keep "$root/config" "install.sh"
 replace_dir "$package/lib" "$root/lib"
 replace_dir "$package/bin" "$root/bin"
 for name in "${LINKED[@]}"; do

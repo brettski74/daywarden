@@ -52,6 +52,9 @@ Commands:
   disable  do not start daywarden at boot. A running daywarden keeps running
   help     show this help
 
+up, restart, and reload commit each change they apply to the git history
+in the config directory. up starts that history when there is none.
+
 daywarden is in $root.
 EOF
 }
@@ -84,6 +87,7 @@ cmd_up() {
     no_arguments "$@"
     dw_prepare dw
     dw_compose_up "daywarden was not started." || exit 1
+    dw_history_keep "$(dw_config_path)" "dw up"
     dw_track_with_user_service || exit 1
     echo "daywarden is up."
     echo "Proxy configuration URL: $(dw_config_url)"
@@ -126,6 +130,7 @@ cmd_restart() {
         dw_compose down --remove-orphans
         dw_start_checked || exit 1
     fi
+    dw_history_keep "$(dw_config_path)" "dw restart"
     dw_track_with_user_service || exit 1
     if [ "$was_running" -eq 1 ]; then
         echo "daywarden restarted."
@@ -145,6 +150,28 @@ cmd_check() {
     fi
 }
 
+# Reload the observations and autoconfig services once the decisions
+# service has the new policy. The policy is in use by then, so the config
+# history keeps it even when one of these fails.
+reload_others() {
+    if ! dw_running observations; then
+        echo "dw: the decisions service is using the reloaded policy. The observations service is not running. dw up starts it with this policy." >&2
+        return 1
+    fi
+    if ! dw_compose exec -T observations python -m policy.reload --service observations --host-dir "$(dw_config_dir)"; then
+        echo "dw: the decisions service is using the reloaded policy, and the observations service is not." >&2
+        return 1
+    fi
+    if ! dw_running autoconfig; then
+        echo "dw: the decisions and observations services are using the reloaded policy. The autoconfig service is not running. dw up starts it with this policy." >&2
+        return 1
+    fi
+    if ! dw_compose exec -T autoconfig python -m policy.reload --service autoconfig --host-dir "$(dw_config_dir)"; then
+        echo "dw: the decisions and observations services are using the reloaded policy, and the autoconfig service is not." >&2
+        return 1
+    fi
+}
+
 cmd_reload() {
     no_arguments "$@"
     dw_prepare dw
@@ -159,23 +186,12 @@ cmd_reload() {
     fi
     dw_check_policy exec --quiet --refused "Nothing was reloaded." || exit 1
     dw_compose exec -T decisions python -m policy.reload --service decisions --host-dir "$(dw_config_dir)" || exit 1
-    if ! dw_running observations; then
-        echo "dw: the decisions service is using the reloaded policy. The observations service is not running. dw up starts it with this policy." >&2
-        exit 1
-    fi
-    if ! dw_compose exec -T observations python -m policy.reload --service observations --host-dir "$(dw_config_dir)"; then
-        echo "dw: the decisions service is using the reloaded policy, and the observations service is not." >&2
-        exit 1
-    fi
-    if ! dw_running autoconfig; then
-        echo "dw: the decisions and observations services are using the reloaded policy. The autoconfig service is not running. dw up starts it with this policy." >&2
-        exit 1
-    fi
-    if ! dw_compose exec -T autoconfig python -m policy.reload --service autoconfig --host-dir "$(dw_config_dir)"; then
-        echo "dw: the decisions and observations services are using the reloaded policy, and the autoconfig service is not." >&2
+    if ! reload_others; then
+        dw_history_commit "$(dw_config_path)" "dw reload"
         exit 1
     fi
     echo "The decisions, observations, and autoconfig services are using the reloaded policy."
+    dw_history_commit "$(dw_config_path)" "dw reload"
     while read -r service; do
         [ -n "$service" ] && stale+=("$service")
     done < <(dw_stale_services)
