@@ -22,7 +22,9 @@ export function Layout() {
   const [status, setStatus] = useState<HTMLElement | null>(null);
   const content = useRef<HTMLElement>(null);
   const { pathname } = useLocation();
-  useEffect(() => content.current?.scrollTo?.(0, 0), [pathname]);
+  useEffect(() => {
+    content.current?.scrollTo?.(0, 0);
+  }, [pathname]);
   return (
     <div className="portal">
       <Sidebar username={username} tasks={tasks} />

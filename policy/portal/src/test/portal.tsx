@@ -121,7 +121,7 @@ export function fakeService(handler: Handler = () => undefined) {
       path: url.pathname,
       search: url.search,
       method: init.method ?? "GET",
-      body: typeof init.body === "string" ? JSON.parse(init.body) : undefined,
+      body: typeof init.body === "string" ? JSON.parse(init.body) : (init.body ?? undefined),
     };
     calls.push(call);
     const reply = handler(call) ?? standard(call);

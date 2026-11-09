@@ -39,6 +39,12 @@ def _tracked(host):
     return sorted(_git(host, "ls-files").splitlines())
 
 
+def _installed(host):
+    """The files a fresh install puts in the config history: none of the samples."""
+    tasks = sorted(f"tasks.d/{path.name}" for path in (host.config / "tasks.d").glob("*.y*ml"))
+    return sorted([".gitignore", "bypass.txt", "policy.yaml", *tasks])
+
+
 def _status(host):
     return _git(host, "status", "--porcelain", "--ignored=no")
 
@@ -53,7 +59,9 @@ def _edit(host, name="policy.yaml", old="", new="# edited by hand\n"):
 
 
 def test_a_fresh_install_commits_the_config_once_without_the_samples(host):
-    assert _tracked(host) == [".gitignore", "bypass.txt", "policy.yaml"]
+    assert any(name.startswith("tasks.d/") for name in _installed(host))
+    assert list((host.config / "tasks.d").glob("*.sample"))
+    assert _tracked(host) == _installed(host)
     assert _status(host) == ""
     subjects = _subjects(host)
     assert len(subjects) == 1
@@ -218,7 +226,7 @@ def test_editor_leftovers_are_never_committed(host):
         (host.config / name).write_text("leftover\n", encoding="utf-8")
     _edit(host)
     assert host.dw("reload").returncode == 0
-    assert _tracked(host) == [".gitignore", "bypass.txt", "policy.yaml"]
+    assert _tracked(host) == _installed(host)
     assert _status(host) == ""
 
 

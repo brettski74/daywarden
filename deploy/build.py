@@ -10,7 +10,8 @@ directory, daywarden-<version>/, holding:
     images.tar            both images, for docker load
     docker-compose.yml    the repository's compose file, set to those images
     env.sample            the repository's .env, with paths under ~/daywarden
-    config/               the repository's policy.yaml and bypass.txt
+    config/               the repository's policy.yaml and bypass.txt, and the YAML
+                          files in its tasks.d/, which policy.yaml includes
     bin/                  the host commands
     lib/policy/           the Python source cut-clips runs, with requirements.txt,
                           and not the parent portal, which is built into the image
@@ -121,6 +122,11 @@ def stage(package: Path, version: str, arch: str) -> None:
         shutil.copy2(ROOT / "bin" / command, package / "bin" / command)
     for config in ("policy.yaml", "bypass.txt"):
         shutil.copy2(ROOT / "config" / config, package / "config" / config)
+    tasks = sorted(path for path in (ROOT / "config" / "tasks.d").glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
+    if tasks:
+        (package / "config" / "tasks.d").mkdir()
+        for path in tasks:
+            shutil.copy2(path, package / "config" / "tasks.d" / path.name)
     _copy_policy(package / "lib" / "policy")
     (package / "docker-compose.yml").write_text(installed_compose(compose, version), encoding="utf-8")
     (package / "env.sample").write_text(sample_env((ROOT / ".env").read_text(encoding="utf-8")), encoding="utf-8")

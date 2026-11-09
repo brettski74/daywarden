@@ -610,13 +610,38 @@ def find_clip(settings: Settings, pool: str, key: str, *, sentence: bool, extens
 
     The pool's own directory is searched first, then the other pool and the
     attic, so a word the parent moves or retires during a run still plays.
+    When no file has that extension, the entry's clip in another format is
+    returned, so a word re-recorded from ``rope.mp3`` to ``rope.opus`` during
+    a run plays its new recording.
     """
     root = data_root() if root is None else root
     wanted = f"{key}.{SENTENCE_CLIP}.{extension}" if sentence else f"{key}.{extension}"
-    for each in (pool, *(other for other in ALL_POOLS if other != pool)):
-        found = _find_file(root / settings.directory(each), wanted)
+    searched = [root / settings.directory(each) for each in (pool, *(other for other in ALL_POOLS if other != pool))]
+    for directory in searched:
+        found = _find_file(directory, wanted)
         if found is not None:
             return found
+    for directory in searched:
+        found = _find_entry(directory, key, sentence)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_entry(directory: Path, key: str, sentence: bool) -> Path | None:
+    """Return an entry's word or sentence clip in a directory, in any audio format, or None."""
+    try:
+        with os.scandir(directory) as listing:
+            children = sorted((child.name, child.path) for child in listing if not child.name.startswith(".") and child.is_file())
+    except OSError:
+        return None
+    for name, path in children:
+        try:
+            parsed = parse_clip_name(name, None)
+        except ValueError:
+            continue
+        if parsed is not None and parsed[0].lower() == key.lower() and parsed[2] == sentence:
+            return Path(path)
     return None
 
 

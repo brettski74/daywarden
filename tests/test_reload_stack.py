@@ -330,6 +330,55 @@ def test_a_portal_save_commits_hand_edits_then_the_save_and_reloads_every_servic
         assert daywarden.dw("reload").returncode == 0
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg makes the browser-like recording")
+def test_a_browser_recording_is_cut_and_kept_by_the_decisions_container_as_the_host_user(daywarden, tmp_path):
+    """S023.3: the image cuts a WebM Opus take with its own ffmpeg and writes the kept clips into the pool."""
+    from test_clips import _audio, _write_wav
+
+    good = (daywarden.config / "policy.yaml").read_text(encoding="utf-8")
+    me = os.getuid()
+    write_wav(daywarden.data / "spelling" / "current" / "sun.wav")
+    source = _write_wav(tmp_path / "take.wav", _audio(500, 500, 900, 1200, 600)[0])
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(source), "-c:a", "libopus", "-f", "webm", str(tmp_path / "take.webm")], check=True)
+    try:
+        daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\ntasks:\n  spelling:\n    type: spelling\n    group: younger\n")
+        assert daywarden.dw("reload").returncode == 0
+        daywarden.compose("exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada", input_text="s3cret-pass\n")
+        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
+        assert status == 200
+        cookie = headers["set-cookie"].split(";", 1)[0]
+
+        request = urllib.request.Request(
+            f"https://127.0.0.1:{daywarden.env['POLICY_PORT']}/parent/api/recordings",
+            data=(tmp_path / "take.webm").read_bytes(),
+            method="POST",
+            headers={"Content-Type": "audio/webm;codecs=opus", "Cookie": cookie},
+        )
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(request, timeout=30, context=context) as response:
+            take = json.loads(response.read())["take"]
+        status, cut, _headers = _portal(daywarden, "POST", f"/parent/api/recordings/{take}/cut", {"settings": {}}, cookie=cookie)
+        assert status == 200, cut
+        assert len(cut["clips"]) == 2
+        status, kept, _headers = _portal(
+            daywarden,
+            "POST",
+            "/parent/api/tasks/spelling/recordings",
+            {"take": take, "word": "sun", "clips": {"word": cut["clips"][0]["id"], "sentence": cut["clips"][1]["id"]}},
+            cookie=cookie,
+        )
+        assert status == 200, kept
+        current = daywarden.data / "spelling" / "current"
+        assert sorted(path.name for path in current.glob("sun*")) == ["sun.opus", "sun.sentence.opus"]
+        assert [path for path in (current / "sun.opus", current / "sun.sentence.opus", daywarden.data / ".recordings") if path.stat().st_uid != me] == []
+        assert list((daywarden.data / ".recordings").iterdir()) == []
+    finally:
+        (daywarden.config / "policy.yaml").write_text(good, encoding="utf-8")
+        assert daywarden.dw("reload").returncode == 0
+
+
 def test_the_proxy_and_the_policy_pages_work_with_the_auto_configuration_service_stopped(daywarden):
     daywarden.compose("stop", "autoconfig")
     try:

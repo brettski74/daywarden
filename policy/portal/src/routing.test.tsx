@@ -96,6 +96,23 @@ describe("the sidebar", () => {
     expect(shown(router)).toBe("/parent/usage");
     expect(screen.getByRole("link", { name: "Usage" })).toHaveAttribute("aria-current", "page");
   });
+
+  it("changes page in a browser whose scrollTo returns a promise, as current Chromium's does", async () => {
+    const before = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTo");
+    Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => Promise.resolve() });
+    try {
+      fakeService();
+      renderPortal("/parent/attempts?client=younger");
+      await screen.findByRole("link", { name: "spelling-week-3" });
+      await userEvent.click(screen.getByRole("link", { name: "Usage" }));
+      expect(await screen.findByText("Choose a site group, a client group, or a quota.")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("link", { name: "Attempts" }));
+      expect(await screen.findByText("Choose a client group.")).toBeInTheDocument();
+    } finally {
+      if (before) Object.defineProperty(Element.prototype, "scrollTo", before);
+      else delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
+    }
+  });
 });
 
 describe("pull-down choices live in the address", () => {

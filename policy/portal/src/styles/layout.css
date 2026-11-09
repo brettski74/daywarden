@@ -843,3 +843,216 @@ input[data-changed],
   gap: 0.75rem;
   margin-top: 1rem;
 }
+
+/* An icon button in the content pane or a dialog, outlined like a quiet button. */
+.icon-button-quiet {
+  box-shadow: inset 0 0 0 0.08rem var(--border);
+}
+
+.icon-button-quiet:hover {
+  background: var(--row-hover);
+}
+
+.icon-button-quiet svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.word-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.1em;
+  padding: 0 0.3em;
+  border-radius: 0.2rem;
+  font: inherit;
+  font-size: 0.8em;
+  text-align: center;
+  background: var(--kbd-bg);
+  color: var(--kbd-text);
+}
+
+/* The recording dialog */
+
+.record-dialog {
+  width: min(40rem, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.record-dialog:focus {
+  outline: none;
+}
+
+.record-prompt,
+.record-playing,
+.recording-indicator {
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.recording-dot {
+  flex: none;
+  color: var(--recording);
+  fill: currentColor;
+  animation: recording-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes recording-pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-dot {
+    animation: none;
+  }
+}
+
+.record-say {
+  margin-bottom: 0.25rem;
+}
+
+.record-lines {
+  margin: 0 0 0.75rem;
+  padding-left: 1.75rem;
+  font-size: 1.25rem;
+}
+
+.record-progress,
+.record-loudness {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.record-summary table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+
+.record-summary th,
+.record-summary td {
+  text-align: left;
+  padding: 0.2rem 1.5rem 0.2rem 0;
+}
+
+/* The Advanced section of the recording dialog. It opens and closes like every other expand. */
+
+.advanced {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 0.06rem solid var(--divider);
+}
+
+.advanced-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.advanced-chevron {
+  transition: transform var(--expand-duration) var(--expand-easing);
+}
+
+.advanced[data-open] .advanced-chevron {
+  transform: rotate(90deg);
+}
+
+@keyframes advanced-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+
+.advanced-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand-duration) var(--expand-easing);
+}
+
+.advanced[data-open] .advanced-panel {
+  grid-template-rows: 1fr;
+}
+
+.advanced[data-open][data-moving] .advanced-panel {
+  animation: advanced-open var(--expand-duration) var(--expand-easing);
+}
+
+.advanced-body {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.3rem 0.2rem 0.2rem;
+}
+
+.cut-field {
+  display: contents;
+}
+
+/* Slider, number, unit, and reset each keep their own column, so the boxes line up and nothing moves when a reset appears. */
+.cut-controls {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) 5rem 2.75rem 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+}
+
+.cut-controls input[type="range"] {
+  padding: 0;
+}
+
+.cut-number {
+  width: 100%;
+  min-width: 0;
+}
+
+.field-error,
+.advanced-cut {
+  grid-column: 2;
+}
+
+.field-error {
+  color: var(--failure-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+input[aria-invalid] {
+  border-color: var(--failure-text);
+}

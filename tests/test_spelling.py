@@ -1117,7 +1117,10 @@ def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch
     status, _headers, body = _call(app, "GET", question["sentence_url"])
     assert status == 200
     assert body == (data / "spelling/current/rope.sentence.wav").read_bytes()
-    assert _call(app, "GET", question["word_url"].replace(".wav", ".mp3"))[0] == 404
+    # A word re-recorded in another format during the run still plays (S023.3).
+    status, _headers, body = _call(app, "GET", question["word_url"].replace(".wav", ".mp3"))
+    assert status == 200
+    assert body == (data / "spelling/current/rope.wav").read_bytes()
     assert _call(app, "GET", "/tasks/words/audio/rope.wav")[0] == 404
     missing = token("cat", CURRENT, random.Random(2))
     assert _call(app, "GET", f"/tasks/words/audio/{missing}.wav")[0] == 404

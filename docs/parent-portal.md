@@ -63,13 +63,25 @@ A page that edits something, such as a task page, follows these rules:
 - An action that cannot be taken back, such as Retire, asks first in the same dialog, with the choice that changes nothing as the default. An action that is done at once, as Retire is, is not part of the next save.
 - A save that needs a decision first, such as a warning that it does not ask a group to do a task again, asks in the same dialog before anything is written.
 
+## Recording dialogs
+
+A page that records from the microphone, such as the spelling word list, uses `RecordDialog` in `src/components/RecordDialog.tsx`. It is given the lines to say, and how to write the clips the parent keeps.
+
+- The dialog asks for the microphone when it opens. A refusal, no microphone, or a recorder that will not start is said in the dialog, and nothing is recorded.
+- Any key starts recording, except in a form field. The recorder starts `START_DELAY_MS`, 500ms, after the key, showing "Get ready…" meanwhile, so the clatter of the key is not recorded. During that pause every key is ignored. While recording, every key but Enter is ignored, and Enter stops. Escape closes the dialog only before anything is recorded. With a recording held, only Cancel closes it.
+- The take is uploaded once, then cut with a JSON request. Cutting again with other Advanced settings reuses the take.
+- The review keys, K, J, D, M, R, and B, work only during review, and never while the focus is in the Advanced section.
+- Requests from the dialog use `api()` with `signedOut: "refuse"`, so an ended session keeps the take and the review in the page and asks the parent to sign in again in another tab. Nothing is sent again until the parent presses the button again.
+- The Advanced section expands and collapses with the shared animation. Each field puts itself back to its `bin/cut-clips` default with its reset button, a double-click on its slider, or Alt+R, and Alt+Shift+R or Reset all puts back every field.
+
 ## Sessions and data
 
 The portal uses the parent session from S007.1: a `Secure`, `HttpOnly`, `SameSite=Lax` cookie, an idle limit, and a lifetime.
 
 - **The shell carries no household data.** `index.html`, the scripts, the stylesheets, and the images are the same for everyone and are served without a session. Attempts, usage, tasks, the household's group names, and the signed-in username come only from JSON endpoints under `/parent/api/`. Spelling recordings the task pages play also come from under `/parent/api/`, and need a session in the same way.
 - **Data endpoints answer 401 or 403 and never redirect.** With no valid session they answer 401 with no data. With no parent account they answer 403 with `"closed": true` and no data. Over plain HTTP they are refused, as every parent address is. The browser does not follow these answers anywhere. Only the portal's own code reacts to them.
-- **State-changing requests are JSON POSTs.** Sign-in, sign-out, the parent check, a task save, and Retire are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
+- **State-changing requests are JSON POSTs.** Sign-in, sign-out, the parent check, a task save, Retire, and cutting, keeping, or discarding a recording are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
+- **The one exception is a recording's upload.** `POST /parent/api/recordings` takes the raw audio, and only when its `Content-Type` is `audio/webm` or `audio/ogg`, with or without a `codecs` parameter. Anything else, including `multipart/form-data`, `application/x-www-form-urlencoded`, and `text/plain`, is refused with 415. A form on another site can send only those three refused types, a script on another site that sends an audio type needs a CORS preflight that the service never approves, and the `SameSite=Lax` cookie is not sent on a cross-site POST. A body over 20 MB is refused with 413 before it is read to the end. No other endpoint takes anything but JSON.
 - **Sign-out ends the session on the service.** It deletes that session's row, so the key cannot be used again in any tab.
 - **The portal makes no background requests.** A request happens only when the parent acts: opening a page, changing a choice, or pressing a button. There is no polling or timed refresh, so a tab left open does not extend the idle limit.
 

@@ -82,6 +82,37 @@ def test_a_first_install_creates_the_layout_links_the_commands_and_does_not_star
     assert "Run dw enable to start daywarden at boot." in done.stdout
 
 
+def _task_files():
+    return sorted(path.name for path in (ROOT / "config" / "tasks.d").iterdir() if path.suffix in (".yaml", ".yml"))
+
+
+def test_a_first_install_creates_the_task_files_the_sample_policy_includes(host, package):
+    done = host.install(package)
+    assert done.returncode == 0, done.stderr + done.stdout
+    tasks = host.root / "config" / "tasks.d"
+    assert _task_files()
+    for name in _task_files():
+        assert (tasks / name).read_bytes() == (ROOT / "config" / "tasks.d" / name).read_bytes()
+        assert (tasks / f"{name}.sample").read_bytes() == (tasks / name).read_bytes()
+        assert f"~/daywarden/config/tasks.d/{name}" in done.stdout
+
+
+def test_an_upgrade_that_keeps_the_policy_adds_no_task_file_beside_the_households_own(host, package, newer):
+    assert host.install(package).returncode == 0
+    tasks = host.root / "config" / "tasks.d"
+    dropped, *others = _task_files()
+    (tasks / dropped).unlink()
+    if others:
+        (tasks / others[0]).write_text("tasks: {}\n", encoding="utf-8")
+    done = host.install(newer)
+    assert done.returncode == 0, done.stderr
+    assert not (tasks / dropped).exists()
+    assert (tasks / f"{dropped}.sample").read_bytes() == (ROOT / "config" / "tasks.d" / dropped).read_bytes()
+    if others:
+        assert (tasks / others[0]).read_text(encoding="utf-8") == "tasks: {}\n"
+    assert "Kept unchanged: ~/daywarden/.env, ~/daywarden/config/policy.yaml, ~/daywarden/config/bypass.txt." in done.stdout
+
+
 def test_a_first_install_names_this_machine_in_parent_names_and_bypass(host, package):
     done = host.install(package)
     assert done.returncode == 0, done.stderr
