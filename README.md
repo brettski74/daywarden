@@ -127,6 +127,12 @@ Usage in the sidebar opens `/parent/usage`. Choose a site group, a client group,
 
 Attempts in the sidebar opens `/parent/attempts`, which is also the portal home. Choose a client group in the context bar to see where the day stands: today's score, the required tasks still outstanding, the potential tasks still available, and the passes waiting on the required tasks. Below that are the group's attempts, newest first: the task, whether it was Required, Potential, Practice, or a Parent check, the household-local start and finish, the outcome, and the duration. An attempt left open on an earlier day is Unfinished. Open an attempt by its task name, such as `/parent/attempts/42`, to read the answers that were stored. Record parent check in the context bar stores a pass for the client group on show. The child has no page that records one.
 
+### Tasks
+
+Task Administration in the sidebar lists every task. Open one, such as `/parent/tasks/spelling`, to change its client groups, cooldowns, limits, and dates. Leave a box empty to leave that rule off. A spelling task's page also has its spelling settings and its word list, with a Pool pull-down in the context bar to show Current and revision words, either one, or the Attic. Click a word to hear it, and Play beside it to hear its sentence. Change a word's pool to move it between Current and Revision, or out of the Attic. Retire is the only way into the attic: it asks first, then moves the word's recordings into `spelling/attic` at once. Nothing is ever deleted.
+
+Save in the context bar, or Ctrl+S, saves every change on the page. The task is rewritten in whichever policy file defines it, with its comments and layout kept, checked as `dw check` would, and applied to every service as `dw reload` would. A save the policy would refuse is refused, and the status bar says why. A change made by hand on the server since the page opened stops the save until the page is reloaded. Leaving the page with unsaved changes asks first. See [Editing a task from the parent portal](docs/hierarchical-policy.md#editing-a-task-from-the-parent-portal).
+
 ### Parent accounts
 
 Add a parent account after the stack is up. The password is read once. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`.
@@ -364,6 +370,8 @@ dw reload                              # check and apply it
 ```
 
 The reload commits the restored file as a new version, so the later versions stay in `git log` too.
+
+A save on a parent portal task page is committed the same way, as the parent who signed in, such as `2026-11-08 21:15 -0500 brett: saved task spelling`. When the save finds hand edits that have not been committed, it commits them first as `<time> hand edits found before a portal save`, then the save. Hand edits that fail the check stop the save until they are fixed on the server. Everything the portal writes stays owned by the user who installed daywarden.
 
 In a clone of this repository, `config/` is already inside the repository's own history, so `make up` and `dw up` make no repository of their own there, and say so. Commit changes to `config/` as with any other file in the clone.
 

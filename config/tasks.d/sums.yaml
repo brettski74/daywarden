@@ -1,0 +1,17 @@
+tasks:
+  sums:
+    type: arithmetic
+    group: younger
+    pass_cooldown: 1
+    body:
+      operation: addition
+      max_timeout: 30s
+      min_timeout: 20s
+      correct_answers_required: 9
+      first:
+        - { from: 4, to: 6, weight: 10 }
+      operands:
+        - { value: 1, weight: 5 }
+        - { value: 2, weight: 7 }
+        - { from: 3, to: 9, weight: 10 }
+        - { value: 10, weight: 5 }

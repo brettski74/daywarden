@@ -26,7 +26,7 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from policy.clock import HouseholdClock, machine_zone, named_zone
@@ -83,12 +83,13 @@ def load_required(
     *,
     warn: Callable[[str], None],
     task_data: bool = True,
+    overrides: Mapping[Path, str] | None = None,
 ) -> Policy:
     """Load the policy for a check or a reload. A missing file is an error here."""
     root = require_yaml(path)
     if not root.is_file():
         raise ConfigError(f"{root}: the policy file does not exist")
-    return load(root, previous=previous, warn=warn, task_data=task_data)
+    return load(root, previous=previous, warn=warn, task_data=task_data, overrides=overrides)
 
 
 def shown(text: str, host_dir: str | None) -> str:

@@ -55,6 +55,7 @@ The parent pages are one React Router app under `/parent/`, with its source in `
 - Colours come only from role properties in the theme stylesheet. Components name no colour values.
 - Icons come from Lucide. The portal loads nothing from outside the parent port.
 - Every expand and collapse animates with `--expand-duration` and `--expand-easing`, 500ms of swing easing.
+- An editing page saves only on Save or Ctrl+S, and asks before leaving with unsaved changes, with Stay as the default.
 - The child's task pages are not part of the portal. Do not change their layout or design as part of portal work.
 
 # Testing

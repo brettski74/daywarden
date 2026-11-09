@@ -8,6 +8,9 @@ policy is loaded and scanned again whenever a run starts, so new recordings
 arrive without a restart. Each run keeps a copy of its words, targets, and
 queue on the attempt, so files changed during a run do not disturb it.
 
+Retired words go to the attic, a third directory that is never asked. A word
+is in only one of current, revision, and the attic.
+
 The browser never sees a word or its length. Audio URLs carry a fixed-length
 token holding the scrambled entry key, which only the server reads back.
 Runs, expiry, and resume are ``policy.quiz``'s.
@@ -23,7 +26,9 @@ import base64
 import os
 import random
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -49,7 +54,10 @@ SPELLING = "spelling"
 LABEL = "Spelling"
 CURRENT = "current"
 REVISION = "revision"
+ATTIC = "attic"
+# The pools a run asks from. The attic holds retired words, which are never asked.
 POOLS = (CURRENT, REVISION)
+ALL_POOLS = (CURRENT, REVISION, ATTIC)
 WORD_CLIP = "word"
 SENTENCE_CLIP = "sentence"
 DATA_DIR_ENV = "DAYWARDEN_DATA_DIR"
@@ -71,8 +79,9 @@ _DIRECTORIES = {
     "current_dir": "spelling/current",
     "revision_dir": "spelling/revision",
     "alphabet_dir": "spelling/alphabet",
+    "attic_dir": "spelling/attic",
 }
-_POOL_FIELDS = {CURRENT: "current_dir", REVISION: "revision_dir"}
+_POOL_FIELDS = {CURRENT: "current_dir", REVISION: "revision_dir", ATTIC: "attic_dir"}
 _REQUIRED_FIELDS = {CURRENT: "current_required", REVISION: "revision_required"}
 _PAUSES = {"letter_pause": "0ms", "word_pause": "300ms"}
 _BODY_KEYS = {
@@ -114,9 +123,10 @@ class Settings:
     explicit: frozenset[str] = frozenset()
     letter_pause: int = 0
     word_pause: int = 300
+    attic_dir: str = _DIRECTORIES["attic_dir"]
 
     def directory(self, pool: str) -> str:
-        return self.current_dir if pool == CURRENT else self.revision_dir
+        return {CURRENT: self.current_dir, REVISION: self.revision_dir, ATTIC: self.attic_dir}[pool]
 
 
 @dataclass(frozen=True)
@@ -210,33 +220,32 @@ def check_body(body: Mapping, root: Path | None = None) -> Pools:
     settings = parse_settings(body)
     root = data_root() if root is None else root
     pools = load_pools(settings, root)
-    _LAST_GOOD[(settings, root)] = pools
+    if not _PLANNED.get():
+        _LAST_GOOD[(settings, root)] = pools
     return pools
 
 
 def load_pools(settings: Settings, root: Path | None = None) -> Pools:
-    """Scan both pool directories and work out the targets.
+    """Scan the pool directories and work out the targets.
 
     A default directory that does not exist is an empty pool. A directory
     the body names, or one whose pool has a target above zero, must exist.
+    The attic may always be missing. A word may be in only one of the three.
     """
     root = data_root() if root is None else root
     found: dict[str, tuple[Word, ...]] = {}
-    for pool in POOLS:
+    for pool in ALL_POOLS:
         field = _POOL_FIELDS[pool]
         directory = root / settings.directory(pool)
-        if directory.is_dir():
+        if _is_dir(directory):
             found[pool] = scan_pool(directory, field)
             continue
-        wanted = getattr(settings, _REQUIRED_FIELDS[pool])
-        if field in settings.explicit or (wanted is not None and wanted > 0):
+        wanted = None if pool == ATTIC else getattr(settings, _REQUIRED_FIELDS[pool])
+        if pool != ATTIC and (field in settings.explicit or (wanted is not None and wanted > 0)):
             raise ValueError(f"{field}: {directory} is not a directory")
         found[pool] = ()
+    _one_pool_each(found)
     current, revision = found[CURRENT], found[REVISION]
-    seen = {word.key.lower() for word in current}
-    for word in revision:
-        if word.key.lower() in seen:
-            raise ValueError(f"revision_dir: {word.key} is also in current_dir; a word belongs to one pool")
     m = len(current)
     n = m if settings.current_required is None else settings.current_required
     if n > m:
@@ -251,6 +260,106 @@ def load_pools(settings: Settings, root: Path | None = None) -> Pools:
     words = [word.word for word in (*current, *revision)]
     needed = [*LETTERS] + [name for symbol, name in SYMBOL_NAMES.items() if any(symbol in word for word in words)]
     return Pools(current, revision, n, x, load_alphabet(root / settings.alphabet_dir, needed))
+
+
+def _one_pool_each(found: Mapping[str, tuple[Word, ...]]) -> None:
+    """Raise when a word is in more than one pool, naming the later pool's field and both files."""
+    seen: dict[str, tuple[str, Word]] = {}
+    for pool in ALL_POOLS:
+        for word in found[pool]:
+            folded = word.key.lower()
+            if folded not in seen:
+                seen[folded] = (pool, word)
+                continue
+            other_pool, other = seen[folded]
+            also = "" if other.clip.name == word.clip.name else f" as {other.clip.name}"
+            raise ValueError(
+                f"{_POOL_FIELDS[pool]}: {word.clip.name} is also in {_POOL_FIELDS[other_pool]}{also}; "
+                "a word belongs to one pool"
+            )
+
+
+# Files a save means to move, as (from, to), seen by the scans in this context
+# before anything moves, so the save can be checked first.
+_PLANNED: ContextVar[tuple[tuple[Path, Path], ...]] = ContextVar("planned_moves", default=())
+
+
+@contextmanager
+def planned_moves(moves: Sequence[tuple[Path, Path]]):
+    """Scan the pools in this block as if each file had already moved."""
+    token = _PLANNED.set(tuple((_plain(source), _plain(target)) for source, target in moves))
+    try:
+        yield
+    finally:
+        _PLANNED.reset(token)
+
+
+def _plain(path: Path) -> Path:
+    return Path(os.path.normpath(path))
+
+
+def _is_dir(directory: Path) -> bool:
+    return directory.is_dir() or any(target.parent == _plain(directory) for _source, target in _PLANNED.get())
+
+
+def _listing(directory: Path) -> list[tuple[str, Path]]:
+    """Return each visible file in a pool directory by name, with any planned moves made."""
+    found: dict[str, Path] = {}
+    if directory.is_dir():
+        with os.scandir(directory) as listing:
+            for child in listing:
+                if not child.name.startswith(".") and child.is_file():
+                    found[child.name] = Path(child.path)
+    here = _plain(directory)
+    for source, target in _PLANNED.get():
+        if source.parent == here:
+            found.pop(source.name, None)
+        if target.parent == here:
+            found[target.name] = source
+    return sorted(found.items())
+
+
+def entry_files(settings: Settings, pool: str, key: str, root: Path | None = None) -> list[Path]:
+    """Return the word clip and any sentence clip of an entry in one pool's directory."""
+    root = data_root() if root is None else root
+    directory = root / settings.directory(pool)
+    files = []
+    for name, path in _listing(directory):
+        try:
+            parsed = parse_clip_name(name, None)
+        except ValueError:
+            continue
+        if parsed is not None and parsed[0].lower() == key.lower():
+            files.append(path)
+    return files
+
+
+def pool_entries(settings: Settings, root: Path | None = None) -> tuple[list[dict], list[str]]:
+    """Return every entry in the three pools for the parent pages, and any reason a pool would not load.
+
+    Each entry is its key, the spelling, its pool, and its clip and sentence
+    file names. A missing directory is an empty pool.
+    """
+    root = data_root() if root is None else root
+    entries: list[dict] = []
+    problems: list[str] = []
+    for pool in ALL_POOLS:
+        directory = root / settings.directory(pool)
+        if not directory.is_dir():
+            continue
+        words, found = _scan_pool(directory, _POOL_FIELDS[pool])
+        problems += found
+        for word in words:
+            entries.append(
+                {
+                    "key": word.key,
+                    "word": word.word,
+                    "pool": pool,
+                    "clip": word.clip.name,
+                    "sentence": None if word.sentence is None else word.sentence.name,
+                }
+            )
+    return entries, problems
 
 
 def character_name(character: str) -> str:
@@ -318,29 +427,25 @@ def _scan_pool(directory: Path, field: str) -> tuple[tuple[Word, ...], list[str]
     clips: dict[str, tuple[str, str, Clip]] = {}
     sentences: dict[str, Clip] = {}
     problems: list[str] = []
-    with os.scandir(directory) as listing:
-        children = sorted(listing, key=lambda child: child.name)
-    for child in children:
-        if child.name.startswith(".") or not child.is_file():
-            continue
+    for name, path in _listing(directory):
         try:
-            parsed = parse_clip_name(child.name, field)
+            parsed = parse_clip_name(name, field)
             if parsed is None:
                 continue
             key, word, sentence = parsed
-            clip = Clip(child.name, audio_ms(Path(child.path), child.stat(), field))
+            clip = Clip(name, audio_ms(path, path.stat(), field))
         except ValueError as exc:
             problems.append(str(exc))
             continue
         folded = key.lower()
         if sentence:
             if folded in sentences:
-                problems.append(f"{field}: {sentences[folded].name} and {child.name} are both the sentence clip for {key}")
+                problems.append(f"{field}: {sentences[folded].name} and {name} are both the sentence clip for {key}")
                 continue
             sentences[folded] = clip
         else:
             if folded in clips:
-                problems.append(f"{field}: {clips[folded][2].name} and {child.name} are both the word clip for {key}")
+                problems.append(f"{field}: {clips[folded][2].name} and {name} are both the word clip for {key}")
                 continue
             clips[folded] = (key, word, clip)
     for folded, sentence in sentences.items():
@@ -501,10 +606,18 @@ def read_media_name(name: str) -> tuple[str, str, bool, str] | None:
 
 
 def find_clip(settings: Settings, pool: str, key: str, *, sentence: bool, extension: str, root: Path | None = None) -> Path | None:
-    """Return the audio file in the pool's directory for that entry, or None."""
+    """Return the audio file for that entry, or None.
+
+    The pool's own directory is searched first, then the other pool and the
+    attic, so a word the parent moves or retires during a run still plays.
+    """
     root = data_root() if root is None else root
     wanted = f"{key}.{SENTENCE_CLIP}.{extension}" if sentence else f"{key}.{extension}"
-    return _find_file(root / settings.directory(pool), wanted)
+    for each in (pool, *(other for other in ALL_POOLS if other != pool)):
+        found = _find_file(root / settings.directory(each), wanted)
+        if found is not None:
+            return found
+    return None
 
 
 def alphabet_media_name(clip: Clip) -> str:

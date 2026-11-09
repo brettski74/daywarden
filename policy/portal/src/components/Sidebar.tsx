@@ -1,9 +1,18 @@
-import { ChartColumn, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen, type LucideIcon } from "lucide-react";
+import {
+  ChartColumn,
+  ChevronRight,
+  ClipboardCheck,
+  ListChecks,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, type KeyboardEvent, type PointerEvent } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
-import { KEY_STEP, useSidebar } from "../sidebar";
+import { KEY_STEP, useSidebar, useTaskList } from "../sidebar";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
 
@@ -13,7 +22,43 @@ export const ENTRIES: Entry[] = [
   { to: "/usage", label: "Usage", icon: ChartColumn },
 ];
 
-export function Sidebar({ username }: { username: string }) {
+/** Task Administration: a button that expands the list of tasks, each a link to its page. */
+function TaskGroup({ tasks }: { tasks: string[] }) {
+  const onTaskPage = useLocation().pathname.startsWith("/tasks/");
+  const { expanded, setExpanded } = useTaskList(onTaskPage);
+  const { shown, moving, toggle } = useExpander(expanded, setExpanded);
+  const hint = onTaskPage ? "The task list stays open while a task page is open" : undefined;
+  return (
+    <li className="nav-group" data-open={expanded || undefined} data-moving={moving || undefined}>
+      <button
+        type="button"
+        className="nav-group-toggle"
+        aria-expanded={expanded}
+        aria-controls="task-list"
+        aria-disabled={onTaskPage || undefined}
+        title={hint}
+        onClick={onTaskPage ? undefined : toggle}
+      >
+        <ListChecks aria-hidden="true" />
+        <span>Task Administration</span>
+        <ChevronRight className="nav-chevron" aria-hidden="true" />
+      </button>
+      {shown && (
+        <div className="nav-sub" inert={!expanded}>
+          <ul id="task-list">
+            {tasks.map((name) => (
+              <li key={name}>
+                <NavLink to={`/tasks/${encodeURIComponent(name)}`}>{name}</NavLink>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </li>
+  );
+}
+
+export function Sidebar({ username, tasks }: { username: string; tasks: string[] }) {
   const { width, limits, collapsed, resize, setCollapsed } = useSidebar();
   const setExpanded = useCallback((value: boolean) => setCollapsed(!value), [setCollapsed]);
   const { shown, moving, toggle: toggleSidebar } = useExpander(!collapsed, setExpanded);
@@ -77,6 +122,7 @@ export function Sidebar({ username }: { username: string }) {
                     </NavLink>
                   </li>
                 ))}
+                <TaskGroup tasks={tasks} />
               </ul>
             </nav>
           </>

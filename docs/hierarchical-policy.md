@@ -166,6 +166,12 @@ A task has a name, unique in the task namespace, the common attributes below, an
 
 The same type may appear on more than one task. `parts-of-speech-1` and `parts-of-speech-2` keep separate sentences, dates, and attempt history. Attempts are rows, not part of this file. Editing a task does not delete them. S003.1 is the catalogue. S009 moves the household day off local midnight. Until then the day starts at midnight.
 
+### Editing a task from the parent portal
+
+Each task has a page in the parent portal, at `/parent/tasks/<name>`. Saving it rewrites that task in whichever file defines it, including a file brought in by `include`. Only the fields that changed are rewritten. The file's comments, its layout, and every other entry stay exactly as they were, and a cleared field is removed from the file. So the `decisions` service mounts the config directory writable. The other services still mount it read-only. Each file it writes keeps its owner and mode.
+
+Before anything is written, the whole policy is checked with the changed file and with any spelling words already in their new pools, exactly as `dw check` would. A save that would not load is refused, and nothing changes. A good save is applied to every service as `dw reload` applies it, and committed to the config history as the signed-in parent, such as `2026-11-08 21:15 -0500 brett: saved task spelling`. A save first commits any hand edits it finds in the config directory, as `<time> hand edits found before a portal save`, when they pass the check, and refuses to save when they do not. A file changed on the server since the page was opened is not saved over: the page has to be reloaded first.
+
 ### Common task attributes
 
 Every task takes these fields, whatever its type. Any other field on a task fails the load, and the previous policy stays in force.
@@ -174,7 +180,7 @@ Every task takes these fields, whatever its type. Any other field on a task fail
 | --- | --- | --- |
 | `type` | Required | The kind of task: `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`. |
 | `group` or `groups` | Required | The client group the task is assigned to with `group`, or a list of one or more with `groups`. Use one of the two, not both. `default` means the implicit client group. |
-| `pass_cooldown` | Required | Household days after a pass before the task is offered again. A task is never offered again on the day it was passed, so 0 and 1 both mean the next day. |
+| `pass_cooldown` | 1 | Household days after a pass before the task is offered again. A task is never offered again on the day it was passed, so 0 and 1 both mean the next day, and leaving it out is the same as 1. |
 | `failure_cooldown` | No wait | Household days after a failure before the task is offered again. |
 | `available_from` | Available now | The first household day the task can be offered in yyyy-mm-dd format. |
 | `due_date` | No due date | The household day from which the task is required, until the group has passed it once, at any time. A practice pass does not count. Use yyyy-mm-dd format |
@@ -447,13 +453,14 @@ The page is told the sentence as words and the text between them, the part names
 
 ### Spelling tasks
 
-A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted read-only into the `decisions` container at `/var/lib/daywarden/data`. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
+A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted into the `decisions` container at `/var/lib/daywarden/data`, writable so that the parent portal's task page can move and retire words. Everything the service moves or creates there keeps the host user as its owner. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
 
 | Field | Default | Value |
 | --- | --- | --- |
 | `current_dir` | `spelling/current` | The words he is learning now, relative to the data directory. |
 | `revision_dir` | `spelling/revision` | Older words for revision, relative to the data directory. |
 | `alphabet_dir` | `spelling/alphabet` | Letter recordings for practice mode, relative to the data directory. |
+| `attic_dir` | `spelling/attic` | Retired words, relative to the data directory. Never asked. It may be missing. The parent portal creates it the first time it retires a word. |
 | `timeout` | `30s` | Typing time for each word, not counting audio. A duration as for arithmetic. |
 | `maximum_replays` | 3 | "Repeat word" clicks allowed per word. 0 or more. |
 | `maximum_sentence_plays` | 2 | "Use in a sentence" clicks allowed per word. 0 or more. |
@@ -478,9 +485,9 @@ tasks:
 
 The alphabet directory holds one recording per character, named for it: `a.<ext>` to `z.<ext>`, `dash.<ext>` for `-`, and `apostrophe.<ext>` for `'`, matched without regard to case. Every letter is required. `dash` and `apostrophe` are required only when a word in either pool uses that character. Other files are ignored.
 
-The load fails, naming the task and the field or the file, for an unknown field, a bare-number or zero `timeout`, a bare-number or negative `letter_pause` or `word_pause`, a directory path that is absolute or uses `..`, a directory the body names that does not exist, a badly formed audio file name, two word clips or two sentence clips for one word (`rope.opus` and `rope.mp3`), a sentence clip with no word clip, a word in both pools, a target above its pool's size, no work at all (no current words and `revision_required` of 0), a missing alphabet directory, a character with no recording, or two recordings of one character (`a.opus` and `a.mp3`). A default word directory that does not exist is an empty pool.
+The load fails, naming the task and the field or the file, for an unknown field, a bare-number or zero `timeout`, a bare-number or negative `letter_pause` or `word_pause`, a directory path that is absolute or uses `..`, a directory the body names that does not exist, a badly formed audio file name, two word clips or two sentence clips for one word (`rope.opus` and `rope.mp3`), a sentence clip with no word clip, a word in more than one of the current, revision, and attic pools (`attic_dir: rope.opus is also in current_dir; a word belongs to one pool`), a target above its pool's size, no work at all (no current words and `revision_required` of 0), a missing alphabet directory, a character with no recording, or two recordings of one character (`a.opus` and `a.mp3`). A default word directory that does not exist is an empty pool. The attic is read with the same file-name rules as the other two pools, and words are compared by entry key, ignoring case, so `read.1` and `read.2` may be in different pools.
 
-The directories are read when the policy loads and again whenever a run starts, so new recordings are used from the next run without a restart. Recording lengths are kept in memory and read again only for a new or changed file. A run keeps a copy of its words, targets, and queue on the attempt, so a file changed during a run does not disturb it. A directory that goes bad after the load keeps the last list that read cleanly, and the service logs why.
+The directories are read when the policy loads and again whenever a run starts, so new recordings are used from the next run without a restart. Recording lengths are kept in memory and read again only for a new or changed file. A run keeps a copy of its words, targets, and queue on the attempt, so a file changed during a run does not disturb it. A word moved to the other pool or retired to the attic during a run still plays for the rest of that run, because a clip not found in the pool the run expected is looked for in the other pool and the attic. A directory that goes bad after the load keeps the last list that read cleanly, and the service logs why.
 
 A run asks every current word and `revision_required` revision words drawn at random, shuffled together. A right spelling, ignoring case and spaces at either end, scores for its own pool. A missed current word goes to the back of the queue while the current score is short of `current_required`. A missed revision word, while the revision score is short, is replaced at the back by a different revision word that is not right yet and not already waiting, or by the same word when there is no other. A word that will come back is not shown on screen. A word that will not come back is shown with the feedback. The attempt passes when every current word has been asked and both targets are met, so a target of 7 out of 10 still asks the last three words. There is no failure.
 

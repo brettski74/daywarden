@@ -289,6 +289,66 @@ def test_bad_configuration_fails_the_load_and_keeps_the_previous_policy(
     assert good.task("words").document() == {}
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "field", "other"),
+    [
+        ("current", "revision", "revision_dir", "current_dir"),
+        ("current", "attic", "attic_dir", "current_dir"),
+        ("revision", "attic", "attic_dir", "revision_dir"),
+    ],
+)
+def test_a_word_in_two_pools_fails_the_load_naming_the_task_the_field_and_both_files(
+    tmp_path, data, first, second, field, other
+):
+    _words(data, "spelling/current", "cat")
+    good = _policy(tmp_path / "good", {})
+    _words(data, f"spelling/{first}", "rope")
+    _files(data, f"spelling/{second}", "Rope.wav")
+    with pytest.raises(ConfigError) as raised:
+        load(_write(tmp_path / "bad", _house({})), previous=good)
+    assert f"task 'words': body.{field}: Rope.wav is also in {other} as rope.wav; a word belongs to one pool" in str(
+        raised.value
+    )
+
+
+def test_the_same_entry_in_the_attic_fails_the_load_with_the_file_named_once(tmp_path, data):
+    _words(data, "spelling/current", "rope", "cat")
+    _words(data, "spelling/attic", "rope")
+    with pytest.raises(ConfigError, match=r"body\.attic_dir: rope\.wav is also in current_dir; a word belongs to one pool"):
+        _policy(tmp_path, {})
+
+
+def test_homographs_may_be_in_different_pools(data):
+    _words(data, "spelling/current", "read.1")
+    _words(data, "spelling/attic", "read.2")
+    assert [word.key for word in check_body({}).current] == ["read.1"]
+
+
+def test_the_attic_may_be_missing_and_its_words_are_never_asked(tmp_path, data):
+    _words(data, "spelling/current", "rope")
+    pools = check_body({"attic_dir": "spelling/old-words"})
+    assert [word.key for word in pools.current] == ["rope"]
+    _words(data, "spelling/old-words", "owl")
+    pools = check_body({"attic_dir": "spelling/old-words"})
+    assert [word.key for word in (*pools.current, *pools.revision)] == ["rope"]
+
+
+@pytest.mark.parametrize(
+    ("body", "files", "expected"),
+    [
+        ({"attic_dir": "/var/words"}, [], "body.attic_dir: must be a relative path"),
+        ({"attic_dir": "spelling/../../etc"}, [], "body.attic_dir: must be a relative path"),
+        ({}, ["rope two.opus"], "body.attic_dir: rope two.opus"),
+    ],
+)
+def test_a_bad_attic_fails_the_load_as_the_other_pools_do(tmp_path, data, any_length, body, files, expected):
+    _words(data, "spelling/current", "cat")
+    _files(data, "spelling/attic", *files)
+    with pytest.raises(ConfigError) as raised:
+        _policy(tmp_path, body)
+    assert expected in str(raised.value)
+
+
 def test_a_load_without_task_data_skips_the_pools_but_still_checks_the_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("DAYWARDEN_DATA_DIR", str(tmp_path / "not-mounted"))
     body = {"timeout": "30s", "revision_required": 10}
@@ -1017,6 +1077,21 @@ def test_word_audio_is_served_for_a_task_passed_today_but_not_for_another_groups
     assert elsewhere is None
 
 
+@pytest.mark.parametrize("pool", ["revision", "attic"])
+def test_a_word_moved_or_retired_during_a_run_still_plays_for_the_rest_of_it(tmp_path, data, pool):
+    _words(data, "spelling/current", "rope", sentences={"rope"})
+    quiz = Quiz(tmp_path)
+    quiz.open(START)
+    question = quiz.ask(START)
+    for name in ("rope.wav", "rope.sentence.wav"):
+        target = data / "spelling" / pool / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (data / "spelling/current" / name).rename(target)
+    for url in (question["word_url"], question["sentence_url"]):
+        found = task_media(quiz.policy, quiz.store, path=url, client_ip=YOUNGER, now=START)
+        assert found is not None and found.parent == data / "spelling" / pool
+
+
 def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch):
     pytest.importorskip("fastapi")
     from policy.app import create_app
@@ -1046,8 +1121,6 @@ def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch
     assert _call(app, "GET", "/tasks/words/audio/rope.wav")[0] == 404
     missing = token("cat", CURRENT, random.Random(2))
     assert _call(app, "GET", f"/tasks/words/audio/{missing}.wav")[0] == 404
-    wrong_pool = token("rope", REVISION, random.Random(2))
-    assert _call(app, "GET", f"/tasks/words/audio/{wrong_pool}.wav")[0] == 404
     replay = json.dumps({"id": question["id"], "clip": "word"}).encode()
     assert _call(app, "POST", "/tasks/words", query=b"do=replay", body=replay)[0] == 200
     answer = json.dumps({"id": question["id"], "answer": "rope", "expired": False}).encode()

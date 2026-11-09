@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import time
@@ -18,6 +19,8 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+
+from conftest import write_alphabet, write_wav
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,6 +78,10 @@ class Daywarden:
         self.config.mkdir()
         (self.config / "policy.yaml").write_text(POLICY, encoding="utf-8")
         (self.config / "bypass.txt").write_text("", encoding="utf-8")
+        self.data = directory / "data"
+        write_alphabet(self.data / "spelling" / "alphabet")
+        for word in ("rope", "cat"):
+            write_wav(self.data / "spelling" / "current" / f"{word}.wav")
         (directory / "ca").mkdir()
         fakes = directory / "fakes"
         fakes.mkdir()
@@ -88,6 +95,7 @@ class Daywarden:
             "PATH": f"{fakes}:{os.environ['PATH']}",
             "COMPOSE_PROJECT_NAME": self.project,
             "DAYWARDEN_CONFIG_DIR": str(self.config),
+            "DAYWARDEN_DATA_DIR": str(self.data),
             "CA_VOLUME_PATH": str(directory / "ca"),
             "PROXY_PORT": str(_free_port()),
             "POLICY_PORT": str(_free_port()),
@@ -105,12 +113,13 @@ class Daywarden:
             timeout=timeout,
         )
 
-    def compose(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def compose(self, *args: str, check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess:
         done = subprocess.run(
             ["docker", "compose", "--project-directory", str(ROOT), *args],
             env=self.env,
             text=True,
             capture_output=True,
+            input=input_text,
             timeout=120,
         )
         if check:
@@ -247,6 +256,78 @@ def test_no_request_to_the_auto_configuration_port_can_reload_it(daywarden):
         assert daywarden.pac()[1] == before
     finally:
         (daywarden.config / "policy.yaml").write_text(good, encoding="utf-8")
+
+
+def _portal(daywarden, method: str, path: str, body: dict | None = None, cookie: str = "") -> tuple[int, dict, dict]:
+    request = urllib.request.Request(
+        f"https://127.0.0.1:{daywarden.env['POLICY_PORT']}{path}",
+        data=None if body is None else json.dumps(body).encode(),
+        method=method,
+        headers={"Content-Type": "application/json", **({"Cookie": cookie} if cookie else {})},
+    )
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=context) as response:
+            return response.status, json.loads(response.read()), dict(response.headers)
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read() or b"{}"), dict(error.headers)
+
+
+def test_a_portal_save_commits_hand_edits_then_the_save_and_reloads_every_service(daywarden):
+    """S023.2: the container writes the config and data directories as the host user and reloads the others."""
+    good = (daywarden.config / "policy.yaml").read_text(encoding="utf-8")
+    me = os.getuid()
+    try:
+        daywarden.edit(
+            "timezone: Australia/Sydney\n",
+            "timezone: Australia/Sydney\nproxy_configuration:\n  direct:\n    extra: ['*.portal.arpa']\n"
+            "tasks:\n  spelling:\n    type: spelling\n    group: younger\n",
+        )
+        added = daywarden.compose("exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada", input_text="s3cret-pass\n")
+        assert "parent account ada is saved" in added.stdout
+        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
+        assert status == 200
+        cookie = headers["set-cookie"].split(";", 1)[0]
+        status, page, _headers = _portal(daywarden, "GET", "/parent/api/tasks/spelling", cookie=cookie)
+        assert status == 200, page
+        assert {word["key"] for word in page["spelling"]["words"]} == {"rope", "cat"}
+
+        status, saved, _headers = _portal(
+            daywarden,
+            "POST",
+            "/parent/api/tasks/spelling",
+            {"version": page["version"], "fields": {"pass_cooldown": "3"}, "moves": {"cat": "revision"}},
+            cookie=cookie,
+        )
+        assert status == 200, saved
+        assert saved["warnings"] == []
+        assert "Moved cat to revision." in saved["message"]
+        assert "pass_cooldown: 3" in (daywarden.config / "policy.yaml").read_text(encoding="utf-8")
+        assert 'var DIRECT_GLOBS = ["*.portal.arpa"];' in daywarden.pac()[1]
+        log = subprocess.run(
+            ["git", "-C", str(daywarden.config), "log", "-2", "--format=%an %s"], text=True, capture_output=True, check=True
+        ).stdout.splitlines()
+        assert log[0].startswith("ada ") and log[0].endswith(" ada: saved task spelling")
+        assert log[1].startswith("ada ") and log[1].endswith(" hand edits found before a portal save")
+        status = subprocess.run(["git", "-C", str(daywarden.config), "status", "--porcelain"], text=True, capture_output=True, check=True)
+        assert status.stdout == ""
+
+        status, retired, _headers = _portal(daywarden, "POST", "/parent/api/tasks/spelling/retire", {"word": "rope"}, cookie=cookie)
+        assert status == 200, retired
+        written = [
+            daywarden.config / "policy.yaml",
+            daywarden.data / "spelling" / "revision",
+            daywarden.data / "spelling" / "revision" / "cat.wav",
+            daywarden.data / "spelling" / "attic",
+            daywarden.data / "spelling" / "attic" / "rope.wav",
+            *(daywarden.config / ".git").rglob("*"),
+        ]
+        assert [path for path in written if path.stat().st_uid != me] == []
+    finally:
+        (daywarden.config / "policy.yaml").write_text(good, encoding="utf-8")
+        assert daywarden.dw("reload").returncode == 0
 
 
 def test_the_proxy_and_the_policy_pages_work_with_the_auto_configuration_service_stopped(daywarden):

@@ -18,7 +18,10 @@ POST /v1/reload loads POLICY_FILE again and swaps it in whole. Each report
 reads the policy once, so it is filed and judged under one policy. Running
 transfers keep the deadline and the ceiling recorded when they were allowed.
 A policy with errors is refused and the one in force stays. Only a request
-from inside this container is accepted. Any other peer gets 404.
+from inside this container is accepted. Any other peer gets 404. The same
+reload is answered on the Unix socket at ``OBSERVATIONS_SOCKET`` when it is
+set, which is how a parent portal save in the decisions service reaches it.
+See ``policy.control``.
 
 Run with: python -m policy.observations
 """
@@ -32,6 +35,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from policy import control
 from policy.check import load_required
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
@@ -86,6 +90,19 @@ def listen(
     lock = threading.Lock()
     current = {"policy": policy}
 
+    def reload_policy() -> dict:
+        if policy_file is None:
+            return {"reloaded": False, "errors": ["the observations service has no policy file to reload"], "warnings": []}
+        warnings: list[str] = []
+        with lock:
+            try:
+                current["policy"] = load_required(policy_file, current["policy"], warn=warnings.append, task_data=False)
+            except ConfigError as error:
+                print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
+                return {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
+        print(f"reloaded {policy_file}", flush=True)
+        return {"reloaded": True, "warnings": warnings}
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -129,19 +146,7 @@ def listen(
             if policy_file is None or self.client_address[0] not in LOOPBACK:
                 self._send(404, b"not found")
                 return
-            warnings: list[str] = []
-            with lock:
-                try:
-                    current["policy"] = load_required(
-                        policy_file, current["policy"], warn=warnings.append, task_data=False
-                    )
-                except ConfigError as error:
-                    print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
-                    answer = {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
-                else:
-                    print(f"reloaded {policy_file}", flush=True)
-                    answer = {"reloaded": True, "warnings": warnings}
-            self._send(200, json.dumps(answer).encode(), "application/json")
+            self._send(200, json.dumps(reload_policy()).encode(), "application/json")
 
         def _send(self, status: int, body: bytes, content_type: str | None = None) -> None:
             if content_type is None:
@@ -155,7 +160,9 @@ def listen(
         def log_message(self, fmt: str, *args) -> None:
             return
 
-    return ThreadingHTTPServer((host, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.reload_policy = reload_policy
+    return server
 
 
 def main() -> None:
@@ -165,6 +172,10 @@ def main() -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database, check_same_thread=False)
     server = listen(policy, UsageStore(connection=store.connection), policy_file=policy_file)
+    path = control.socket_path("OBSERVATIONS_SOCKET")
+    if path is not None:
+        controller = control.serve(path, {"reload": server.reload_policy})
+        threading.Thread(target=controller.serve_forever, daemon=True).start()
     # Exit 0 on docker stop. A container that exits non-zero when Docker
     # shuts down is started again by an on-failure restart policy at boot.
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())

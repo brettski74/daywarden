@@ -56,6 +56,8 @@ REVISION_TASK = "revision_task"
 DEFAULT_BUCKET_SECONDS = 300
 DEFAULT_TIME_GRACE = 5 * 60
 DEFAULT_VOLUME_GRACE = 1024**2
+# A task passed today is never offered again today, so 1 is the same as 0.
+DEFAULT_PASS_COOLDOWN = 1
 
 _STR = "tag:yaml.org,2002:str"
 _INT = "tag:yaml.org,2002:int"
@@ -322,6 +324,8 @@ class _Build:
     proxy_configuration: DirectEntries = DirectEntries()
     proxy_where: str = ""
     task_data: bool = True
+    # Text to read in place of a file on disk, by canonical path.
+    overrides: Mapping[Path, str] = field(default_factory=dict)
     # Each file read, in the order the policy includes it.
     files: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
@@ -405,6 +409,7 @@ def load(
     lookup: Lookup = socket.getaddrinfo,
     warn: Callable[[str], None] = lambda message: print(message, flush=True),
     task_data: bool = True,
+    overrides: Mapping[Path, str] | None = None,
 ) -> Policy | None:
     """Load ``path`` into a new policy.
 
@@ -419,14 +424,36 @@ def load(
     With ``task_data`` false, task bodies are checked without reading the
     household data directory, such as the spelling word pools. A service that
     does not mount that directory loads this way.
+
+    ``overrides`` maps a file's canonical path to text read in its place, so
+    an edit can be checked before it is written.
     """
     root = require_yaml(path)
     if not root.is_file():
         return previous
-    build = _Build(task_data=task_data)
+    build = _Build(task_data=task_data, overrides=dict(overrides or {}))
     seen: set[Path] = set()
     _load_file(root, root.resolve(), seen, build)
     return _finish(build, previous, lookup, warn)
+
+
+def task_files(path: str | Path) -> dict[str, Path]:
+    """Return the file that defines each task, by task name, following the includes.
+
+    Nothing is checked beyond what finding the tasks needs, and the data
+    directory is not read. A file that cannot be read defines nothing.
+    """
+    root = require_yaml(path)
+    if not root.is_file():
+        return {}
+    build = _Build(task_data=False)
+    _load_file(root, root.resolve(), set(), build)
+    return {name: Path(where.rsplit(":", 2)[0]) for name, where in build.task_where.items()}
+
+
+def compose(text: str, source: Path) -> yaml.Node | None:
+    """Return the YAML node tree of one policy file's text, as the loader reads it."""
+    return _compose(text, source)
 
 
 def _load_file(path: Path, canonical: Path, seen: set[Path], build: _Build) -> None:
@@ -435,7 +462,7 @@ def _load_file(path: Path, canonical: Path, seen: set[Path], build: _Build) -> N
     seen.add(canonical)
     build.files.append(str(canonical))
     try:
-        text = canonical.read_text(encoding="utf-8")
+        text = build.overrides[canonical] if canonical in build.overrides else canonical.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         build.fail(f"{canonical}: {exc}")
         return
@@ -660,9 +687,8 @@ def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Tas
     pairs = _pairs(node)
     fields = Collector()
     fields.take(_reject_unknown, set(pairs), _TASK_KEYS, where)
-    for key in ("type", "pass_cooldown"):
-        if key not in pairs:
-            fields.add(f"{where}: {key} is required")
+    if "type" not in pairs:
+        fields.add(f"{where}: type is required")
     groups = fields.take(_task_groups, pairs, where)
 
     def optional(key: str, parse: Callable, *args, **kwargs):
@@ -690,7 +716,7 @@ def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Tas
         name,
         kind,
         groups,
-        cooldown,
+        DEFAULT_PASS_COOLDOWN if cooldown is None else cooldown,
         json.dumps(document, ensure_ascii=False, separators=(",", ":")),
         failure,
         available,

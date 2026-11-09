@@ -11,7 +11,7 @@ The parent portal is the parent's side of Daywarden: one React Router app, serve
 
 Every signed-in page has the same frame:
 
-- **Sidebar.** Down the left side for the full height of the window. The logo is centred at the top, then the page entries, then who is signed in and Sign out at the bottom. The entry for the open page is marked. Entries that do not fit scroll inside the sidebar. The sidebar may grow headed groups, such as Reports and Settings, when there are enough entries to need them.
+- **Sidebar.** Down the left side for the full height of the window. The logo is centred at the top, then the page entries, then who is signed in and Sign out at the bottom. The entry for the open page is marked. Entries that do not fit scroll between the logo and the bottom cluster, and the logo and the bottom cluster stay in place. The sidebar may grow headed groups, such as Reports and Settings, when there are enough entries to need them.
 - **Main pane.** The rest of the window, from top to bottom:
   - **Context bar.** One line high, across the full width of the main pane. It holds what the page is about and the choices for it: the page title or a breadcrumb such as Attempts › younger › spelling-week-3, the page's pull-downs, and buttons that act on what is on show, such as Record parent check.
   - **Content pane.** Takes most of the window and holds the page itself.
@@ -30,6 +30,12 @@ Sidebar size:
 - Collapsing and expanding the sidebar animate, as every expand and collapse in the portal does. See Motion below.
 - The chosen width and whether the sidebar is collapsed are kept in `localStorage`, so they last across page changes, reloads, and reopening the portal in the same browser. Collapsing keeps the stored width.
 
+Sidebar groups:
+
+- An entry that holds other entries, such as Task Administration, is a `<button>` with `aria-expanded`, because it expands and collapses its list rather than going anywhere. Each entry in its list is a real link, indented beneath it. The list expands and collapses with the shared animation.
+- Whether a group is expanded is kept in `localStorage`, as the sidebar width is. A group is always expanded while one of its pages is open, with that page marked, and opening one of its pages keeps it expanded afterwards.
+- The collapsed sidebar strip does not show a group's list.
+
 The sign-in screen is the one page without the frame. It shows the logo, the username and password fields, and the Login and Reset buttons, grouped in the centre of the window.
 
 The portal is laid out for a desktop browser window. A narrow-window layout is not part of it yet.
@@ -44,13 +50,26 @@ The portal is laid out for a desktop browser window. A narrow-window layout is n
 - An unknown portal page address shows a not-found message in the content pane, with the frame around it.
 - A new page is a new route under the layout in `policy/portal/src/routes.tsx` and an entry in the sidebar in `policy/portal/src/components/Sidebar.tsx`.
 
+## Editing pages
+
+A page that edits something, such as a task page, follows these rules:
+
+- Changes are made on screen first, and nothing is written until the parent saves. Save is a button at the right-hand end of the context bar. Ctrl+S anywhere on the page saves too, and never opens the browser's save dialog. One save sends every unsaved change on the page at once.
+- Save is disabled while nothing has changed, and Ctrl+S then does nothing. While there are unsaved changes, an Unsaved changes marker sits beside Save in the context bar.
+- A changed field or row is marked until it is saved. The status bar confirms a save, or refuses it and lists each reason, such as each error a policy check found.
+- Fields are labelled in words, such as Pass Cooldown. Each label's title is the policy file's field name, such as `pass_cooldown`, which is what the errors name.
+- A choice of any number of options, such as a task's client groups, is a pull-down list. Closed, it shows the chosen options separated by commas. Open, the chosen options are highlighted, and one click, Space, or Enter turns an option on or off. It opens and closes with the shared animation.
+- With unsaved changes, following a sidebar link, Back, and Forward ask whether to leave and lose the changes, in the portal's own dialog with Stay as the default. A choice that only changes the query string, such as a filter, keeps the changes and does not ask. Reload and closing the tab get the browser's own question.
+- An action that cannot be taken back, such as Retire, asks first in the same dialog, with the choice that changes nothing as the default. An action that is done at once, as Retire is, is not part of the next save.
+- A save that needs a decision first, such as a warning that it does not ask a group to do a task again, asks in the same dialog before anything is written.
+
 ## Sessions and data
 
 The portal uses the parent session from S007.1: a `Secure`, `HttpOnly`, `SameSite=Lax` cookie, an idle limit, and a lifetime.
 
-- **The shell carries no household data.** `index.html`, the scripts, the stylesheets, and the images are the same for everyone and are served without a session. Attempts, usage, the household's group names, and the signed-in username come only from JSON endpoints under `/parent/api/`.
+- **The shell carries no household data.** `index.html`, the scripts, the stylesheets, and the images are the same for everyone and are served without a session. Attempts, usage, tasks, the household's group names, and the signed-in username come only from JSON endpoints under `/parent/api/`. Spelling recordings the task pages play also come from under `/parent/api/`, and need a session in the same way.
 - **Data endpoints answer 401 or 403 and never redirect.** With no valid session they answer 401 with no data. With no parent account they answer 403 with `"closed": true` and no data. Over plain HTTP they are refused, as every parent address is. The browser does not follow these answers anywhere. Only the portal's own code reacts to them.
-- **State-changing requests are JSON POSTs.** Sign-in, sign-out, and the parent check are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
+- **State-changing requests are JSON POSTs.** Sign-in, sign-out, the parent check, a task save, and Retire are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
 - **Sign-out ends the session on the service.** It deletes that session's row, so the key cannot be used again in any tab.
 - **The portal makes no background requests.** A request happens only when the parent acts: opening a page, changing a choice, or pressing a button. There is no polling or timed refresh, so a tab left open does not extend the idle limit.
 

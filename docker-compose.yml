@@ -20,11 +20,16 @@
 # with a cut and the proxy stops that transfer. Any other answer leaves it
 # running.
 # POLICY_PORT publishes the policy pages over HTTPS: the parent portal at
-# /parent/, with its usage report and attempt review, and the task pages.
-# Accounts are added with `python -m policy.accounts` inside the decisions
-# container. The decision
-# API stays on plain HTTP inside the compose network. It does not show the
-# report and does not edit policy.
+# /parent/, with its usage report, attempt review, and task pages, and the
+# child's task pages. Accounts are added with `python -m policy.accounts`
+# inside the decisions container. The decision API stays on plain HTTP inside
+# the compose network. It does not show the report and does not edit policy.
+# The parent portal's task pages do edit it: a save rewrites a task in the
+# config directory, moves spelling recordings in the data directory, commits
+# to the config history, and reloads every service. So the decisions service
+# mounts those two directories writable, and no other service does. A save
+# reloads the observations and autoconfig services through Unix sockets in
+# the control volume, which only these three containers mount.
 # The autoconfig service serves the proxy auto-config file browsers fetch,
 # http://<this machine>:PROXY_CONFIG_PORT/proxy.pac, also as /wpad.dat.
 
@@ -50,14 +55,20 @@ services:
       # For the configuration URL in the policy summary.
       PROXY_CONFIG_PORT: ${PROXY_CONFIG_PORT:-8088}
       DAYWARDEN_DATA_DIR: /var/lib/daywarden/data
+      OBSERVATIONS_SOCKET: /run/daywarden/observations.sock
+      AUTOCONFIG_SOCKET: /run/daywarden/autoconfig.sock
     ports:
       # Clients open https://<this machine>:POLICY_PORT/parent/. 8090 inside
       # the container stays plain HTTP for the proxy and the health check.
       # 8443 is where the HTTPS listener is bound.
       - "${POLICY_PORT:-8084}:8443"
     volumes:
-      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
+      # Writable: the parent portal saves tasks here and commits them to the
+      # config history. What it writes keeps the owner of what it replaces,
+      # and git runs as the owner of .git, so files stay the host user's.
+      - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden
       - policy-data:/var/lib/daywarden
+      - control:/run/daywarden
       - ${CA_VOLUME_PATH}:/var/lib/daywarden/ca
       # Used for the household timezone when policy.yaml does not set one.
       - /etc/localtime:/etc/host-localtime:ro
@@ -65,14 +76,16 @@ services:
       # container's own hostname is not a name clients can open.
       - /etc/hostname:/etc/host-hostname:ro
       # Parent-managed task files, such as spelling recordings under
-      # spelling/current and spelling/revision. Read on each new quiz run.
-      # make up creates the directory. Docker would create it owned by root.
-      # It sits under the writable policy-data mount: a read-only parent
-      # mount would stop Docker creating the nested mount point.
+      # spelling/current, spelling/revision, and spelling/attic. Read on each
+      # new quiz run. Writable: the parent portal moves and retires words
+      # here, keeping each file's owner. make up creates the directory.
+      # Docker would create it owned by root. It sits under the writable
+      # policy-data mount: a read-only parent mount would stop Docker
+      # creating the nested mount point.
       - type: bind
         source: ${DAYWARDEN_DATA_DIR:-${HOME}/daywarden}
         target: /var/lib/daywarden/data
-        read_only: true
+        read_only: false
         bind:
           create_host_path: false
     healthcheck:
@@ -102,10 +115,12 @@ services:
       POLICY_DB: /var/lib/daywarden/policy.sqlite3
       OBSERVATION_LOG: /tmp/observations.jsonl
       OBSERVATION_PORT: "8091"
+      OBSERVATIONS_SOCKET: /run/daywarden/observations.sock
       MACHINE_LOCALTIME: /etc/host-localtime
     volumes:
       - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
       - policy-data:/var/lib/daywarden
+      - control:/run/daywarden
       # Used when policy.yaml does not set a timezone, so a report lands on
       # the same local day the decisions service uses.
       - /etc/localtime:/etc/host-localtime:ro
@@ -199,8 +214,10 @@ services:
       PARENT_NAMES: ${PARENT_NAMES}
       MACHINE_HOSTNAME: /etc/host-hostname
       RESOLV_CONF: /etc/host-resolver/${RESOLV_CONF_NAME:-resolv.conf}
+      AUTOCONFIG_SOCKET: /run/daywarden/autoconfig.sock
     volumes:
       - ${DAYWARDEN_CONFIG_DIR:-./config}:/etc/daywarden:ro
+      - control:/run/daywarden
       - /etc/hostname:/etc/host-hostname:ro
       # The directory that holds the host's resolv.conf, read on every fetch
       # for the search domains. NetworkManager and systemd-resolved replace
@@ -226,3 +243,10 @@ services:
 
 volumes:
   policy-data:
+  # The reload sockets of the observations and autoconfig services. Memory
+  # only, and open to any user, because autoconfig runs as nobody.
+  control:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: mode=1777

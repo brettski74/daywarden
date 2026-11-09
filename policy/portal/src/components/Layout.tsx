@@ -4,15 +4,20 @@ import { api, pageOf } from "../api";
 import { SlotsContext } from "../slots";
 import { Sidebar } from "./Sidebar";
 
-type Session = { username: string };
+type Frame = { username: string; tasks: string[] };
 
-export async function layoutLoader({ request }: LoaderFunctionArgs): Promise<Session> {
-  return api<Session>("/session", { page: pageOf(request), signal: request.signal });
+export async function layoutLoader({ request }: LoaderFunctionArgs): Promise<Frame> {
+  const page = pageOf(request);
+  const [session, listed] = await Promise.all([
+    api<{ username: string }>("/session", { page, signal: request.signal }),
+    api<{ tasks: string[] }>("/tasks", { page, signal: request.signal }),
+  ]);
+  return { username: session.username, tasks: listed.tasks };
 }
 
 /** Every signed-in page: the sidebar, then the context bar, content pane, and status bar. */
 export function Layout() {
-  const { username } = useLoaderData() as Session;
+  const { username, tasks } = useLoaderData() as Frame;
   const [context, setContext] = useState<HTMLElement | null>(null);
   const [status, setStatus] = useState<HTMLElement | null>(null);
   const content = useRef<HTMLElement>(null);
@@ -20,7 +25,7 @@ export function Layout() {
   useEffect(() => content.current?.scrollTo?.(0, 0), [pathname]);
   return (
     <div className="portal">
-      <Sidebar username={username} />
+      <Sidebar username={username} tasks={tasks} />
       <div className="main">
         <header className="context-bar" ref={setContext} />
         <main className="content" ref={content}>

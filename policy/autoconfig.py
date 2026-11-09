@@ -16,9 +16,10 @@ physical device under it. Loopback, Docker and libvirt bridges, ``veth``,
 is an interface that is down or has no address.
 
 The policy is loaded from ``POLICY_FILE`` at start for its
-``proxy_configuration`` section and ``hostname``. ``dw reload`` reloads it
-through a Unix socket inside this container, which no request to the HTTP
-port can reach, including one forwarded by a reverse proxy on the server.
+``proxy_configuration`` section and ``hostname``. ``dw reload`` and a
+parent portal save reload it through the Unix socket at ``AUTOCONFIG_SOCKET``,
+which no request to the HTTP port can reach, including one forwarded by a
+reverse proxy on the server. See ``policy.control``.
 
 Run with: python -m policy.autoconfig [--url]
 ``--url`` asks the running service for the configuration URL and prints it.
@@ -29,7 +30,6 @@ from __future__ import annotations
 import argparse
 import errno
 import ipaddress
-import json
 import os
 import re
 import signal
@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from policy import control as control_socket
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy.pac import CONTENT_TYPE, DirectEntries, Server, host_name, render, server_names
@@ -50,7 +51,7 @@ from policy.selection import machine_hostname, proxy_config_port, proxy_port
 
 PATHS = frozenset({"/proxy.pac", "/wpad.dat"})
 SYS_NET = Path("/sys/class/net")
-CONTROL_SOCKET = Path("/tmp/daywarden-autoconfig.sock")
+CONTROL_SOCKET = Path(os.environ.get("AUTOCONFIG_SOCKET", "") or "/tmp/daywarden-autoconfig.sock")
 IFF_UP = 0x1
 # Docker and libvirt name their bridges so. They are virtual anyway.
 _NOT_REAL = re.compile(r"docker\d+|br-[0-9a-f]{12}|virbr\d+(-nic)?|veth.*|lo")
@@ -256,27 +257,13 @@ def listen(holder: Holder, source: Source, host: str = "", port: int | None = No
 
 
 def control(holder: Holder, source: Source, policy_file: Path, path: Path = CONTROL_SOCKET) -> socketserver.UnixStreamServer:
-    """Answer ``reload`` and ``url`` on a Unix socket at ``path``. Not started.
+    """Answer ``reload`` and ``url`` on a Unix socket at ``path``. Not started."""
 
-    The socket is inside this container, so only ``docker compose exec`` reaches it.
-    """
+    def url() -> dict:
+        with holder.lock:
+            return {"url": source.url(holder.policy)}
 
-    class Handler(socketserver.StreamRequestHandler):
-        def handle(self) -> None:
-            command = self.rfile.readline(64).decode("ascii", "replace").strip()
-            if command == "reload":
-                answer = _reload(holder, policy_file)
-            elif command == "url":
-                with holder.lock:
-                    answer = {"url": source.url(holder.policy)}
-            else:
-                answer = {"error": f"unknown command {command!r}"}
-            self.wfile.write(json.dumps(answer).encode() + b"\n")
-
-    path.unlink(missing_ok=True)
-    server = socketserver.ThreadingUnixStreamServer(str(path), Handler)
-    server.daemon_threads = True
-    return server
+    return control_socket.serve(path, {"reload": lambda: _reload(holder, policy_file), "url": url})
 
 
 def _reload(holder: Holder, policy_file: Path) -> dict:
@@ -293,15 +280,7 @@ def _reload(holder: Holder, policy_file: Path) -> dict:
 
 def ask(command: str, path: Path = CONTROL_SOCKET, timeout: float = 60) -> dict:
     """Send one command to the running service and return its answer."""
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(timeout)
-        client.connect(str(path))
-        client.sendall(command.encode("ascii") + b"\n")
-        with client.makefile("rb") as answer:
-            line = answer.readline()
-    if not line:
-        raise OSError("the auto-configuration service closed the connection without an answer")
-    return json.loads(line)
+    return control_socket.ask(command, path, timeout, service="auto-configuration service")
 
 
 def _load_policy(path: Path) -> Policy | None:

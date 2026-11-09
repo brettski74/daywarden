@@ -5,6 +5,7 @@ export const DEFAULT_REM = 15;
 export const KEY_STEP = 16;
 export const WIDTH_KEY = "daywarden.portal.sidebarWidth";
 export const COLLAPSED_KEY = "daywarden.portal.sidebarCollapsed";
+export const TASKS_KEY = "daywarden.portal.tasksExpanded";
 
 /** Return the narrowest and widest the sidebar may be in this window, in pixels. */
 export function widthLimits(windowWidth: number, remPx: number): { min: number; max: number } {
@@ -31,6 +32,30 @@ export function loadSidebar(storage: Storage): StoredSidebar {
 function rootFontPx(): number {
   const size = parseFloat(getComputedStyle(document.documentElement).fontSize);
   return Number.isFinite(size) && size > 0 ? size : 16;
+}
+
+/**
+ * Whether the Task Administration list is expanded, kept in localStorage.
+ *
+ * It is always expanded while a task page is open, and opening one keeps it
+ * expanded afterwards.
+ */
+export function useTaskList(onTaskPage: boolean) {
+  const [stored, setStored] = useState(() => localStorage.getItem(TASKS_KEY) === "true");
+
+  useEffect(() => {
+    if (onTaskPage && !stored) {
+      setStored(true);
+      save(TASKS_KEY, "true");
+    }
+  }, [onTaskPage, stored]);
+
+  const setExpanded = useCallback((value: boolean) => {
+    setStored(value);
+    save(TASKS_KEY, String(value));
+  }, []);
+
+  return { expanded: stored || onTaskPage, setExpanded };
 }
 
 function save(key: string, value: string): void {

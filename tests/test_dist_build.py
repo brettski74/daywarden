@@ -35,7 +35,7 @@ def test_the_installed_proxy_mounts_no_source_and_keeps_its_ca_and_config(compos
 def test_the_installed_data_directory_defaults_under_daywarden_data(compose):
     data = [volume for volume in compose["services"]["decisions"]["volumes"] if isinstance(volume, dict)]
     assert [volume["source"] for volume in data] == ["${DAYWARDEN_DATA_DIR:-${HOME}/daywarden/data}"]
-    assert data[0]["read_only"] is True
+    assert data[0]["read_only"] is False
 
 
 def test_the_development_compose_file_is_left_for_make_up():
