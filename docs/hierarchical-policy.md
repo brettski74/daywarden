@@ -292,7 +292,7 @@ A task with `type: arithmetic` is a timed quiz. Its `body` is checked when the f
 
 | Field | Required | Value |
 | --- | --- | --- |
-| `operation` | Yes | `addition`. Subtraction, multiplication, and division arrive with S004.3 to S004.5. |
+| `operation` | Yes | `addition`. Subtraction, multiplication, and division arrive with S026. |
 | `max_timeout` | Yes | The time for the first question. A duration greater than zero. |
 | `min_timeout` | Yes | The time once `correct_answers_required - 1` answers are right. Greater than zero and no longer than `max_timeout`. |
 | `correct_answers_required` | Yes | The number of right answers that pass the attempt. 1 or more. |
@@ -425,7 +425,7 @@ tasks:
 
 The fox sentence gets the default 90 seconds and the dry sentence 2 minutes. With two sentences and no `correct_answers_required`, he needs 2 points to pass. The default is worked out in whole numbers: 10 sentences need 7 points, 5 need 4, 3 need 3, and 1 needs 1.
 
-Part names are the parent's choice, such as `noun`, `proper noun`, or `Doing words`. Each is a row of his table, shown as written and in the order written. A name is at most 20 characters, and two names in one sentence may not differ only in case, such as `Noun` and `noun`. Each sentence lists only the parts it asks about, so one sentence can ask for nouns and verbs and the next for adjectives and adverbs. Words left out of the table belong in no row, and he should leave them out too. A part may be `[]`, which shows a row where nothing belongs. A sentence must still list at least one word somewhere.
+Part names are the parent's choice, such as `noun`, `proper noun`, or `Doing words`. Each is a row of his table, shown as written and in the order written. Saving a sentence from the parent portal's task page tidies its names: a recognized part of speech, one of noun, proper noun, pronoun, verb, participle, gerund, infinitive, adjective, adverb, article, determiner, preposition, conjunction, or interjection, or one of those with `s` added, is written lower case and singular, and any other name is lower-cased. Two rows that then share a name become one. The portal rewrites only the sentences it changed, and any name is still accepted when the file is written by hand. A name is at most 20 characters, and two names in one sentence may not differ only in case, such as `Noun` and `noun`. Each sentence lists only the parts it asks about, so one sentence can ask for nouns and verbs and the next for adjectives and adverbs. Words left out of the table belong in no row, and he should leave them out too. A part may be `[]`, which shows a row where nothing belongs. A sentence must still list at least one word somewhere.
 
 A word is a run of letters and digits. An apostrophe (`'` or `’`) or a hyphen with a letter or digit on both sides joins the runs either side into one word, so `don't`, `o'clock`, `well-known`, and `café` are each one word. Spaces, commas, full stops, quotation marks, dashes, and an apostrophe at the start or end of a word, as in `the dogs' bowls`, are punctuation. Punctuation is shown in the sentence as written but is never sorted. Words are compared without regard to case, and `’` is the same as `'`, so `Dry` at the start of a sentence and `dry` later on are two occurrences of the same word, and `don't` in the table matches `don’t` in the sentence.
 

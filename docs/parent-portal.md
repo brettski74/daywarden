@@ -6,6 +6,7 @@ The parent portal is the parent's side of Daywarden: one React Router app, serve
 
 - The portal is the parent side only. It holds the sign-in screen and every page a parent uses: the attempt review, the usage report, and later the editors and analytics.
 - The child's task pages under `/tasks/...` and `/quiz` are not part of the portal. They keep their own simple layout with large fonts and large controls. The portal's components, stylesheets, palette, layout, and build never apply to them, and portal work does not change their layout or design.
+- The one piece of code the portal and the child's pages share is `policy/static/word_sort.js`, the drag-and-drop that sorts words into a table, used by the parts of speech editor and the child's parts of speech page. It is plain JavaScript outside the portal. The portal imports it, with `word_sort.d.ts` beside it, and the child's page inlines it into its own script. It marks elements only with `data-` attributes, and each page styles those with its own palette, so a change to it is checked on both pages.
 
 ## Layout
 
@@ -120,6 +121,8 @@ After sign-in, the parent always lands on a portal page with the full frame. The
 - Icons come from [Lucide](https://lucide.dev/) through `lucide-react`, which bundles them into the build. Another icon source is used only when Lucide has nothing suitable, and the change says why.
 - A button with only an icon has an `aria-label` and a `title`, such as "Collapse sidebar", "Expand sidebar", and "Sign out".
 - Every control works from the keyboard. Buttons are reached with Tab and work with Enter and Space. The sidebar's resize handle is a focusable separator that the left and right arrow keys move.
+- Anything that can be dragged on a parent page has a keyboard way to do the same thing, such as the menu Enter opens on a word in the parts of speech editor.
+- A page's own keys use Alt with a letter, as Alt+N adds a sentence and Alt+R resets a field in the recording dialog. Browsers keep Ctrl+N, Ctrl+T, and Ctrl+W for themselves, and Chrome never passes Ctrl+N to the page. Ctrl+S is the one Ctrl key the portal takes, for Save.
 
 ## Self-contained
 
@@ -128,7 +131,7 @@ The portal loads no fonts, scripts, images, or icons from outside the parent por
 ## Build
 
 - The portal source is `policy/portal/`: React, React Router in data mode, TypeScript, and Vite. Every package version in `package.json` is pinned exactly, and `package-lock.json` is committed.
-- The decisions image is built in two stages. A Node stage runs `npm ci` and `npm run build`, and the Python stage copies in only `policy/portal/dist`. The image and the `make dist` package need no Node at run time, and the target machine never builds an image. The `lib/policy/` copy that `make dist` makes for `cut-clips` leaves the portal out.
+- The decisions image is built in two stages. A Node stage runs `npm ci` and `npm run build`, with `policy/static/word_sort.js` copied in beside the portal as it sits in the repository, and the Python stage copies in only `policy/portal/dist`. `npm run dev` is allowed to serve that one directory outside the portal. The image and the `make dist` package need no Node at run time, and the target machine never builds an image. The `lib/policy/` copy that `make dist` makes for `cut-clips` leaves the portal out.
 - `node_modules/` and `policy/portal/dist/` are not committed.
 - The portal's tests use Vitest and React Testing Library in jsdom. `make test` installs the npm packages when Node is there, then runs those tests and the type check with the Python tests. Without Node they are skipped. The visual layout, the colours, the sticky headers, and the scrolling are checked in a browser, not in jsdom.
 - `npm run dev` in `policy/portal` serves the portal from Vite with its data requests sent to the HTTPS parent port of a running stack.

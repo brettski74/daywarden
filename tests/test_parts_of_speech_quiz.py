@@ -222,6 +222,86 @@ def test_try_a_different_task_sits_at_the_top_right_of_the_start_screen(tmp_path
     assert box["window"] - box["right"] < 40, box
 
 
+_DRAG = """\
+<script>
+const replies = REPLIES;
+window.fetch = async (url) => {
+  const reply = replies[new URL(url, location.href).searchParams.get("do")].shift();
+  return { redirected: false, status: 200, ok: true, headers: { get: () => "application/json" }, json: async () => reply };
+};
+const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+const middle = (element) => {
+  const box = element.getBoundingClientRect();
+  return [box.left + box.width / 2, box.top + box.height / 2];
+};
+const fire = (target, type, [x, y]) =>
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 1 }));
+addEventListener("load", async () => {
+  await wait(50);
+  document.getElementById("start-button").click();
+  await wait(50);
+  const seen = {};
+  const fox = document.querySelector('#sentence [data-word="3"]');
+  const noun = document.querySelector('#rows tr[data-part="noun"]');
+  fire(fox, "pointerdown", middle(fox));
+  fire(document, "pointermove", middle(noun.querySelector("td")));
+  seen.held = fox.hasAttribute("data-held");
+  seen.over = noun.hasAttribute("data-over");
+  seen.ghost = document.querySelector("[data-ghost]").className;
+  fire(document, "pointerup", middle(noun.querySelector("td")));
+  seen.placed = noun.querySelector("td").textContent;
+  seen.can = fox.classList.contains("can");
+  const placed = noun.querySelector(".placed");
+  fire(placed, "pointerdown", middle(placed));
+  fire(document, "pointermove", middle(document.querySelector("#ask .title")));
+  fire(document, "pointerup", middle(document.querySelector("#ask .title")));
+  seen.flying = document.querySelector("[data-ghost]").hasAttribute("data-flying");
+  seen.unsorted = noun.querySelector("td").textContent;
+  await wait(1000);
+  seen.landed = !document.querySelector("[data-ghost]") && fox.classList.contains("can") && !fox.hasAttribute("data-held");
+  document.getElementById("out").textContent = JSON.stringify(seen);
+});
+</script>
+"""
+
+
+@pytest.mark.skipif(CHROMIUM is None, reason="needs Chromium to lay out the page")
+def test_words_drag_into_a_row_and_back_out_with_the_shared_drag_code(tmp_path):
+    quiz, question = _fox_first(tmp_path)
+    body = quiz.open(START).body
+    _status, visit = quiz.post(START, "visit", {})
+    script = _DRAG.replace("REPLIES", json.dumps({"visit": [visit], "question": [question]}))
+    page = tmp_path / "drag.html"
+    page.write_text(body.replace("<head>", "<head>" + script).replace("</body>", '<pre id="out"></pre></body>'), encoding="utf-8")
+    run = subprocess.run(
+        [
+            CHROMIUM,
+            "--headless",
+            "--disable-gpu",
+            f"--user-data-dir={tmp_path / 'chromium'}",
+            "--window-size=1280,900",
+            "--virtual-time-budget=5000",
+            "--dump-dom",
+            page.as_uri(),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    seen = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', run.stdout, re.S).group(1)))
+    assert seen == {
+        "held": True,
+        "over": True,
+        "ghost": "ghost word",
+        "placed": "fox",
+        "can": False,
+        "flying": True,
+        "unsorted": "",
+        "landed": True,
+    }
+
+
 def test_the_question_has_words_punctuation_and_parts_but_never_the_answer(tmp_path):
     quiz, question = _fox_first(tmp_path)
     assert [piece["text"] for piece in question["segments"]] == [

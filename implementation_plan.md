@@ -261,9 +261,7 @@ Stories marked Later are kept so the work is not forgotten. They are not part of
 | [S004](stories/S004-arithmetic.md) | Arithmetic quizzes | 13 | Initial |
 | [S004.1](stories/S004.1-arithmetic-shell.md) | Arithmetic session shell | 5 | Initial |
 | [S004.2](stories/S004.2-addition.md) | Addition | 2 | Initial |
-| [S004.3](stories/S004.3-multiplication.md) | Multiplication | 2 | Initial |
-| [S004.4](stories/S004.4-subtraction.md) | Subtraction | 2 | Initial |
-| [S004.5](stories/S004.5-division.md) | Division | 2 | Initial |
+| [S026](stories/S026-arithmetic-administration.md) | Arithmetic administration, subtraction, multiplication, and division | 8 | Later |
 | [S005](stories/S005-spelling.md) | Spelling quiz | 21 | Initial, except S005.4 |
 | [S005.1](stories/S005.1-spelling-content.md) | Word pools, targets, and audio | 3 | Initial |
 | [S005.2](stories/S005.2-spelling-quiz.md) | Spelling quiz flow | 8 | Initial |

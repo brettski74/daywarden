@@ -35,11 +35,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from policy import clips, spelling
+from policy import clips, parts_of_speech_admin, spelling
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, task_files
 from policy.history import History, HistoryError, stamp
 from policy.owned import make_directory, own_like
+from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.recordings import GONE, Recordings
 from policy.task_edit import EditError, WrittenTask, name_list, read_task, rewrite_task, scalar
 from policy.tasks import PARENT_CHECK, AttemptStore, stored_passes
@@ -136,6 +137,8 @@ class TaskAdmin:
         }
         if kind == spelling.SPELLING:
             body["spelling"] = self._spelling_page(written)
+        elif kind == PARTS_OF_SPEECH:
+            body["parts_of_speech"] = parts_of_speech_admin.page(written)
         return Answer(200, body)
 
     def save(self, name: str, request: Mapping, username: str) -> Answer:
@@ -483,11 +486,16 @@ def _changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
             else:
                 changes["group"] = None
                 changes["groups"] = name_list(groups)
+    body: dict[str, object] = {}
     if written.fields.get("type") == spelling.SPELLING:
-        body: dict[str, object] = {}
         _diff(body, written.body, request.get("settings"), SPELLING_SETTINGS)
-        if body:
-            changes["body"] = body
+    elif written.fields.get("type") == PARTS_OF_SPEECH:
+        _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
+        sentences = parts_of_speech_admin.sentences_edit(written, request.get("sentences"))
+        if sentences is not None:
+            body["sentences"] = sentences
+    if body:
+        changes["body"] = body
     return changes
 
 

@@ -456,6 +456,11 @@ def compose(text: str, source: Path) -> yaml.Node | None:
     return _compose(text, source)
 
 
+def node_data(node: yaml.Node, where: str):
+    """Return the value a node holds, as the loader reads a task body. Raises ``ConfigError``."""
+    return _data(node, where)
+
+
 def _load_file(path: Path, canonical: Path, seen: set[Path], build: _Build) -> None:
     if canonical in seen:
         return

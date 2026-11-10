@@ -12,6 +12,13 @@ loses its line. A new field goes after the last field of its mapping, at
 the same indent. A flow mapping, such as ``body: { timeout: 30s }``, is
 written again as a flow mapping, with its untouched entries copied as they
 were.
+
+A list, such as a parts of speech task's ``sentences``, is changed with a
+``ListEdit``. Each item kept unchanged keeps its text exactly. A changed
+item is written again in its place as a block entry, a removed item loses
+its lines, and a new item goes after the last one. A list written in flow
+style, or inside a flow mapping, is written again as a block list as a
+whole, and a flow body around it becomes a block mapping.
 """
 
 from __future__ import annotations
@@ -19,12 +26,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from policy.hierarchy import ConfigError, compose
+from policy.hierarchy import ConfigError, compose, node_data
 
 _PLAIN = re.compile(r"-?[A-Za-z0-9][A-Za-z0-9._+-]*")
 _SIMPLE_STYLES = (None, "", "'", '"')
@@ -39,12 +46,36 @@ class WrittenTask:
     """A task as its file writes it: each field's text, the client groups, and the body's scalar fields.
 
     ``group_key`` is ``group`` or ``groups``, whichever the file uses.
+    ``body_data`` is the body's value as the loader reads it, or empty when
+    it cannot be read.
     """
 
     fields: dict[str, str]
     groups: tuple[str, ...]
     body: dict[str, str]
     group_key: str | None = None
+    body_data: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ListItem:
+    """One item of a list being written again.
+
+    ``origin`` is its place in the list as the file writes it, or None for a
+    new item. ``data`` is what to write when the item is written again: a
+    mapping of scalars, lists of scalars, and mappings.
+    """
+
+    origin: int | None
+    data: object
+    changed: bool
+
+
+@dataclass(frozen=True)
+class ListEdit:
+    """A list's new items in order. Items kept from the file keep their order."""
+
+    items: tuple[ListItem, ...]
 
 
 def scalar(text: str, *, name: bool = False) -> str:
@@ -76,10 +107,15 @@ def read_task(text: str, source: Path, name: str) -> WrittenTask:
     groups: tuple[str, ...] = ()
     group_key = None
     body: dict[str, str] = {}
+    body_data: dict[str, object] = {}
     for key, _key_node, value in _entries(node):
         if key == "body":
             if isinstance(value, yaml.MappingNode):
                 body = {inner: _shown(text, item) for inner, _node, item in _entries(value)}
+                try:
+                    body_data = node_data(value, "body")
+                except ConfigError:
+                    body_data = {}
         elif key == "group" and isinstance(value, yaml.ScalarNode):
             groups, group_key = (value.value.strip(),), key
         elif key == "groups" and isinstance(value, yaml.SequenceNode):
@@ -87,14 +123,15 @@ def read_task(text: str, source: Path, name: str) -> WrittenTask:
             group_key = key
         else:
             fields[key] = _shown(text, value)
-    return WrittenTask(fields, groups, body, group_key)
+    return WrittenTask(fields, groups, body, group_key, body_data)
 
 
 def rewrite_task(text: str, source: Path, name: str, changes: Mapping[str, object]) -> str:
     """Return ``text`` with the task ``name`` changed.
 
     ``changes`` maps a field to its new YAML text, or to None to remove it.
-    ``body`` maps to a mapping of the body's own changes in the same form.
+    ``body`` maps to a mapping of the body's own changes in the same form,
+    where a list may be changed with a ``ListEdit``.
     """
     node = _task_node(text, source, name)
     if not isinstance(node, yaml.MappingNode):
@@ -189,9 +226,19 @@ def _edit_mapping(text: str, node: yaml.MappingNode, changes: Mapping[str, objec
             added.append(_block_entry(key, change, indent, step))
             continue
         key_node, value = present[key]
+        if isinstance(change, ListEdit):
+            if isinstance(value, yaml.SequenceNode) and not value.flow_style and value.value:
+                edits += _edit_sequence(text, value, change, step, depth + 1)
+            else:
+                start, end = _entry_span(text, key_node, value)
+                edits.append((start, end, _list_entry(key, change, indent, step), depth))
+            continue
         if isinstance(change, Mapping):
             if isinstance(value, yaml.MappingNode):
-                if not value.flow_style and _empties(value, change):
+                if value.flow_style and _holds_list_edit(change):
+                    start, end = _entry_span(text, key_node, value)
+                    edits.append((start, end, _block_from_flow(text, key, value, change, indent, step), depth))
+                elif not value.flow_style and _empties(value, change):
                     edits.append((*_entry_span(text, key_node, value), "", depth))
                 else:
                     edits += _edit_mapping(text, value, change, step, depth + 1)
@@ -245,14 +292,144 @@ def _entry_span(text: str, key_node: yaml.Node, value: yaml.Node) -> tuple[int, 
 
 
 def _block_entry(key: str, change: object, indent: str, step: int) -> str:
+    if isinstance(change, ListEdit):
+        return _list_entry(key, change, indent, step)
     if not isinstance(change, Mapping):
         return f"{indent}{key}: {change}\n"
     inner = indent + " " * step
-    lines = "".join(f"{inner}{field}: {value}\n" for field, value in change.items() if value is not None)
+    lines = "".join(_block_entry(field, value, inner, step) for field, value in change.items() if value is not None)
     return f"{indent}{key}:\n{lines}"
 
 
+def _holds_list_edit(changes: Mapping[str, object]) -> bool:
+    return any(isinstance(value, ListEdit) for value in changes.values())
+
+
+def _edit_sequence(text: str, node: yaml.SequenceNode, edit: ListEdit, step: int, depth: int) -> list[Edit]:
+    """Return the edits that make a block list hold ``edit``'s items, keeping each unchanged item's text."""
+    origins = [item.origin for item in edit.items if item.origin is not None]
+    if origins != sorted(set(origins)) or any(not 0 <= origin < len(node.value) for origin in origins):
+        raise EditError("the list's items must keep their order")
+    by_origin = {item.origin: item for item in edit.items if item.origin is not None}
+    edits: list[Edit] = []
+    indent = ""
+    for index, value in enumerate(node.value):
+        dash = _dash(text, value)
+        start = _line_start(text, dash)
+        indent = text[start:dash]
+        end = _line_end(text, _last_end(text, value))
+        item = by_origin.get(index)
+        if item is None:
+            edits.append((start, end, "", depth))
+        elif item.changed:
+            edits.append((start, end, _list_item(item.data, indent, step), depth))
+    added = "".join(_list_item(item.data, indent, step) for item in edit.items if item.origin is None)
+    if added:
+        at = _line_end(text, _last_end(text, node.value[-1]))
+        prefix = "" if at == 0 or text[at - 1] == "\n" else "\n"
+        edits.append((at, at, prefix + added, depth))
+    return edits
+
+
+def _dash(text: str, item: yaml.Node) -> int:
+    """Return where the ``-`` of a block list item is, which may be on a line of its own."""
+    at = item.start_mark.index - 1
+    while at >= 0 and text[at] in " \t\r\n":
+        at -= 1
+    if at < 0 or text[at] != "-" or text[_line_start(text, at) : at].strip():
+        raise EditError(f"line {item.start_mark.line + 1} is laid out in a way the parent pages cannot edit; edit it by hand")
+    return at
+
+
+def _list_entry(key: str, edit: ListEdit, indent: str, step: int) -> str:
+    """Return a whole list as a block entry, every item written from its data."""
+    if not edit.items:
+        return f"{indent}{key}: []\n"
+    inner = indent + " " * step
+    return f"{indent}{key}:\n" + "".join(_list_item(item.data, inner, step) for item in edit.items)
+
+
+def _list_item(data: object, indent: str, step: int) -> str:
+    """Return one block list item, its dash at ``indent``."""
+    if not isinstance(data, Mapping) or not data:
+        return f"{indent}- {_value(data)}\n"
+    inner = indent + "  "
+    lines = "".join(_data_entry(key, value, inner, step) for key, value in data.items())
+    return indent + "- " + lines[len(inner) :]
+
+
+def _data_entry(key: object, value: object, indent: str, step: int) -> str:
+    if isinstance(value, Mapping) and value:
+        inner = indent + " " * step
+        return f"{indent}{_key(key)}:\n" + "".join(_data_entry(name, item, inner, step) for name, item in value.items())
+    return f"{indent}{_key(key)}: {_value(value)}\n"
+
+
+def _value(value: object) -> str:
+    """Return a value as flow YAML that reads back as the same value, quoting text only where it must."""
+    if isinstance(value, Mapping):
+        return "{ " + ", ".join(f"{_key(key)}: {_value(item)}" for key, item in value.items()) + " }" if value else "{}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_flow_item(item) for item in value) + "]"
+    if isinstance(value, str):
+        return value if _reads_back(f"k: {value}", {"k": value}) else json.dumps(value, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _flow_item(value: object) -> str:
+    if isinstance(value, str):
+        return value if _reads_back(f"[{value}]", [value]) else json.dumps(value, ensure_ascii=False)
+    return _value(value)
+
+
+def _key(key: object) -> str:
+    if isinstance(key, str) and _reads_back(f"{key}: 0", {key: 0}):
+        return key
+    return json.dumps(key if isinstance(key, str) else str(key), ensure_ascii=False)
+
+
+def _reads_back(written: str, expected: object) -> bool:
+    if "\n" in written or "\r" in written or written != written.strip():
+        return False
+    try:
+        return yaml.safe_load(written) == expected
+    except yaml.YAMLError:
+        return False
+
+
+def _block_from_flow(text: str, key: str, node: yaml.MappingNode, changes: Mapping[str, object], indent: str, step: int) -> str:
+    """Return a flow mapping as a block entry with the changes made, copying each untouched scalar as written."""
+    inner = indent + " " * step
+    lines: list[str] = []
+    seen: set[str] = set()
+    for name, key_node, value in _entries(node):
+        seen.add(name)
+        change = changes.get(name, _KEEP)
+        written = text[key_node.start_mark.index : key_node.end_mark.index]
+        if change is _KEEP:
+            if isinstance(value, yaml.ScalarNode):
+                lines.append(f"{inner}{written}: {text[value.start_mark.index : value.end_mark.index]}\n")
+            else:
+                try:
+                    lines.append(f"{inner}{written}: {json.dumps(node_data(value, name), ensure_ascii=False)}\n")
+                except ConfigError as error:
+                    raise EditError(str(error)) from error
+        elif isinstance(change, Mapping):
+            raise EditError(f"{key} is written in a way the parent pages cannot edit; edit it by hand")
+        elif change is not None:
+            lines.append(_block_entry(name, change, inner, step))
+    for name, change in changes.items():
+        if name not in seen and change is not None:
+            lines.append(_block_entry(name, change, inner, step))
+    return f"{indent}{key}:\n" + "".join(lines) if lines else f"{indent}{key}: {{}}\n"
+
+
 def _flow_text(text: str, node: yaml.MappingNode, changes: Mapping[str, object]) -> str:
+    if _holds_list_edit(changes) or any(isinstance(value, Mapping) and _holds_list_edit(value) for value in changes.values()):
+        raise EditError(
+            f"line {node.start_mark.line + 1} writes the task in flow style, which the parent pages cannot rewrite "
+            "with a list; edit it by hand"
+        )
     parts: list[str] = []
     seen: set[str] = set()
     for key, key_node, value in _entries(node):

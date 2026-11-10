@@ -1,9 +1,12 @@
 # The parent portal is built in a Node stage. The Python image copies in only
 # the built files, so the image, and the make dist package, need no Node.
+# The portal imports the drag-and-drop it shares with the child's parts of
+# speech page from static/, one level above it, as in the repository.
 FROM node:24.22.2-slim AS portal
 WORKDIR /portal
 COPY portal/package.json portal/package-lock.json ./
 RUN npm ci --no-audit --no-fund
+COPY static/word_sort.js static/word_sort.d.ts /static/
 COPY portal/ ./
 RUN npm run build
 

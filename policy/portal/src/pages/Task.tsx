@@ -1,5 +1,5 @@
 import { CalendarPlus, PencilLine, Save } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   useBlocker,
@@ -16,7 +16,9 @@ import { ApiError, api, pageOf } from "../api";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { label } from "../labels";
+import { FIX_FIRST, blocked, blocksChanged, countsText, loaded, toRequest, type Block, type PosData } from "../sentences";
 import { ContextBar, StatusBar, useTitle } from "../slots";
+import { PartsOfSpeechAdmin } from "./PartsOfSpeech";
 import { POOL_FILTERS, SpellingAdmin, listedPools, type Pool, type SpellingData } from "./Spelling";
 
 export type TaskData = {
@@ -28,6 +30,7 @@ export type TaskData = {
   clients: string[];
   fields: Record<string, string>;
   spelling?: SpellingData;
+  parts_of_speech?: PosData;
 };
 
 export type Result = {
@@ -45,9 +48,11 @@ type Edits = {
   groups: string[] | null;
   settings: Record<string, string>;
   moves: Record<string, Pool>;
+  /** A parts of speech task's sentences, once anything in them has been touched. */
+  blocks: Block[] | null;
 };
 
-const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {} };
+const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null };
 
 const GROUPS: { legend: string; keys: string[] }[] = [
   { legend: "Cooldowns and limits", keys: ["pass_cooldown", "failure_cooldown", "max_skips", "max_passes"] },
@@ -100,8 +105,10 @@ export function Task() {
 function changed(data: TaskData, edits: Edits): boolean {
   const differs = (shown: Record<string, string>, edited: Record<string, string>) =>
     Object.entries(edited).some(([key, value]) => value.trim() !== (shown[key] ?? "").trim());
-  if (differs(data.fields, edits.fields) || differs(data.spelling?.settings ?? {}, edits.settings)) return true;
+  const settings = (data.spelling ?? data.parts_of_speech)?.settings ?? {};
+  if (differs(data.fields, edits.fields) || differs(settings, edits.settings)) return true;
   if (edits.groups !== null && edits.groups.join("\n") !== data.groups.join("\n")) return true;
+  if (data.parts_of_speech && edits.blocks !== null && blocksChanged(data.parts_of_speech, edits.blocks)) return true;
   const pools = new Map(data.spelling?.words.map((word) => [word.key, word.pool]) ?? []);
   return Object.entries(edits.moves).some(([key, pool]) => pools.has(key) && pools.get(key) !== pool);
 }
@@ -118,10 +125,18 @@ function TaskEditor({ data }: { data: TaskData }) {
   useTitle(data.name);
   const dirty = changed(data, edits);
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname);
+  const pos = data.parts_of_speech;
+  const shownBlocks = useMemo(() => (pos ? loaded(pos) : []), [pos]);
+  const blocks = edits.blocks ?? shownBlocks;
+  const held = pos !== undefined && blocked(blocks);
 
   const save = useCallback(
     (confirmed = false) => {
       if (fetcher.state !== "idle" || !dirty) return;
+      if (held) {
+        setResult({ intent: "save", ok: false, error: FIX_FIRST });
+        return;
+      }
       const groups = edits.groups ?? data.groups;
       fetcher.submit(
         {
@@ -130,12 +145,18 @@ function TaskEditor({ data }: { data: TaskData }) {
           fields: { ...data.fields, ...edits.fields },
           groups,
           ...(data.spelling ? { settings: { ...data.spelling.settings, ...edits.settings }, moves: edits.moves } : {}),
+          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, sentences: toRequest(blocks) } : {}),
           confirmed,
         },
         { method: "post", encType: "application/json" },
       );
     },
-    [fetcher, data, edits, dirty],
+    [fetcher, data, edits, dirty, held, pos, blocks],
+  );
+
+  const changeBlocks = useCallback(
+    (change: (current: Block[]) => Block[]) => setEdits((current) => ({ ...current, blocks: change(current.blocks ?? shownBlocks) })),
+    [shownBlocks],
   );
 
   const retire = useCallback(
@@ -230,8 +251,8 @@ function TaskEditor({ data }: { data: TaskData }) {
             type="button"
             className="button"
             onClick={() => save()}
-            disabled={fetcher.state !== "idle" || !dirty}
-            title={dirty ? "Save (Ctrl+S)" : "Nothing to save"}
+            disabled={fetcher.state !== "idle" || !dirty || held}
+            title={held ? FIX_FIRST : dirty ? "Save (Ctrl+S)" : "Nothing to save"}
           >
             <Save aria-hidden="true" />
             Save
@@ -304,6 +325,14 @@ function TaskEditor({ data }: { data: TaskData }) {
             if (written) void revalidator.revalidate();
           }}
         />
+      ) : pos ? (
+        <PartsOfSpeechAdmin
+          data={pos}
+          blocks={blocks}
+          settings={edits.settings}
+          onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
+          onBlocks={changeBlocks}
+        />
       ) : (
         <p>Task-specific administration for {data.type} tasks is not built yet.</p>
       )}
@@ -311,6 +340,7 @@ function TaskEditor({ data }: { data: TaskData }) {
       <StatusBar>
         {result && <Outcome result={result} />}
         {data.spelling && <span>{counts(data.spelling, pool)}</span>}
+        {pos && <span>{countsText(blocks)}</span>}
       </StatusBar>
 
       {asking !== null && (

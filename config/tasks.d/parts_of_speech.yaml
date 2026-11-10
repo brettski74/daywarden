@@ -5,11 +5,11 @@ tasks:
     pass_cooldown: 1
     body:
       sentences:
-        - sentence: "The quick, brown fox jumps over the lazy dog."
-          parts: 
-            noun: ["fox", "dog"]
-            verb: ["jumps"]
-            adjective: ["quick", "brown", "lazy"]
+        - sentence: The quick, brown fox jumps over the lazy dog.
+          parts:
+            noun: [fox, dog]
+            verb: [jumps]
+            adjective: [quick, brown]
         - sentence: "Dry the dishes with a dry towel."
           parts:
             noun: ["dishes", "towel"]
@@ -20,6 +20,11 @@ tasks:
             noun: ["cat", "mat"]
             verb: ["sat"]
             adjective: []
+        - sentence: The sentence must contain some words.
+          parts:
+            noun: [sentence, words]
+            verb: [contain]
+            adjective: [some]
   parts_of_speech_nouns:
     type: parts_of_speech
     group: younger

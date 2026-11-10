@@ -74,6 +74,11 @@
   --recording: var(--palette-brick);
   --kbd-bg: var(--palette-ivory);
   --kbd-text: var(--palette-navy);
+  --warning-text: var(--palette-navy);
+
+  /* Sorting words: a word under the pointer, held, or lit with its twin, and the cell under a dragged word. */
+  --sort-word-bg: color-mix(in srgb, var(--palette-lavender) 30%, var(--palette-ivory));
+  --sort-target-bg: color-mix(in srgb, var(--palette-teal) 50%, var(--palette-ivory));
 
   --shadow: 0 0.1rem 0.6rem color-mix(in srgb, var(--palette-navy) 25%, transparent);
 }
