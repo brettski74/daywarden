@@ -9,7 +9,6 @@ instruction. An empty body, a timeout, and any other answer leave it running.
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import os
 import threading
@@ -24,6 +23,7 @@ from mitmproxy import http
 import bypass
 import decision
 import observe
+from deny_page import deny_body
 
 DECISION_URL = os.environ.get("DECISION_URL", "http://decisions:8090/v1/decisions")
 OBSERVATION_URL = os.environ.get(
@@ -394,21 +394,9 @@ def _ask(flow: http.HTTPFlow):
 
 
 def _deny_page(message: str) -> http.Response:
-    body = (
-        "<!DOCTYPE html>\n"
-        '<html lang="en">\n'
-        "<head>\n"
-        '<meta charset="utf-8">\n'
-        "<title>Not allowed</title>\n"
-        "</head>\n"
-        "<body>\n"
-        f"<p>{html.escape(message)}</p>\n"
-        "</body>\n"
-        "</html>\n"
-    )
     return http.Response.make(
         403,
-        body,
+        deny_body(message),
         {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",

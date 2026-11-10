@@ -1,6 +1,7 @@
 """S005.1 and S005.2: the spelling quiz, its word pools, audio tokens, queue, timing, and practice mode."""
 
 import asyncio
+import html
 import json
 import random
 import shutil
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from conftest import write_alphabet, write_wav  # noqa: E402
 
 from policy import spelling  # noqa: E402
+from policy.child_page import PRACTICE_LINE  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
@@ -998,6 +1000,21 @@ def test_giving_up_shows_the_missed_words_including_the_one_left_showing(tmp_pat
     assert f"<li>{missed}</li>" in page.body
     assert f"<li>{showing}</li>" in page.body
     assert 'const next = "https://tasks.example/tasks/choose";' in page.body
+    assert '<html lang="en" data-palette="practice">' not in page.body
+
+
+def test_the_missed_words_after_giving_up_practice_keep_the_practice_palette_and_line(tmp_path, data):
+    _words(data, "spelling/current", "rope", "cat", "dog")
+    quiz = Quiz(tmp_path)
+    quiz.store.record("younger", "words", "pass", START - timedelta(hours=2))
+    quiz.open(START)
+    assert quiz.attempt().task_set == "practice"
+    quiz.spell(False)
+    page = quiz.give_up(quiz.now + timedelta(seconds=2))
+    assert "Words to practise" in page.body
+    assert '<html lang="en" data-palette="practice">' in page.body
+    assert html.escape(PRACTICE_LINE) in page.body
+    assert '<link rel="icon" type="image/png" href="/favicon.png">' in page.body
 
 
 def test_giving_up_with_nothing_missed_goes_straight_to_the_selector(tmp_path, data):

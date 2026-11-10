@@ -22,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from policy.accounts import Accounts
+from policy.child_page import FAVICON_PATH
 from policy.report import format_day, format_duration, timezone_note
 from policy.tasks import (
     PARENT_CHECK,
@@ -36,10 +37,11 @@ from policy.tasks import (
     household_day,
 )
 
-QUIZ_PAGE = """<!DOCTYPE html>
+QUIZ_PAGE = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<link rel="icon" type="image/png" href="{FAVICON_PATH}">
 <title>Revision</title>
 </head>
 <body>

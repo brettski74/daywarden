@@ -1,8 +1,8 @@
 Ticket: S007
 Title: Parent administration
 Status: Draft
-Story Points: 42
-Last Updated: 2026-11-08 19:45:00
+Story Points: 55
+Last Updated: 2026-11-09 19:50:00
 ---
 
 # User Voice
@@ -30,11 +30,12 @@ As a parent, I want to change the rules, the word lists, and which client group 
 | --- | --- | --- |
 | S007.1 | Parent sign-in | 5 |
 | S007.2 | Edit the hierarchical policy (later) | 8 |
-| S007.3 | Edit the other task types (placeholder, later) | 8 |
+| S007.3 | Parts of speech administration | 21 |
 | S007.4 | Parent portal layout, sign-in screen, and the attempts and usage pages | 21 |
 
-S023 is the task administration epic: the task pages, the common task settings, and spelling. S007.3 holds what is left
-for the other task types, which are expected to become stories or epics of their own.
+S023 is the task administration epic: the task pages, the common task settings, and spelling. S007.3 is the parts of
+speech area of the task page. Editing arithmetic and skip counting tasks, and creating and deleting tasks, are left for
+stories of their own.
 
 # Notes
 

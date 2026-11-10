@@ -57,8 +57,11 @@ def show(
     note: str = "",
     record: bool = False,
     back: Back | None = None,
+    line: str = "",
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
+
+    ``line`` says the attempt doesn't count right now.
 
     Nothing is stored unless ``record`` is set, which is how a refused
     give-up closes the question that was showing. When that decides the
@@ -81,7 +84,7 @@ def show(
         "revealSkipMs": REVEAL_SKIP_MS,
         "ended": ended,
     }
-    return _response(200, _document(session, config, note))
+    return _response(200, _document(session, config, note, line))
 
 
 def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
@@ -158,7 +161,7 @@ def respond_api(
         return reload()
     except ValueError as exc:
         return json_response(400, {"error": str(exc)})
-    ended = {"result": None, "next": None, "back": None}
+    ended = {"result": None, "next": None, "practice": None, "back": None}
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
@@ -199,7 +202,7 @@ def _progress(session: Session) -> dict:
     }
 
 
-def _document(session: Session, config: Mapping, note: str) -> str:
+def _document(session: Session, config: Mapping, note: str, line: str) -> str:
     settings = session.settings
     points = f"{format_points(session.points)} / {settings.required} points"
     upcoming = f"Question {session.number + 1}" + (
@@ -230,24 +233,25 @@ def _document(session: Session, config: Mapping, note: str) -> str:
         ),
         style=_STYLE,
         script=_SCRIPT,
+        line=line,
     )
 
 
 _STYLE = """\
-#number { margin-left: auto; font-size: 1.1rem; color: #555; }
+#number { margin-left: auto; font-size: 1.1rem; color: var(--muted); }
 #ask .title { font-size: 3rem; margin: 0 0 0.4rem; }
-#ask .instruction { font-size: 1.8rem; color: #555; margin: 0 0 2.5rem; }
-#start-number { font-size: 1.4rem; color: #555; }
+#ask .instruction { font-size: 1.8rem; color: var(--muted); margin: 0 0 2.5rem; }
+#start-number { font-size: 1.4rem; color: var(--muted); }
 .row { display: flex; flex-wrap: nowrap; justify-content: center; align-items: flex-start; gap: 0.35em; margin: 0 0 1rem;
   font-size: min(3.2rem, calc(92vw / (var(--n) * (var(--w) * 0.75 + 1.25)))); }
 .cell { display: flex; flex-direction: column; align-items: center; }
 .box { box-sizing: content-box; width: calc(var(--w) * 0.75em); height: 1.25em; line-height: 1.25em; font: inherit; font-weight: bold;
-  font-variant-numeric: tabular-nums; text-align: center; padding: 0.15em 0.25em; border: 3px solid #888; border-radius: 8px; background: #fff; }
-.box.given { color: #000; background: #f1f1ea; border-color: #bbb; }
-.box.entry { color: #4169E1; }
-.box.entry.wrong { color: #b42318; border-color: #b42318; }
-.box.missed { color: #1a7f37; border: 7px solid #1a7f37; padding: calc(0.15em - 4px) calc(0.25em - 4px); }
-.was { font-size: 0.6em; color: #555; margin-top: 0.2em; }
+  font-variant-numeric: tabular-nums; text-align: center; padding: 0.15em 0.25em; border: 3px solid var(--field-border); border-radius: 8px; background: var(--surface); }
+.box.given { color: var(--strong-text); background: var(--given-bg); border-color: var(--given-border); }
+.box.entry { color: var(--entry); }
+.box.entry.wrong { color: var(--wrong); border-color: var(--wrong); }
+.box.missed { color: var(--right); border: 7px solid var(--right); padding: calc(0.15em - 4px) calc(0.25em - 4px); }
+.was { font-size: 0.6em; color: var(--muted); margin-top: 0.2em; }
 """
 
 _SCRIPT = """\
@@ -293,11 +297,11 @@ _SCRIPT = """\
 
   function end(result) {
     if (result.result === "pass") {
-      finish(result.next, null, result.back);
+      finish(result, null);
       return;
     }
     $("failed-points").textContent = pointsText(result.points, result.required);
-    finish(result.next, $("failed"));
+    finish(result, $("failed"));
   }
 
   const visited = config.ended

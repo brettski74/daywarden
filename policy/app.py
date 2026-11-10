@@ -34,6 +34,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 
 from policy.accounts import Accounts, session_limits
 from policy.check import household_zone, load_required, summary_lines
+from policy.child_page import FAVICON_FILE, FAVICON_PATH
 from policy.clients import normalize_ip
 from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
@@ -167,6 +168,11 @@ def create_app() -> FastAPI:
         decision_log.append({"request": document, "local_time": at.isoformat(), **log_fields(trace)})
         print(decision_line(parsed.method, parsed.url, trace, at), flush=True)
         return Response(decision, media_type="application/json")
+
+    @app.get(FAVICON_PATH)
+    def favicon() -> Response:
+        # The task pages' icon. Like them, it needs no parent session.
+        return FileResponse(FAVICON_FILE, media_type="image/png", headers={"cache-control": "max-age=86400"})
 
     @app.get("/quiz")
     def quiz_page() -> Response:

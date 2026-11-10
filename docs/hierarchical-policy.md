@@ -246,7 +246,25 @@ Attempts stored before task sets existed are treated as required. They count for
 
 `/tasks/next` is the picker. It opens an available task. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. A redirect to `revision_task`, and "Next task" on the end screen of a quiz, go to the picker, so his revision keeps its variety. "Next task" is shown only while a task is available, and "All done for now" otherwise.
 
-`/tasks/choose` is the task selector. It lists the available tasks by name, in the order the picker would try them, and each one opens that task. When exactly one task is available it opens that task straight away. Opening it does not move the picker's rotation. When nothing is available, the picker and the selector both say "There is nothing to revise right now." A task named `next` or `choose` is served at `/tasks/work/next` or `/tasks/work/choose`.
+`/tasks/choose` is the task selector. Opening it does not move the picker's rotation, and nothing on it changes which attempts score. It has up to three sections, worked out for his client group on the household day:
+
+| Section | Buttons | What is in it | Order |
+|---------|---------|---------------|-------|
+| Choose a task | Blue | The available tasks: the required tasks while any is required, otherwise the potential tasks. | The picker's order |
+| After These | Teal | The potential tasks while any task is required. With nothing required they are the available tasks, so this section is empty. | The picker's order |
+| Extra Practice | Purple | Every other task assigned to the group: one passed today, cooling down after a pass or a failure, or at `max_passes`. A task before its `available_from` is left out, though its URL still opens it as practice. | Name |
+
+A `parent_check` task and a task assigned to another group are in no section. A section with no tasks is not shown. After These says "These count once the tasks above are done." and Extra Practice says "Practice is just for fun. It doesn't count toward your internet time today." Each opens and closes from its heading, a button that Tab reaches and Enter or Space toggles, over 500ms with swing easing, the parent portal's timing, or at once when the browser asks for reduced motion. Both start closed each time the page opens, and a closed section's buttons are skipped by Tab. Opening a task from any section is the same as opening its URL, so its attempt is required, potential, or practice by the rules above.
+
+When exactly one task is available and After These and Extra Practice are both empty, the selector opens that task straight away. When nothing is available, the picker and the selector both say "There is nothing to revise right now." with Extra Practice open beneath when it has a task. A task named `next` or `choose` is served at `/tasks/work/next` or `/tasks/work/choose`.
+
+When an end screen says "All done for now" and Extra Practice has a task, it also shows an "Extra Practice" link to the selector, which then has Extra Practice open. After a pass that is counting down to go back to the page he was sent away from, pressing it stops the countdown, as "Next task" does.
+
+### Quiz pages that don't count right now
+
+An attempt counts right now when it is required, or potential while no task is required. A practice attempt, and a potential one while a task is required, don't. Which it is is decided when the quiz page loads. A quiz whose attempt doesn't count right now uses the practice palette: purple accents on its buttons, links, timer bar, highlights, selections, and drag tiles, on a light purple page, with right and wrong still green and red. Near the top of every screen, including the spelling missed-words screen after a give-up, a practice attempt says "Practice: this won't count toward internet time today." and a waiting potential attempt says "This counts once your other tasks are done." A quiz whose attempt counts looks as it always has. The palette follows the attempt, not how he reached it, so a bookmark to a task passed today is purple too. A page already showing keeps its palette until it is loaded again. The selector, the picker's pages, and the plain revision task page always use the standard palette.
+
+The task pages' colours are custom properties in `policy/child_page.py`, with the standard and practice values side by side, chosen by `data-palette="practice"` on the page. Every task page, and `/quiz`, shows the Daywarden owl as its tab icon, served at `/favicon.png` without a parent session. The proxy's "Not allowed" page carries its own small copy of the owl inside the page, so showing it makes no request.
 
 ### Direct task URLs
 

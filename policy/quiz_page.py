@@ -5,9 +5,12 @@ Each quiz page is one document with a start screen, a question screen, a
 confirmation. A browser ``confirm()`` would freeze the timer. The shared
 script reads the page's config, posts ``?do=`` requests to the task URL,
 plays one sound at a time, and shows an end screen with "Next task" or "All
-done for now". When a pass comes with the page he was sent away from, the
-"Well done" screen says it is going back there, and opens it after
-``BACK_DELAY_MS``, or at once on "Go now" or Enter. "Next task" stops that.
+done for now". With no next task, an "Extra Practice" link to the selector
+shows when Extra Practice has a task. When a pass comes with the page he was
+sent away from, the "Well done" screen says it is going back there, and opens
+it after ``BACK_DELAY_MS``, or at once on "Go now" or Enter. "Next task" and
+"Extra Practice" stop that. An attempt that doesn't count right now gets the
+practice palette and its line from ``policy.child_page``.
 Tab and Shift+Tab cycle through the page's own visible, usable controls and wrap round, instead of leaving for the browser's
 toolbar. Landing in a text box selects what is in it, so typing replaces it. The quiz's own script defines ``refocus()``, which is called
 when the confirmation is cancelled.
@@ -19,9 +22,10 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 
+from policy.child_page import head, html_tag, line_html
 from policy.hierarchy import Policy
 from policy.report import PageResponse, _e, _response
-from policy.selection import picker_url
+from policy.selection import chooser_url, extra_practice, picker_url
 from policy.tasks import PASS, AttemptStore, household_day
 
 VISIT = "visit"
@@ -47,14 +51,21 @@ def ending(
     verdict: str,
     back: Back | None,
 ) -> dict:
-    """Return where the end screen leads: ``next`` is the next task, ``back`` the page he was sent away from.
+    """Return where the end screen leads.
 
-    ``back`` is only asked after a pass, once the pass is stored.
+    ``next`` is the next task. ``practice`` is the selector, given only when
+    there is no next task and Extra Practice has a task. ``back`` is the page
+    he was sent away from, only asked after a pass, once the pass is stored.
     """
-    return {
-        "next": None if policy is None else next_task_url(policy, store, client_group, now),
-        "back": back() if verdict == PASS and back is not None else None,
-    }
+    found = {"next": None, "practice": None}
+    if policy is not None:
+        today = household_day(now)
+        sets = store.task_sets(policy.tasks, client_group, today)
+        if sets.available:
+            found["next"] = picker_url(policy)
+        elif extra_practice(sets, today):
+            found["practice"] = chooser_url(policy)
+    return {**found, "back": back() if verdict == PASS and back is not None else None}
 
 
 def reload() -> PageResponse:
@@ -67,8 +78,12 @@ def json_response(status: int, payload: Mapping) -> PageResponse:
 
 
 def end_links() -> str:
-    """Return the "All done for now" line and the "Next task" link an end screen holds."""
-    return '<p class="all-done" hidden>All done for now</p>\n<a class="big next-task" href="#" hidden>Next task</a>'
+    """Return the "All done for now" line and the "Next task" and "Extra Practice" links an end screen holds."""
+    return (
+        '<p class="all-done" hidden>All done for now</p>\n'
+        '<a class="big next-task" href="#" hidden>Next task</a>\n'
+        '<a class="big extra-practice" href="#" hidden>Extra Practice</a>'
+    )
 
 
 def document(
@@ -81,27 +96,25 @@ def document(
     script: str,
     style: str = "",
     ends: str = "",
+    line: str = "",
 ) -> str:
     """Return a quiz page.
 
     ``header`` sits between the progress line and "Try a different task".
     ``start`` and ``ask`` are the insides of the start and question screens.
     ``ends`` is any end screen besides "Well done". ``script`` runs after
-    the shared script, inside the same function.
+    the shared script, inside the same function. ``line`` says the attempt
+    doesn't count right now. It sits above every screen, and the page uses
+    the practice palette.
     """
     data = json.dumps(config).replace("</", "<\\/")
     return f"""<!DOCTYPE html>
-<html lang="en">
+{html_tag(line)}
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
-<title>{_e(title)}</title>
-<style>
-{SHELL_STYLE}{style}</style>
+{head(title, SHELL_STYLE + style)}
 </head>
 <body>
-<header>
+{line_html(line)}<header>
 {header}
 <button type="button" id="give-up">Try a different task</button>
 </header>
@@ -124,6 +137,7 @@ def document(
 <button type="button" id="go-now" class="big" hidden>Go now</button>
 <p class="all-done" hidden>All done for now</p>
 <a class="big next-task" id="next-task" href="#" hidden>Next task</a>
+<a class="big extra-practice" id="extra-practice" href="#" hidden>Extra Practice</a>
 </section>
 {ends}</main>
 <div id="timer" hidden><div id="bar"></div></div>
@@ -143,22 +157,22 @@ def note_html(note: str) -> str:
 
 SHELL_STYLE = """\
 html, body { height: 100%; margin: 0; }
-body { display: flex; flex-direction: column; font-family: sans-serif; background: #fbfbf7; color: #222; }
+body { display: flex; flex-direction: column; font-family: sans-serif; background: var(--page-bg); color: var(--text); }
 header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; min-height: 2rem; }
-#progress { font-size: 1.1rem; color: #555; }
-#give-up { margin-left: auto; font-size: 0.85rem; padding: 0.3rem 0.7rem; background: none; border: 1px solid #aaa; border-radius: 4px; color: #555; cursor: pointer; }
+#progress { font-size: 1.1rem; color: var(--muted); }
+#give-up { margin-left: auto; font-size: 0.85rem; padding: 0.3rem 0.7rem; background: none; border: 1px solid var(--control-border); border-radius: 4px; color: var(--muted); cursor: pointer; }
 main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1rem; }
 .screen h1 { font-size: 4rem; margin: 0 0 1rem; }
 .screen p { font-size: 1.8rem; margin: 0 0 2rem; }
-.note { color: #b42318; }
-.big { font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: #2f6fd6; color: #fff; cursor: pointer; text-decoration: none; }
+.note { color: var(--wrong); }
+.big { font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: var(--accent); color: var(--on-accent); cursor: pointer; text-decoration: none; }
 #go-now { margin-right: 0.6rem; }
 #feedback { min-height: 3rem; font-size: 2.2rem; margin-top: 1.5rem; font-weight: bold; }
-#feedback.correct { color: #1a7f37; }
-#feedback.incorrect, #feedback.timeout { color: #b42318; }
-#timer { height: 2rem; background: #e4e4e4; }
-#bar { height: 100%; width: 100%; background: #2f6fd6; }
-#confirm { position: fixed; top: 3rem; right: 1rem; background: #fff; border: 1px solid #aaa; border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+#feedback.correct { color: var(--right); }
+#feedback.incorrect, #feedback.timeout { color: var(--wrong); }
+#timer { height: 2rem; background: var(--track); }
+#bar { height: 100%; width: 100%; background: var(--accent); }
+#confirm { position: fixed; top: 3rem; right: 1rem; background: var(--surface); border: 1px solid var(--control-border); border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px var(--shadow); }
 #confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
 .hidden-label { position: absolute; left: -10000px; }
 [hidden] { display: none !important; }
@@ -215,7 +229,7 @@ SHELL_SCRIPT = f"""\
     return response.json();
   }
 
-  const goNow = $("go-now"), nextTask = $("next-task");
+  const goNow = $("go-now"), nextTask = $("next-task"), extraPractice = $("extra-practice");
   let backTo = null;
   let backTimer = null;
 
@@ -232,9 +246,10 @@ SHELL_SCRIPT = f"""\
     clearTimeout(backTimer);
   }
 
-  function finish(next, screen, back) {
+  function finish(ended, screen) {
     state = "done";
     screen = screen || doneScreen;
+    const next = ended.next, back = ended.back;
     const returning = Boolean(back) && screen === doneScreen;
     for (const section of document.querySelectorAll("main > section")) section.hidden = section !== screen;
     timer.hidden = true;
@@ -245,8 +260,13 @@ SHELL_SCRIPT = f"""\
       link.href = next;
       link.hidden = false;
       link.focus();
-    } else if (!returning) {
-      screen.querySelector(".all-done").hidden = false;
+    } else {
+      if (!returning) screen.querySelector(".all-done").hidden = false;
+      if (ended.practice) {
+        const practice = screen.querySelector(".extra-practice");
+        practice.href = ended.practice;
+        practice.hidden = false;
+      }
     }
     if (returning) {
       backTo = back;
@@ -260,8 +280,10 @@ SHELL_SCRIPT = f"""\
 
   goNow.addEventListener("click", goBack);
   nextTask.addEventListener("click", stayHere);
+  extraPractice.addEventListener("click", stayHere);
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || !backTo || event.repeat || document.activeElement === nextTask) return;
+    if (event.key !== "Enter" || !backTo || event.repeat) return;
+    if (document.activeElement === nextTask || document.activeElement === extraPractice) return;
     event.preventDefault();
     goBack();
   });

@@ -1,24 +1,106 @@
-# Work Item Management
+# Stories
 
-The stories folder in the root of this workspace is for holding markdown files that define the stories we plan to work on, are working on or have previously worked on. Stories should be given a story number "Snnn" where "nnn" is a three-digit number. Story numbers should start at 0 and go up incrementally. Larger stories can be defined as epics and broken down into child stories numbered "Snnn.m" where "m" is a number. Typically, we should expect that lower values of m are stories that should be implemented earlier and may be dependencies of later stories, but this is not a strict rule. The main point is to make it clear which stories are part of an epic with this numbering scheme.
+Stories are markdown files in the `stories` directory, one per story, named `Snnn-short-title.md`. Write every story
+from `stories/Sxxx-story-template.md`. Story numbers are `Snnn`, three digits, counting up from 000. An epic's child
+stories are `Snnn.m`. Lower values of m usually come first and may be dependencies of later children, but this is not
+a strict rule.
 
-Story/Epic documents should start with a data block in a YAML style format that ends with a horizontal separator "---".
+Each file starts with the template's data block, which ends with a `---` line: Ticket, Title, Status (Draft, Refined,
+In Progress, or Done), Story Points, and Last Updated (`yyyy-mm-dd HH:MM:SS`). Every story has User Voice and Behaviour
+sections. Scenarios, Child stories, and Notes are added only when they have something to say.
 
-Ticket: S001
-Title: Implement a thing
-Status: ( Draft | Refined | In Progress | Done )
-Story Points: 3
-Last Updated: yyyy-mm-dd HH:MM:SS
----
+## Writing stories
 
-Stories and Epics should include the following headings at a minimum:
-- User Voice
-- Use Cases
-- Acceptance Criteria
+The reviewer reads every story, and reading the same thing twice is the slowest part of that review. These rules
+apply to every story, epic, and implementation summary:
 
-They may include additional headings as needed, but those should always be there.
+1. **Say each thing once.** A fact appears in one place. Refer to it rather than restating it, and refer to another
+   story, as in "Saving works as in S023.2", rather than repeating its behaviour.
+2. **Behaviour is the one list of what the story delivers.** It is grouped under level 2 headings by area. Each item a
+   reviewer can check through the external interfaces below is a checkbox, `- [ ]`, ticked `- [x]` once accepted.
+   Detail that is not a check of its own, such as an icon name, a list of accepted values, a file layout, or the
+   wording of a message, is a plain bullet or sits inside the check it belongs to.
+3. **An example goes inside the check it illustrates,** not in an item of its own.
+4. **Behaviour inherited from another story is one check,** such as "Save, Ctrl+S, and the unsaved-changes prompt work
+   as in S023.2."
+5. **Scenarios are optional.** A scenario is a short narrative of a user reaching a goal across several features. It
+   states no rule of its own. Write one only when it shows how the features fit together in a way the Behaviour list
+   does not.
+6. **Notes do not repeat Behaviour.** They hold dependencies, design and implementation hints, what is out of scope,
+   and why the story is sized as it is.
+7. **A change during review edits the item in place.** Do not add a second item that amends an earlier one.
+8. **An epic's Behaviour holds only the checks that span its children,** such as "S004.1 to S004.6 are done". Each
+   child's checks are in the child.
 
-Use Fibonnaci numbers when estimating story points and measure story point estimates relative to other similar stories that have been implemented in the past or that we believe are a similar level of effort.
+## Acceptance through external interfaces
+
+Code review is rare. The reviewer accepts a story through the interfaces a user can see: the policy file and other
+configuration, files in the data directory, the web pages (the child's quiz pages, the parent pages, and what the proxy
+allows, blocks, or redirects), and the command-line tools such as `bin/daywarden` and `bin/cut-clips`. Write each check
+through those interfaces: what to put in the configuration, what to do in the browser or on the command line, and what
+should be seen. Do not write checks as SQL queries, scripts, or calls to internal APIs. Database changes and internal
+behaviour are accepted through the features that use them. The automated tests cover the internals.
+
+## Story points
+
+- Use Fibonacci numbers: 1, 2, 3, 5, 8, 13, 21.
+- An epic's points are the sum of its children's.
+- Size a story against stories already implemented that took a similar effort to build and test. A story of m + n
+  points is about the effort of one of m points plus one of n points.
+- Consistent relative sizes are the goal, not precision.
+
+### Reference size for one story
+
+S006.1, S006.2, and S006.3 were implemented one after another in a single session, and together they used about 40% of
+the context window. Together they were 14 points (3 + 8 + 3) and 39 checks. They covered a new task type and its
+policy-file checks, a drag-and-drop quiz page with a timer, scoring, and resume, and the red marks and answer table
+after a wrong try. That work should have been one story, and one story can hold somewhat more than that. S007.4 used
+about 475k tokens, which is still less than 50% of the context window, and was a 21-point story. Size single stories
+against these references. 13 and 21 are normal sizes for one story. 1 to 5 points is a small change.
+
+## When to make a story an epic
+
+Keep work in one story by default. Parts that could be accepted separately are not, on their own, a reason to split. One
+story with a longer Behaviour list is cheaper to implement and review than several small ones. Measure size against
+the reference in "Reference size for one story" above.
+
+Split a story into an epic with child stories only when any of these is true:
+
+1. It is larger than 21 points. A 34-point estimate is always an epic.
+2. One implementation session would struggle to hold it. As a guide, finish a story within about 60% of the model's
+   context window. The reference work used about 40%. Tool output, test runs, browser snapshots, and re-reading edited
+   files use far more context than reading the code once. Split when the code, tests, and browser checking clearly go
+   beyond about one and a half times the reference work.
+3. Its Behaviour would hold more than about 50 checks.
+4. One part carries a risk the rest does not, and that risk is worth seeing working and accepted before the rest is
+   built. Examples are a change to what the proxy allows or redirects, or an upgrade of stored household data.
+5. Some of the work is not wanted yet, such as a feature planned for a later release. Put it in a later child instead of
+   leaving it out.
+
+When an epic is needed, make each child as large as these rules allow. Do not split it into many small children.
+
+Do not split, even when the story is large, when:
+
+- Most of a child's deliverables would have no consequence that can be seen through the external interfaces. A database change, an internal refactor, or a server API with no page to use it is accepted through the feature that uses it, so it belongs in the same story as that feature.
+- The children would rewrite the same code or tests in turn, such as each updating the same test fixtures.
+- A child could not be accepted until the next child is done.
+
+Prefer to split along features a user can see, such as a working quiz first and its extra feedback screens second, rather than along layers such as configuration, server, and page.
+
+## Implementation summary
+
+After implementing a story, append an `# Implementation` section to the end of the story, with these level 2
+headings. The house rules above apply here too.
+
+- **Files Added, Files Changed, Files Removed.** Each file with a short note of what it holds or what changed.
+- **Change Summary.** What was built, in a few paragraphs, and the internal choices a reviewer should know about, such
+  as a library not used and why. A choice that changes what the reviewer sees is not described here. Instead, edit
+  its Behaviour item in place, starting it with *Changed in implementation:*, or add a new check starting with *Added
+  in implementation:*.
+- **Suggested Acceptance Testing.** Under a heading such as `### Acceptance test cases for Snnn`, a numbered list of
+  test sessions, most important first. Each gives what the reviewer needs to set up, such as configuration, commands,
+  or data, and names the Behaviour area or checks it covers, without restating them. Together the sessions cover
+  every check. Give the same list in the chat response.
 
 # Python Environment
 
@@ -78,67 +160,3 @@ the way it should, not a duplicate of static content elsewhere.
 Tests need to pass. All tests should be passing for work on a story to be considered done. If there are failing tests,
 then you need to work to figure out why they're failing, what needs to be done to fix them and fix them. Tests that are
 failing and no longer relevant or that meet the definition of pointless tests above should be removed.
-
-# Implementation Summary
-
-After implementing a story, append an Implementation section (L1 heading) to the end of the ticket's markdown document with level 2 headings for Files Added/Changed/Removed, Change Summary and Suggested Acceptance Testing. The suggested acceptance test must:
-
-1. Have a clear heading identifying it as the list of acceptance test cases for the completed work.
-2. Consist of a numbered list of acceptance test cases that the human reviewer should perform on the delivered work.
-3. Sort the acceptance test cases with the most important or impactful test cases listed first.
-4. Cover all all exposed areas with functionality exposed via configuration files or UI.
-5. Be provided in the AI chat response.
-
-# Stories
-
-Stories are documented in markdown files in the stories directory. Stories should follow the template found in stories/Sxxx-story-template.md.
-Story point values should be estimated based on:
-
-1. Story point values for epics with 1 or more children should be equal to the sum of the story point values of all children.
-2. Story point values for stories with no child stories should be sized so that:
-2.1 They are consistent with previously implemented stories that are believed to be a similar amount of effort to implement and test.
-2.2 They use a fibonacci numbers (1, 2, 3, 5, 8, 13, 21, etc)
-2.3 A story valued at (m+n) story points is roughly equivalent in implementation and testing effort to implementing and testing a story valued at m story point plus another story valued at n story points.
-3. Reasonable relative consistency of level of effort estimation is the goal, not extreme precision.
-
-### Reference size for one story
-
-S006.1, S006.2, and S006.3 were implemented one after another in a single session, and together they used about 40% of
-the context window. Together they were 14 points (3 + 8 + 3) and 39 acceptance criteria. They covered a new task type
-and its policy-file checks, a drag-and-drop quiz page with a timer, scoring, and resume, and the red marks and answer
-table after a wrong try. That work should have been one story, and one story can hold somewhat more than that. S007.4
-used about 475k tokens which is still less than 50% of the context window and was a 21 point story. Size single stories against these references. 13 and 21 are normal sizes for one story. 1 to 5 points is a small change.
-
-## Acceptance through external interfaces
-
-Code review is rare. The reviewer accepts a story through the interfaces a user can see: the policy file and other configuration, files in the data directory, the web pages (the child's quiz pages, the parent pages, and what the proxy allows, blocks, or redirects), and the command-line tools such as `bin/daywarden` and `bin/cut-clips`. Write acceptance criteria and suggested acceptance test cases as checks through those interfaces: what to put in the configuration, what to do in the browser or on the command line, and what should be seen. Do not write them as SQL queries, scripts, or calls to internal APIs. Database changes and internal behaviour are accepted through the features that use them. The automated tests cover the internals.
-
-## When to make a story an epic
-
-Keep work in one story by default. Parts that could be accepted separately are not, on their own, a reason to split. One
-story with a longer acceptance list is cheaper to implement and review than several small ones. Measure size against
-the reference in "Reference size for one story" above.
-
-Split a story into an epic with child stories only when any of these is true:
-
-1. It is larger than 21 points. A 34-point estimate is always an epic.
-2. One implementation session would struggle to hold it. As a guide, finish a story within about 60% of the model's
-   context window. The reference work used about 40%. Tool output, test runs, browser snapshots, and re-reading edited
-   files use far more context than reading the code once. Split when the code, tests, and browser checking clearly go
-   beyond about one and a half times the reference work.
-3. Its acceptance test list would go beyond about 50 cases.
-4. One part carries a risk the rest does not, and that risk is worth seeing working and accepted before the rest is
-   built. Examples are a change to what the proxy allows or redirects, or an upgrade of stored household data.
-5. Some of the work is not wanted yet, such as a feature planned for a later release. Put it in a later child instead of
-   leaving it out.
-
-When an epic is needed, make each child as large as these rules allow. Do not split it into many small children.
-
-Do not split, even when the story is large, when:
-
-- Most of a child's deliverables would have no consequence that can be seen through the external interfaces. A database change, an internal refactor, or a server API with no page to use it is accepted through the feature that uses it, so it belongs in the same story as that feature.
-- The children would rewrite the same code or tests in turn, such as each updating the same test fixtures.
-- A child could not be accepted until the next child is done.
-
-Prefer to split along features a user can see, such as a working quiz first and its extra feedback screens second, rather than along layers such as configuration, server, and page.
-
