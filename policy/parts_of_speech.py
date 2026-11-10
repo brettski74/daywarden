@@ -267,6 +267,11 @@ def _part_name(written: object, seen: dict[str, str], where: str) -> str:
     return name
 
 
+def entry_positions(value: object, number: int, words: tuple[Word, ...], where: str) -> tuple[int, ...]:
+    """Return the positions in the sentence that entry ``number`` of a part names. Raises ``ValueError``."""
+    return _entry(value, number, words, where)
+
+
 def _entry(value: object, number: int, words: tuple[Word, ...], where: str) -> tuple[int, ...]:
     """Return the positions in the sentence that one entry names."""
     if isinstance(value, (list, Mapping)):

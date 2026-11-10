@@ -11,14 +11,20 @@ A page load does not close the open sentence. ``?do=question`` brings it
 back with the time left on its deadline, the tries used, and his last
 submitted table. Only its deadline, an expired run, or a give-up closes it.
 A give-up that is allowed is always an abandonment.
+
+The dragging is ``policy/static/word_sort.js``, which the parent portal's
+parts of speech editor shares. It is inlined into the page's script, so the
+page still loads nothing else.
 """
 
 from __future__ import annotations
 
 import json
 import random
+import re
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 
 from policy.hierarchy import Policy
 from policy.parts_of_speech import LABEL, WRONG, Session, format_points, segments
@@ -271,9 +277,13 @@ def _document(session: Session, config: Mapping, note: str, line: str) -> str:
             "</section>\n"
         ),
         style=_STYLE,
-        script=_MODEL + _SCRIPT,
+        script=_WORD_SORT + _MODEL + _SCRIPT,
         line=line,
     )
+
+
+WORD_SORT_FILE = Path(__file__).resolve().parent / "static" / "word_sort.js"
+_WORD_SORT = re.sub(r"^export ", "", WORD_SORT_FILE.read_text(encoding="utf-8"), flags=re.MULTILINE)
 
 
 _STYLE = """\
@@ -284,16 +294,15 @@ _STYLE = """\
 .sentence { font-size: 2.5rem; line-height: 1.5; margin: 0 0 1.5rem; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .word, .placed { border-radius: 6px; padding: 0 0.06em; touch-action: none; }
 .word.can, #ask:not(.locked) .placed { cursor: grab; }
-.word.can:hover, .word.held, .word.lit, .placed.lit, .placed.held { background: var(--highlight); }
-body.dragging .word.can:not(.held):hover { background: none; }
-body.dragging, body.dragging * { cursor: grabbing !important; }
+.word.can:hover, .word[data-held], .word[data-lit], .placed[data-lit], .placed[data-held] { background: var(--highlight); }
+body[data-dragging] .word.can:not([data-held]):hover { background: none; }
+body[data-dragging], body[data-dragging] * { cursor: grabbing !important; }
 .parts { width: 100%; border-collapse: collapse; font-size: 2rem; }
 .parts th, .parts td { border: 2px solid var(--given-border); padding: 0.2rem 0.6rem; }
 .parts th { width: 1%; white-space: nowrap; text-align: left; font-weight: normal; color: var(--soft-text); background: var(--given-bg); }
 .parts td { height: 3.75rem; text-align: left; overflow-wrap: anywhere; }
-.parts tr.over th, .parts tr.over td { background: var(--accent-soft); }
-.ghost { position: fixed; z-index: 10; pointer-events: none; background: transparent; white-space: pre; margin: 0; }
-.ghost.flying { transition: left var(--flight) ease-out, top var(--flight) ease-out; }
+.parts tr[data-over] th, .parts tr[data-over] td { background: var(--accent-soft); }
+.ghost { background: transparent; }
 .red { color: var(--mark); }
 .blue { color: var(--entry); }
 .answer { color: var(--strong-text); border-radius: 6px; padding: 0 0.15em; }
@@ -307,29 +316,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 
 _MODEL = """\
   const model = {
-    empty(parts) {
-      const cells = {};
-      for (const part of parts) cells[part] = [];
-      return cells;
-    },
-    partOf(cells, id) {
-      for (const part of Object.keys(cells)) if (cells[part].includes(id)) return part;
-      return null;
-    },
-    place(cells, id, part) {
-      if (model.partOf(cells, id) === part) return cells;
-      const next = model.remove(cells, id);
-      next[part] = [...next[part], id];
-      return next;
-    },
-    remove(cells, id) {
-      const next = {};
-      for (const part of Object.keys(cells)) next[part] = cells[part].filter((other) => other !== id);
-      return next;
-    },
-    count(cells) {
-      return Object.values(cells).reduce((sum, ids) => sum + ids.length, 0);
-    },
+    ...sortModel,
     same(left, right) {
       if (!left || !right || model.count(left) !== model.count(right)) return false;
       return Object.keys(left).every((part) => left[part].every((id) => model.partOf(right, id) === part));
@@ -355,10 +342,6 @@ _MODEL = """\
         else if (item.part === null && item.placed === part) extra.push({ id, had: "extra" });
       });
       return [...listed, ...extra];
-    },
-    drop(origin, target) {
-      if (target === null) return origin === null ? "back" : "unsort";
-      return target === origin ? "stay" : "place";
     },
     wrongText(wrong, missed) {
       const parts = [];
@@ -391,17 +374,44 @@ _SCRIPT = """\
   let expiry = null;
   let timing = false;
   let lateExpiry = false;
-  let press = null;
-  let drag = null;
-  let flight = null;
   let ending = null;
   let guardTimer = null;
   let waitTimer = null;
-  document.documentElement.style.setProperty("--flight", config.flightMs + "ms");
+  const sorter = wordSort({
+    sources: [sentence, rows],
+    flightMs: config.flightMs,
+    canPress: () => phase === "asking",
+    pickable: (target) => target.closest(".word.can, .placed"),
+    originOf: (id) => model.partOf(cells, id),
+    sentenceWord,
+    cellWord,
+    targetAt(found) {
+      const row = found.closest("#rows tr");
+      return row ? { key: row.dataset.part, element: row } : null;
+    },
+    hoverable: (target) => target.closest(".placed"),
+    hoverOn: () => phase === "asking",
+    ghost(copy, source) {
+      copy.className = "ghost " + (source.classList.contains("placed") ? "placed" : "word");
+      for (const colour of ["red", "blue"]) if (source.classList.contains(colour)) copy.classList.add(colour);
+    },
+    onPlace(id, part) {
+      cells = model.place(cells, id, part);
+      render();
+    },
+    onUnsort(id) {
+      cells = model.remove(cells, id);
+      render();
+    },
+    onBusy: refresh,
+    onArrive: render,
+    noSelect: (target) => askScreen.contains(target),
+    noDragImage: () => true,
+  });
 
   function view() {
     return {
-      phase, cells, lastWrong, dragging: drag !== null, flying: flight !== null, confirming: !confirmBox.hidden,
+      phase, cells, lastWrong, dragging: sorter.dragging(), flying: sorter.flying(), confirming: !confirmBox.hidden,
     };
   }
 
@@ -571,8 +581,8 @@ _SCRIPT = """\
 
   function expire() {
     if (phase === "asking") {
-      cancelDrag();
-      arrive();
+      sorter.cancel();
+      sorter.arrive();
       submit(true);
     } else if (phase === "waiting") {
       lateExpiry = true;
@@ -645,158 +655,6 @@ _SCRIPT = """\
     if (result.finished) end(result);
     else ask();
   }
-
-  function lit(id, on) {
-    const twin = sentenceWord(id);
-    const placed = cellWord(id);
-    if (twin) twin.classList.toggle("lit", on);
-    if (placed) placed.classList.toggle("lit", on);
-  }
-
-  function rowAt(x, y) {
-    if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
-    const found = document.elementFromPoint(x, y);
-    return found ? found.closest("#rows tr") : null;
-  }
-
-  function hover(row) {
-    for (const other of rows.querySelectorAll("tr.over")) if (other !== row) other.classList.remove("over");
-    if (row) row.classList.add("over");
-  }
-
-  function pressed(event) {
-    if (phase !== "asking" || drag || flight || event.button !== 0) return;
-    const target = event.target.closest(".word.can, .placed");
-    if (!target) return;
-    event.preventDefault();
-    press = { id: Number(target.dataset.word), source: target, x: event.clientX, y: event.clientY, pointer: event.pointerId };
-  }
-
-  function begin(event) {
-    const source = press.source;
-    const box = source.getBoundingClientRect();
-    const ghost = document.createElement("span");
-    ghost.className = "ghost " + (source.classList.contains("placed") ? "placed" : "word");
-    for (const colour of ["red", "blue"]) if (source.classList.contains(colour)) ghost.classList.add(colour);
-    ghost.textContent = source.textContent;
-    const style = getComputedStyle(source);
-    ghost.style.font = style.font;
-    ghost.style.padding = style.padding;
-    ghost.style.left = box.left + "px";
-    ghost.style.top = box.top + "px";
-    document.body.appendChild(ghost);
-    const origin = source.classList.contains("placed") ? model.partOf(cells, press.id) : null;
-    drag = { id: press.id, origin, ghost, dx: press.x - box.left, dy: press.y - box.top };
-    try {
-      source.setPointerCapture(event.pointerId);
-    } catch (error) {}
-    sentenceWord(drag.id).classList.add("held");
-    if (origin !== null) source.classList.add("held");
-    document.body.classList.add("dragging");
-    press = null;
-    refresh();
-  }
-
-  function moved(event) {
-    if (press && !drag) {
-      if (Math.abs(event.clientX - press.x) + Math.abs(event.clientY - press.y) < 4) return;
-      begin(event);
-    }
-    if (!drag) return;
-    drag.ghost.style.left = event.clientX - drag.dx + "px";
-    drag.ghost.style.top = event.clientY - drag.dy + "px";
-    hover(rowAt(event.clientX, event.clientY));
-  }
-
-  function released(event, outside) {
-    press = null;
-    if (!drag) return;
-    const row = outside ? null : rowAt(event.clientX, event.clientY);
-    const { id, origin, ghost } = drag;
-    drag = null;
-    hover(null);
-    document.body.classList.remove("dragging");
-    const target = row ? row.dataset.part : null;
-    const action = model.drop(origin, target);
-    if (action === "place") {
-      ghost.remove();
-      cells = model.place(cells, id, target);
-      clearShading(id);
-      render();
-      return;
-    }
-    if (action === "stay") {
-      clearShading(id);
-      fly(ghost, cellWord(id), id);
-      return;
-    }
-    if (action === "unsort") {
-      clearShading(id);
-      cells = model.remove(cells, id);
-      render();
-    }
-    fly(ghost, sentenceWord(id), id);
-  }
-
-  function clearShading(id) {
-    lit(id, false);
-    sentenceWord(id).classList.remove("held");
-    const placed = cellWord(id);
-    if (placed) placed.classList.remove("held");
-  }
-
-  function fly(ghost, home, id) {
-    const box = home.getBoundingClientRect();
-    flight = { ghost, id, timer: setTimeout(arrive, config.flightMs) };
-    ghost.getBoundingClientRect();
-    ghost.classList.add("flying");
-    ghost.style.left = box.left + "px";
-    ghost.style.top = box.top + "px";
-    refresh();
-  }
-
-  function arrive() {
-    if (!flight) return;
-    clearTimeout(flight.timer);
-    flight.ghost.remove();
-    sentenceWord(flight.id).classList.remove("held");
-    flight = null;
-    render();
-  }
-
-  function cancelDrag() {
-    press = null;
-    if (!drag) return;
-    drag.ghost.remove();
-    clearShading(drag.id);
-    hover(null);
-    document.body.classList.remove("dragging");
-    drag = null;
-  }
-
-  function over(event) {
-    if (drag || flight) return;
-    const target = event.target.closest(".placed");
-    if (target) lit(Number(target.dataset.word), phase === "asking");
-  }
-
-  function out(event) {
-    if (drag) return;
-    const target = event.target.closest(".placed");
-    if (target && !target.contains(event.relatedTarget)) lit(Number(target.dataset.word), false);
-  }
-
-  sentence.addEventListener("pointerdown", pressed);
-  rows.addEventListener("pointerdown", pressed);
-  rows.addEventListener("pointerover", over);
-  rows.addEventListener("pointerout", out);
-  document.addEventListener("pointermove", moved);
-  document.addEventListener("pointerup", (event) => released(event, false));
-  document.addEventListener("pointercancel", (event) => released(event, true));
-  document.addEventListener("dragstart", (event) => event.preventDefault());
-  document.addEventListener("selectstart", (event) => {
-    if (askScreen.contains(event.target)) event.preventDefault();
-  });
 
   for (const button of [submitButton, nextButton]) {
     button.addEventListener("keydown", (event) => {

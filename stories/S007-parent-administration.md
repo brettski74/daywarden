@@ -34,8 +34,8 @@ As a parent, I want to change the rules, the word lists, and which client group 
 | S007.4 | Parent portal layout, sign-in screen, and the attempts and usage pages | 21 |
 
 S023 is the task administration epic: the task pages, the common task settings, and spelling. S007.3 is the parts of
-speech area of the task page. Editing arithmetic and skip counting tasks, and creating and deleting tasks, are left for
-stories of their own.
+speech area of the task page. S025 and S026 are the skip counting and arithmetic areas. Creating and deleting tasks is
+left for a story of its own.
 
 # Notes
 

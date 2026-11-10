@@ -817,6 +817,248 @@ input[data-changed],
   padding-left: 1.2rem;
 }
 
+/* The parts of speech editor. Each sentence is a two-column table laid out like the child's. */
+
+.pos-block {
+  margin: 1.25rem 0;
+  padding: 0.4rem;
+  border-radius: 0.4rem;
+}
+
+.pos-block[data-changed] {
+  background: var(--changed-bg);
+}
+
+.pos-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pos-table th,
+.pos-table td {
+  padding: 0.3rem 0.6rem;
+  border: 0.08rem solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.pos-table th {
+  width: 1%;
+  white-space: nowrap;
+  font-weight: normal;
+  background: var(--table-head-bg);
+}
+
+.pos-table td[data-row] {
+  height: 2.75rem;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.pos-sentence[data-changed],
+.pos-table td[data-row][data-changed],
+.pos-table tr[data-changed] > * {
+  background: var(--changed-bg);
+}
+
+.pos-table td[data-row][data-over] {
+  background: var(--sort-target-bg);
+}
+
+.pos-sentence-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pos-text,
+.pos-text-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.5;
+}
+
+.pos-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pos-text,
+.pos-table td[data-row] {
+  user-select: none;
+}
+
+.pos-actions,
+.pos-name,
+.pos-under,
+.pos-timeout,
+.pos-add {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pos-name input {
+  width: 12rem;
+}
+
+.pos-under {
+  gap: 1.25rem;
+  margin-top: 0.4rem;
+}
+
+.pos-timeout input {
+  width: 6rem;
+}
+
+.pos-add {
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.pos-notes {
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pos-note {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.15rem 0;
+}
+
+.pos-problem {
+  color: var(--failure-text);
+  font-weight: 600;
+}
+
+.pos-warning {
+  color: var(--warning-text);
+}
+
+/* A word that can be picked up, and a sorted word in the sentence. */
+
+.pos-pick {
+  position: relative;
+  display: inline-block;
+}
+
+.pos-word,
+.pos-text [data-sorted],
+.pos-ghost {
+  padding: 0 0.06em;
+  border-radius: 0.3rem;
+}
+
+.pos-word {
+  margin: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.pos-text .pos-word:hover,
+.pos-word[data-held],
+.pos-word[data-lit],
+.pos-text [data-sorted][data-lit] {
+  background: var(--sort-word-bg);
+}
+
+body[data-dragging] .pos-text .pos-word:not([data-held]):hover {
+  background: none;
+}
+
+body[data-dragging],
+body[data-dragging] * {
+  cursor: grabbing !important;
+}
+
+.pos-block[data-editing] .pos-word {
+  cursor: default;
+}
+
+.pos-block[data-editing] .pos-word:hover {
+  background: none;
+}
+
+.pos-ghost {
+  background: transparent;
+}
+
+/* The keyboard's menu of where a word can go. It opens beneath the word, like every other expand. */
+
+.pos-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 10rem;
+  margin-top: 0.15rem;
+  opacity: 0;
+  font-size: 1rem;
+  line-height: 1.45;
+  white-space: nowrap;
+  transition:
+    grid-template-rows var(--expand-duration) var(--expand-easing),
+    opacity var(--expand-duration) var(--expand-easing);
+}
+
+.pos-pick[data-open] .pos-menu {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+@keyframes pos-menu-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.pos-pick[data-open][data-moving] .pos-menu {
+  animation: pos-menu-open var(--expand-duration) var(--expand-easing);
+}
+
+.pos-menu [role="menu"] {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--input-bg);
+  color: var(--input-text);
+  box-shadow: var(--shadow);
+}
+
+.pos-menu [role="menu"]:focus-visible {
+  outline-offset: 0;
+}
+
+.pos-menu [role="menuitem"] {
+  display: block;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.pos-menu [role="menuitem"]:hover {
+  background: var(--row-hover);
+}
+
+/* The menu opens only from the keyboard, so its active item shows whenever it is open. */
+.pos-pick[data-open] .pos-menu [data-active] {
+  outline: 0.12rem solid var(--focus-ring);
+  outline-offset: -0.12rem;
+}
+
 /* Confirmation dialogs */
 
 .dialog-backdrop {
