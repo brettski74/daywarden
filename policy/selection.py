@@ -1,7 +1,9 @@
 """Order the available tasks, pick one, and say where the task pages live.
 
 The picker and the selector both use the available set from
-``policy.tasks.task_sets``. Inside it, a task that has never been passed
+``policy.tasks.task_sets``. The selector also lists the potential tasks
+waiting on required ones, as After These, and every other task he could
+practise, as Extra Practice. Inside a set, a task that has never been passed
 comes before one that has, and the oldest pass comes next. Equal candidates
 are ordered by name and then rotated, so the order of requests does not
 leave one of them at the back forever. Only the picker moves the rotation.
@@ -15,6 +17,7 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
@@ -257,7 +260,13 @@ def ordered_tasks(
 
     Each run of equal candidates is in name order, rotated by ``turn``.
     """
-    ranked = sorted(sets.available, key=lambda task: (_rank(task, client_group, attempts), task.name))
+    return _in_picker_order(sets.available, client_group, attempts, turn)
+
+
+def _in_picker_order(
+    tasks: Sequence[Task], client_group: str, attempts: Sequence[Attempt], turn: int
+) -> tuple[tuple[Task, ...], int]:
+    ranked = sorted(tasks, key=lambda task: (_rank(task, client_group, attempts), task.name))
     groups: list[list[Task]] = []
     for task in ranked:
         if groups and _rank(groups[-1][0], client_group, attempts) == _rank(task, client_group, attempts):
@@ -310,16 +319,47 @@ def picked_task_url(policy: Policy, client_group: str, today: date, store: Attem
     return task_page_url(policy, task.name)
 
 
-def choices(policy: Policy, client_group: str, today: date, store: AttemptStore) -> tuple[Task, ...]:
-    """Return the available tasks in picker order, without moving the rotation."""
-    history = store.history(client_group)
-    ordered, _ties = ordered_tasks(
-        task_sets(policy.tasks, client_group, today, history),
-        client_group,
-        history,
-        turn=read_turn(store, client_group),
+@dataclass(frozen=True)
+class Sections:
+    """What the selector lists.
+
+    ``main`` is the available tasks in picker order. ``after`` is the
+    potential tasks while any task is required, in picker order.
+    ``practice`` is every other configured task whose ``available_from``
+    has arrived, in name order.
+    """
+
+    main: tuple[Task, ...]
+    after: tuple[Task, ...]
+    practice: tuple[Task, ...]
+
+
+def extra_practice(sets: TaskSets, today: date) -> tuple[Task, ...]:
+    """Return the configured tasks that are neither required nor potential, leaving out any not available yet."""
+    return tuple(
+        sorted(
+            (
+                task
+                for task in sets.configured
+                if task not in sets.required
+                and task not in sets.potential
+                and (task.available_from is None or task.available_from <= today)
+            ),
+            key=lambda task: task.name,
+        )
     )
-    return ordered
+
+
+def sections(policy: Policy, client_group: str, today: date, store: AttemptStore) -> Sections:
+    """Return the selector's sections, without moving the rotation."""
+    history = store.history(client_group)
+    sets = task_sets(policy.tasks, client_group, today, history)
+    turn = read_turn(store, client_group)
+    main, _ties = ordered_tasks(sets, client_group, history, turn=turn)
+    after: tuple[Task, ...] = ()
+    if sets.required:
+        after, _ties = _in_picker_order(sets.potential, client_group, history, turn)
+    return Sections(main, after, extra_practice(sets, today))
 
 
 def read_turn(store: AttemptStore, client_group: str) -> int:

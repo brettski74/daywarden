@@ -62,8 +62,11 @@ def show(
     note: str = "",
     record: bool = False,
     back: Back | None = None,
+    line: str = "",
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
+
+    ``line`` says the attempt doesn't count right now.
 
     Nothing is stored unless ``record`` is set, which is how a refused
     give-up is recorded. It leaves the open sentence open, unless its
@@ -88,7 +91,7 @@ def show(
         "nextWaitMs": NEXT_WAIT_MS,
         "ended": ended,
     }
-    return _response(200, _document(session, config, note))
+    return _response(200, _document(session, config, note, line))
 
 
 def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
@@ -164,7 +167,7 @@ def respond_api(
         return reload()
     except ValueError as exc:
         return json_response(400, {"error": str(exc)})
-    ended = {"result": None, "next": None, "back": None}
+    ended = {"result": None, "next": None, "practice": None, "back": None}
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
@@ -237,7 +240,7 @@ def _progress(session: Session) -> dict:
     }
 
 
-def _document(session: Session, config: Mapping, note: str) -> str:
+def _document(session: Session, config: Mapping, note: str, line: str) -> str:
     progress = _progress(session)
     points = f"{format_points(progress['points'])} / {progress['total']} points"
     upcoming = f"Sentence {min(progress['number'] + 1, progress['total'])} of {progress['total']}"
@@ -269,36 +272,37 @@ def _document(session: Session, config: Mapping, note: str) -> str:
         ),
         style=_STYLE,
         script=_MODEL + _SCRIPT,
+        line=line,
     )
 
 
 _STYLE = """\
-.minor { font-size: 1.4rem !important; color: #555; }
+.minor { font-size: 1.4rem !important; color: var(--muted); }
 #ask { width: min(100%, 72rem); display: flex; flex-direction: column; align-items: center; }
 #ask .title { font-size: 2.2rem; margin: 0 0 1.2rem; }
 #ask, .ghost { user-select: none; -webkit-user-select: none; }
 .sentence { font-size: 2.5rem; line-height: 1.5; margin: 0 0 1.5rem; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .word, .placed { border-radius: 6px; padding: 0 0.06em; touch-action: none; }
 .word.can, #ask:not(.locked) .placed { cursor: grab; }
-.word.can:hover, .word.held, .word.lit, .placed.lit, .placed.held { background: #e5e7eb; }
+.word.can:hover, .word.held, .word.lit, .placed.lit, .placed.held { background: var(--highlight); }
 body.dragging .word.can:not(.held):hover { background: none; }
 body.dragging, body.dragging * { cursor: grabbing !important; }
 .parts { width: 100%; border-collapse: collapse; font-size: 2rem; }
-.parts th, .parts td { border: 2px solid #bbb; padding: 0.2rem 0.6rem; }
-.parts th { width: 1%; white-space: nowrap; text-align: left; font-weight: normal; color: #444; background: #f1f1ea; }
+.parts th, .parts td { border: 2px solid var(--given-border); padding: 0.2rem 0.6rem; }
+.parts th { width: 1%; white-space: nowrap; text-align: left; font-weight: normal; color: var(--soft-text); background: var(--given-bg); }
 .parts td { height: 3.75rem; text-align: left; overflow-wrap: anywhere; }
-.parts tr.over th, .parts tr.over td { background: #dbeafe; }
+.parts tr.over th, .parts tr.over td { background: var(--accent-soft); }
 .ghost { position: fixed; z-index: 10; pointer-events: none; background: transparent; white-space: pre; margin: 0; }
 .ghost.flying { transition: left var(--flight) ease-out, top var(--flight) ease-out; }
-.red { color: #dc2626; }
-.blue { color: #4169E1; }
-.answer { color: #000; border-radius: 6px; padding: 0 0.15em; }
-.answer.right { background: #dcfce7; }
-.answer.other, .answer.extra { background: #fee2e2; }
-.answer.missed { background: #ffedd5; }
+.red { color: var(--mark); }
+.blue { color: var(--entry); }
+.answer { color: var(--strong-text); border-radius: 6px; padding: 0 0.15em; }
+.answer.right { background: var(--right-soft); }
+.answer.other, .answer.extra { background: var(--wrong-soft); }
+.answer.missed { background: var(--missed-soft); }
 .answer.extra { text-decoration: line-through; }
 #submit, #next { margin-top: 1rem; }
-#submit:disabled, #next:disabled { background: #a9b8d1; cursor: default; }
+#submit:disabled, #next:disabled { background: var(--accent-disabled); cursor: default; }
 """
 
 _MODEL = """\
@@ -419,12 +423,12 @@ _SCRIPT = """\
     timing = false;
     clearTimeout(expiry);
     if (result.result === "pass") {
-      finish(result.next, null, result.back);
+      finish(result, null);
       return;
     }
     $("failed-points").textContent =
       model.pointsText(result.points, result.total) + ". You needed " + result.required + " to pass.";
-    finish(result.next, $("failed"));
+    finish(result, $("failed"));
   }
 
   const visited = config.ended

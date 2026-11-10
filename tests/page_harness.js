@@ -8,7 +8,8 @@
 // Enter, then lets `run_ms` pass. `steps` replaces that with a list of
 // {click: id}, {wait: ms}, {type: [id, text]}, {key: [id, key]}, and
 // {snap: [id, ...], label}. A snap records whether each element is hidden,
-// disabled, and focused, and its text. Prints the posts, plays, and snaps it
+// disabled, and focused, its text, and its href. A screen's querySelector
+// finds an element by class among the ids inside it in the page source. Prints the posts, plays, and snaps it
 // saw, and each window.location.assign as a navigate, each with the fake time it happened. With `bodies`, each post also
 // carries the JSON it sent. `calls` is a list of [name, ...args] run after the
 // steps against the functions a page exposes as `window.partsOfSpeech`, each
@@ -106,12 +107,27 @@ class Element {
   setSelectionRange() {}
   submit() {}
   appendChild() {}
-  querySelector() {
-    return new Element(null);
+  querySelector(selector) {
+    const inner = this.id && selector.startsWith(".") ? innerId(this.id, selector.slice(1)) : null;
+    return inner ? document.getElementById(inner) : new Element(null);
   }
   getClientRects() {
     return this.hidden ? [] : [{}];
   }
+}
+
+// The id of the first element with this class inside the element with id `outer`, as the page source has them.
+function innerId(outer, className) {
+  const open = input.html.match(new RegExp('<([a-z]+)[^>]*\\sid="' + outer + '"[^>]*>'));
+  if (!open) return null;
+  const start = open.index + open[0].length;
+  const inside = input.html.slice(start, input.html.indexOf("</" + open[1] + ">", start));
+  for (const tag of inside.match(/<[a-z]+[^>]*>/g) || []) {
+    const classes = tag.match(/\sclass="([^"]*)"/);
+    const id = tag.match(/\sid="([^"]*)"/);
+    if (classes && id && classes[1].split(/\s+/).includes(className)) return id[1];
+  }
+  return null;
 }
 
 const elements = new Map();
@@ -210,6 +226,7 @@ function snap(ids) {
       disabled: element.disabled,
       focused: document.activeElement === element,
       text: element.textContent,
+      href: element.href,
     };
   }
   return found;

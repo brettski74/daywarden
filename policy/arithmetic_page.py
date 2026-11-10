@@ -58,13 +58,15 @@ def show(
     note: str = "",
     record: bool = False,
     back: Back | None = None,
+    line: str = "",
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
 
     Nothing is stored unless ``record`` is set, which is how a refused
     give-up closes the question that was showing. Otherwise the script's
     visit request records the page load. Closing a question never passes
-    an arithmetic attempt, so ``back`` is not asked here.
+    an arithmetic attempt, so ``back`` is not asked here. ``line`` says the
+    attempt doesn't count right now.
     """
     session = Session(attempt.detail, task.document())
     session.visit(now)
@@ -78,7 +80,7 @@ def show(
         "correctPause": CORRECT_PAUSE_MS,
         "wrongPause": WRONG_PAUSE_MS,
     }
-    return _response(200, _document(settings.operation.label, session.correct, settings.required, config, note))
+    return _response(200, _document(settings.operation.label, session.correct, settings.required, config, note, line))
 
 
 def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
@@ -146,7 +148,7 @@ def respond_api(
         return reload()
     except ValueError as exc:
         return json_response(400, {"error": str(exc)})
-    ended = {"next": None, "back": None}
+    ended = {"next": None, "practice": None, "back": None}
     if judged.finished:
         store.finish(attempt.id, PASS, now, detail=session.detail)
         ended = ending(policy, store, client_group, now, PASS, back)
@@ -167,7 +169,7 @@ def respond_api(
     )
 
 
-def _document(label: str, correct: int, required: int, config: Mapping, note: str) -> str:
+def _document(label: str, correct: int, required: int, config: Mapping, note: str, line: str) -> str:
     return document(
         title=label,
         config=config,
@@ -185,12 +187,13 @@ def _document(label: str, correct: int, required: int, config: Mapping, note: st
         ),
         style=_STYLE,
         script=_SCRIPT,
+        line=line,
     )
 
 
 _STYLE = """\
 #question { font-size: clamp(3rem, 13vw, 9rem); font-weight: bold; margin: 0 0 2rem; white-space: nowrap; }
-#answer { font-size: 3rem; width: 5em; text-align: center; padding: 0.15em; border: 3px solid #888; border-radius: 8px; }
+#answer { font-size: 3rem; width: 5em; text-align: center; padding: 0.15em; border: 3px solid var(--field-border); border-radius: 8px; }
 """
 
 _SCRIPT = """\
@@ -264,7 +267,7 @@ _SCRIPT = """\
       feedback.textContent = result.outcome === "timeout" ? "Time ran out" : "Not quite";
     }
     const pause = result.outcome === "correct" ? config.correctPause : config.wrongPause;
-    setTimeout(() => (result.finished ? finish(result.next, null, result.back) : ask()), pause);
+    setTimeout(() => (result.finished ? finish(result, null) : ask()), pause);
   }
 
   box.addEventListener("keydown", (event) => {

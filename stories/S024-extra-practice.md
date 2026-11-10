@@ -1,8 +1,8 @@
 Ticket: S024
 Title: Extra practice on the task selector, practice colours, and the favicon on task pages
-Status: Refined
+Status: Done
 Story Points: 13
-Last Updated: 2026-11-09 17:55:00
+Last Updated: 2026-11-09 19:20:00
 ---
 
 # User Voice
@@ -246,3 +246,110 @@ task sets S018 already computes, plus a small collapsible widget with the portal
 palette. It means pulling about 47 colours across six page modules into shared properties, adding the practice line
 to every quiz, and checking all four quiz types in both palettes in a browser. The favicon is small. Overall this is
 close to the 14-point reference work of S006.1 to S006.3, and well inside one session, so it stays one story.
+
+# Implementation
+
+## Files Added/Changed/Removed
+
+Added:
+
+- `policy/child_page.py`: the child pages' palette (standard and practice custom properties, and the 500ms swing
+  motion), the shared `<head>` with the owl icon, the counting lines, and which attempts don't count right now.
+- `policy/static/favicon.png`: a copy of the portal's 64×64 owl, served at `/favicon.png`.
+- `proxy/deny_page.py`: the "Not allowed" page, now with the owl embedded as a `data:` URI.
+- `proxy/favicon.png`: a 32×32 cut of the owl for that page.
+- `tests/test_extra_practice.py`: the sections, the jumps, the nothing-to-revise page, the palette and line on every
+  quiz type, the end-screen link, and the icons.
+
+Changed:
+
+- `policy/selection.py`: `Sections`, `sections()`, and `extra_practice()`. After These uses the picker's ordering.
+- `policy/task_page.py`: the selector's three sections with collapsible headings, the picker's and selector's
+  nothing-to-revise page with Extra Practice open, the new jump rule, and the counting line passed to each quiz and
+  to the spelling give-up review.
+- `policy/quiz_page.py`: the shell uses the palette properties, takes the counting line, shows the "Extra Practice"
+  end-screen link, and `ending()` returns `practice`.
+- `policy/arithmetic_page.py`, `policy/parts_of_speech_page.py`, `policy/skip_counting_page.py`,
+  `policy/spelling_page.py`: colours moved to the palette properties, and each page takes the counting line. The
+  spelling missed-words page after a give-up uses the shared head and line.
+- `policy/app.py`: `GET /favicon.png`, without a session, on both listeners.
+- `policy/review.py`: `/quiz` links the owl.
+- `proxy/addon.py`: uses `deny_page.deny_body`.
+- `tests/page_harness.js`: a screen's `querySelector` finds the element by class in the page source, and a snap
+  records `href`.
+- `tests/test_task_selection.py`: three tests updated for the selector no longer jumping when After These or Extra
+  Practice has a task.
+- `tests/test_spelling.py`: the missed-words page keeps the practice palette and line.
+- `docs/hierarchical-policy.md`, `README.md`: the selector's sections, the jump rule, the end-screen link, the practice
+  palette and lines, and the icons.
+
+Removed: none.
+
+## Change Summary
+
+The selector at `/tasks/choose` now lists the available tasks as blue buttons under "Choose a task", then a collapsed
+"After These" section of teal buttons for potential tasks while any task is required, then a collapsed "Extra
+Practice" section of purple buttons, in name order, for every other task of his whose `available_from` has arrived.
+Headings are buttons with `aria-expanded` and a turning chevron. A collapsed section is `inert`, so Tab skips its
+buttons. The open and close animate `grid-template-rows` over 500ms with swing easing, and are instant with reduced
+motion. A page brought back from the browser's history goes back to how the server sent it. The selector jumps
+straight to a task only when it is the only one and both other sections are empty. When nothing is available, the
+picker and the selector show "There is nothing to revise right now." with Extra Practice open beneath, when it has a
+task. The picker's choice and rotation are unchanged.
+
+Quiz end screens with no next task show an "Extra Practice" link to the selector when Extra Practice has a task. It
+stops the countdown back to the page he was sent from, as "Next task" does.
+
+About 47 colours across the six child page modules are now custom properties in `policy/child_page.py`. A practice
+attempt, or a potential attempt while a task is required, gets `data-palette="practice"` on `<html>`: purple accents,
+a `#f7f3fd` page tint, and right and wrong unchanged. It also gets a line at the top of every screen: "Practice: this
+won't count toward internet time today." or "This counts once your other tasks are done." Contrast was checked: white
+on blue 4.8:1, on teal 5.5:1, on purple 7.1:1, and the green, red, and muted text on the tint 4.6:1 or more.
+
+Every task page and `/quiz` links `/favicon.png`, which the policy server serves without a session. The proxy's "Not
+allowed" page embeds a 32×32 owl, about 5 KB, so it requests nothing.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S024
+
+1. With two tasks due today, one optional task, and one task passed yesterday with `pass_cooldown: 2`, give up one of
+   the due tasks. The selector lists the two due tasks as blue buttons, then collapsed "After These" and "Extra
+   Practice" headings. Expand each one. After These shows "These count once the tasks above are done." and a teal
+   button for the optional task. Extra Practice shows the practice note and a purple button for the cooling-down task.
+2. Open the optional task from After These. The quiz is purple on a light purple page, and says "This counts once your
+   other tasks are done." at the top. Pass it. The parent portal's attempts show it as Potential, and today's score
+   does not rise until the due tasks are passed.
+3. Open the cooling-down task from Extra Practice. The quiz is purple and says "Practice: this won't count toward
+   internet time today." on the start screen, each question, and the end screen. Pass it. The parent portal shows a
+   Practice attempt and the score does not change.
+4. Pass every available task today. The last "Well done" says "All done for now" with a purple "Extra Practice"
+   button. Press it. The selector says "There is nothing to revise right now." with Extra Practice already open and a
+   button for every task, including the ones passed today, in alphabetical order.
+5. Open `/tasks/next` directly in the same state. It shows the same nothing-to-revise page with Extra Practice open.
+6. Open a bookmark to a task passed today. It is purple with the practice line, exactly as from Extra Practice.
+7. Open a required task. It looks as it did before this story: blue, no tint, no line.
+8. Check each quiz type in the purple palette: arithmetic, parts of speech (drag a word and watch the highlight and
+   the drop row turn purple, while red marks after a second wrong try stay red), skip counting (typed numbers are
+   purple, and right and wrong answers are still green and red), and spelling (the Repeat word button and timer bar
+   are purple).
+9. In a practice spelling quiz, miss a word, then give up. The "Words to practise" screen is purple with the practice
+   line at the top.
+10. With only one task available and one passed earlier today, open `/tasks/choose`. It shows that task as a blue
+    button with Extra Practice collapsed beneath, instead of jumping to it. With no task passed or cooling down, it
+    jumps straight to the task as before.
+11. On the selector, Tab to each heading and press Enter, then Space. Each toggles and its chevron turns. While a
+    section is collapsed, Tab skips its buttons. A screen reader announces each heading as expanded or collapsed.
+12. Watch a section open and close: it slides over half a second. Turn on reduced motion in the system or browser,
+    and it changes at once.
+13. Open a section, follow one of its buttons, then press Back. The selector shows its sections collapsed again.
+14. Give up a task opened from After These, pass the remaining due tasks, and reopen the given-up task within the
+    hour. It carries on with the standard palette and no line.
+15. Add a task with `available_from` in the future. It is in no section. Its URL still opens it, as practice.
+16. Add a `parent_check` task and a task for another client group. Neither appears in any section.
+17. Check the browser tab icon: the owl shows on the selector, the nothing-to-revise page, every quiz in both palettes,
+    the spelling missed-words screen, a plain worksheet task page, and `/quiz`, during school hours and at bedtime.
+18. Visit a blocked site. The "Not allowed" page shows the owl in its tab.
+19. Open the parent portal. Its favicon and touch icon are unchanged.
+20. After a pass that counts down to go back to a blocked page, with no next task, press "Extra Practice" before the
+    countdown ends. The selector opens and the browser does not go back.

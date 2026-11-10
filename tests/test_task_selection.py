@@ -203,8 +203,7 @@ def test_a_redirect_to_revision_goes_through_the_picker_to_a_required_task(tmp_p
         assert decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=now).decision["location"] == PICKER
         for _ in range(3):
             assert _picked(now, policy, store) == SITE + "/tasks/due"
-        assert _listed(_open(now, "/tasks/choose", policy, store)) == []
-        assert _location(_open(now, "/tasks/choose", policy, store)) == SITE + "/tasks/due"
+        assert _listed(_open(now, "/tasks/choose", policy, store)) == ["due"]
 
 
 def test_a_task_with_no_pass_cooldown_is_not_offered_again_the_day_it_was_passed(tmp_path):
@@ -592,7 +591,7 @@ def test_a_potential_or_practice_attempt_can_always_be_given_up(tmp_path, name):
         _open(now, f"/tasks/{name}", policy, store)
         assert _location(_open(now, f"/tasks/{name}", policy, store, method="POST")) == CHOOSER
         assert store.attempts("younger", name)[-1].outcome == "abandoned"
-        assert _location(_open(now, "/tasks/choose", policy, store)) == SITE + "/tasks/due"
+        assert _listed(_open(now, "/tasks/choose", policy, store)) == ["due"]
 
 
 # Coming back to a task he gave up

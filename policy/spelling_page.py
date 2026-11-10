@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+from policy.child_page import head, html_tag, line_html
 from policy.hierarchy import Policy
 from policy.quiz import StaleQuestion
 from policy.quiz_page import (
@@ -79,12 +80,14 @@ def show(
     note: str = "",
     record: bool = False,
     back: Back | None = None,
+    line: str = "",
 ) -> PageResponse:
     """Return the start screen with the progress a visit now would show.
 
     Nothing is stored unless ``record`` is set, which is how a refused
     give-up closes the question that was showing. When that passes the
-    attempt, the page opens on its end screen.
+    attempt, the page opens on its end screen. ``line`` says the attempt
+    doesn't count right now.
     """
     session = Session(attempt.detail, task.document(), _RNG)
     session.visit(now)
@@ -102,7 +105,7 @@ def show(
         "audioGrace": AUDIO_GRACE_MS,
         "ended": ended,
     }
-    return _response(200, _document(session, config, note))
+    return _response(200, _document(session, config, note, line))
 
 
 def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
@@ -179,7 +182,7 @@ def respond_api(
         return json_response(
             200, {"word_replays": played["word_replays"], "sentence_plays": played["sentence_plays"]}
         )
-    ended = {"result": None, "next": None, "back": None, "missed": []}
+    ended = {"result": None, "next": None, "practice": None, "back": None, "missed": []}
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
@@ -212,10 +215,11 @@ def media(task: Task, name: str) -> Path | None:
     return find_clip(settings, pool, key, sentence=sentence, extension=extension)
 
 
-def give_up_page(detail: Mapping, location: str) -> PageResponse | None:
+def give_up_page(detail: Mapping, location: str, line: str = "") -> PageResponse | None:
     """Return the missed-words screen shown after giving up, or None when he missed nothing.
 
-    "Continue" goes on to ``location``, the task selector.
+    "Continue" goes on to ``location``, the task selector. ``line`` says the
+    attempt given up didn't count right now.
     """
     words = missed_words(detail)
     if not words:
@@ -224,22 +228,12 @@ def give_up_page(detail: Mapping, location: str) -> PageResponse | None:
     return _response(
         200,
         f"""<!DOCTYPE html>
-<html lang="en">
+{html_tag(line)}
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
-<title>{_e(LABEL)}</title>
-<style>
-body {{ font-family: sans-serif; background: #fbfbf7; color: #222; text-align: center; margin: 0; padding: 3rem 1rem; }}
-h1 {{ font-size: 3rem; margin: 0 0 2rem; }}
-p {{ font-size: 1.8rem; }}
-.big {{ display: inline-block; font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: #2f6fd6; color: #fff; cursor: pointer; text-decoration: none; }}
-{_MISSED_STYLE}[hidden] {{ display: none !important; }}
-</style>
+{head(LABEL, _REVIEW_STYLE)}
 </head>
 <body>
-<section id="review">
+{line_html(line)}<section id="review">
 <h1>Words to practise</h1>
 {_missed_list(words)}
 <button type="button" id="continue" class="big" autofocus>Continue</button>
@@ -331,7 +325,7 @@ def progress_text(progress: Mapping) -> str:
     )
 
 
-def _document(session: Session, config: Mapping, note: str) -> str:
+def _document(session: Session, config: Mapping, note: str, line: str) -> str:
     shown = _e(progress_text(session.progress()))
     return document(
         title=LABEL,
@@ -376,8 +370,17 @@ def _document(session: Session, config: Mapping, note: str) -> str:
         ),
         style=_STYLE,
         script=_SCRIPT,
+        line=line,
     )
 
+
+_REVIEW_STYLE = """\
+body { font-family: sans-serif; background: var(--page-bg); color: var(--text); text-align: center; margin: 0; padding: 0 1rem 3rem; }
+#review { padding-top: 3rem; }
+h1 { font-size: 3rem; margin: 0 0 2rem; }
+.big { display: inline-block; font-size: 2rem; padding: 0.5em 1.6em; border: none; border-radius: 10px; background: var(--accent); color: var(--on-accent); cursor: pointer; text-decoration: none; }
+[hidden] { display: none !important; }
+"""
 
 _MISSED_STYLE = """\
 #missed-words { display: grid; grid-template-columns: repeat(var(--columns, 3), minmax(4em, max-content)); justify-content: center;
@@ -388,20 +391,20 @@ _STYLE = (
     """\
 #ask:not([hidden]) { align-self: stretch; flex: 1; display: flex; flex-direction: column; }
 .clips { display: flex; justify-content: space-between; gap: 1rem; }
-.clip { font-size: 1.8rem; font-weight: bold; padding: 0.6em 1.2em; border-radius: 12px; color: #1d4ed8; background: #dbeafe;
-  border: 3px solid #93c5fd; cursor: pointer; }
-.clip:hover:not(:disabled) { border-color: #2563eb; }
-.clip:disabled { color: #9ca3af; background: #e5e7eb; border-color: #d1d5db; cursor: default; }
+.clip { font-size: 1.8rem; font-weight: bold; padding: 0.6em 1.2em; border-radius: 12px; color: var(--accent-strong); background: var(--accent-soft);
+  border: 3px solid var(--accent-edge); cursor: pointer; }
+.clip:hover:not(:disabled) { border-color: var(--accent-hover); }
+.clip:disabled { color: var(--disabled-text); background: var(--disabled-bg); border-color: var(--disabled-edge); cursor: default; }
 .entry { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 #answer { box-sizing: content-box; width: 18ch; font: bold min(3.5rem, 5vw) ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
-  padding: 0.2em 0.4em; text-align: center; border: 3px solid #888; border-radius: 10px; background: #fff; color: #222; }
-#answer:disabled { background: #f1f1ea; }
-#reveal { min-height: 3.6rem; font-size: 3rem; font-weight: bold; color: #1a7f37; margin-top: 1.2rem; }
-.practice { position: fixed; right: 1rem; bottom: 2.8rem; font-size: 1.1rem; padding: 0.35rem 1rem; background: #fff;
-  border: 1px solid #aaa; border-radius: 6px; color: #444; cursor: pointer; }
-.practice:disabled { color: #aaa; cursor: default; }
-#practice-confirm { position: fixed; right: 1rem; bottom: 5.6rem; max-width: 22rem; background: #fff; border: 1px solid #aaa;
-  border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); text-align: left; }
+  padding: 0.2em 0.4em; text-align: center; border: 3px solid var(--field-border); border-radius: 10px; background: var(--surface); color: var(--text); }
+#answer:disabled { background: var(--given-bg); }
+#reveal { min-height: 3.6rem; font-size: 3rem; font-weight: bold; color: var(--right); margin-top: 1.2rem; }
+.practice { position: fixed; right: 1rem; bottom: 2.8rem; font-size: 1.1rem; padding: 0.35rem 1rem; background: var(--surface);
+  border: 1px solid var(--control-border); border-radius: 6px; color: var(--soft-text); cursor: pointer; }
+.practice:disabled { color: var(--control-border); cursor: default; }
+#practice-confirm { position: fixed; right: 1rem; bottom: 5.6rem; max-width: 22rem; background: var(--surface); border: 1px solid var(--control-border);
+  border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px var(--shadow); text-align: left; }
 #practice-confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
 #practise:not([hidden]) { display: flex; flex-direction: column; align-items: center; }
 #practice-word { font-size: min(9rem, 9vw); font-weight: bold; line-height: 1.2; overflow-wrap: anywhere; }
@@ -426,7 +429,6 @@ _SCRIPT = """\
   let expiry = null;
   let listening = 0;
   let afterMissed = null;
-  let afterBack = null;
   let inflight = Promise.resolve();
   let attemptOver = false;
   let entering = false;
@@ -517,7 +519,7 @@ _SCRIPT = """\
     practiceBox.hidden = true;
     const missed = result.missed || [];
     if (!missed.length) {
-      finish(result.next, null, result.back);
+      finish(result, null);
       return;
     }
     state = "missed";
@@ -532,13 +534,12 @@ _SCRIPT = """\
       item.textContent = word;
       missedList.appendChild(item);
     }
-    afterMissed = result.next;
-    afterBack = result.back;
+    afterMissed = result;
     missedContinue.focus();
   }
 
   function onward() {
-    if (state === "missed") finish(afterMissed, null, afterBack);
+    if (state === "missed") finish(afterMissed, null);
   }
 
   const visited = config.ended
