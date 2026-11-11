@@ -55,6 +55,7 @@
   --input-bg: var(--palette-white);
   --input-text: var(--palette-navy);
   --input-border: var(--palette-lavender);
+  --input-disabled-bg: color-mix(in srgb, var(--palette-lavender) 25%, var(--palette-ivory));
 
   --signin-bg: var(--palette-ivory);
   --signin-panel-bg: var(--palette-white);

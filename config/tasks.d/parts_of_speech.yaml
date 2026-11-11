@@ -1,6 +1,6 @@
 tasks:
   parts_of_speech:
-    parts_of_speech:
+    Parts of Speech:
       group: younger
       pass_cooldown: 1
       body:
@@ -25,7 +25,7 @@ tasks:
               noun: [sentence, words]
               verb: [contain]
               adjective: [some]
-    parts_of_speech_nouns:
+    Parts of Speech (Nouns):
       group: younger
       pass_cooldown: 21
       failure_cooldown: 1

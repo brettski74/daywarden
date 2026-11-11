@@ -111,7 +111,9 @@ def sentences_edit(written: WrittenTask, asked: object) -> ListEdit | None:
 
 def _read(written: WrittenTask) -> tuple[list[Written], list[str]]:
     """Return each sentence the file lists, and why any entry in it could not be shown."""
-    listed = written.body_data.get("sentences")
+    if "sentences" not in written.body_data:
+        return [], []
+    listed = written.body_data["sentences"]
     if not isinstance(listed, list):
         return [], ["sentences: must be a list of one or more sentences, each with sentence and parts"]
     sentences: list[Written] = []

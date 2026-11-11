@@ -6,6 +6,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  SquarePlus,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, type KeyboardEvent, type PointerEvent } from "react";
@@ -13,7 +14,7 @@ import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
 import { KEY_STEP, useSidebar, useTaskList } from "../sidebar";
-import { taskLabel, taskPath, type TaskRef } from "../taskRef";
+import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
 
@@ -25,7 +26,8 @@ export const ENTRIES: Entry[] = [
 
 /** Task Administration: a button that expands the list of tasks, each a link to its page. */
 function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
-  const onTaskPage = useLocation().pathname.startsWith("/tasks/");
+  const { pathname } = useLocation();
+  const onTaskPage = pathname.startsWith("/tasks/") || pathname === NEW_TASK;
   const { expanded, setExpanded } = useTaskList(onTaskPage);
   const { shown, moving, toggle } = useExpander(expanded, setExpanded);
   const hint = onTaskPage ? "The task list stays open while a task page is open" : undefined;
@@ -47,6 +49,12 @@ function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
       {shown && (
         <div className="nav-sub" inert={!expanded}>
           <ul id="task-list">
+            <li>
+              <NavLink to={NEW_TASK} className="nav-new">
+                <SquarePlus aria-hidden="true" />
+                <span>Create New Task</span>
+              </NavLink>
+            </li>
             {tasks.map((task) => (
               <li key={`${task.type}/${task.name}`}>
                 <NavLink to={taskPath(task)}>{taskLabel(task, tasks)}</NavLink>

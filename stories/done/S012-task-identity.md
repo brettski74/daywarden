@@ -1,6 +1,6 @@
 Ticket: S012
 Title: Task identity is type and name
-Status: In Progress
+Status: Done
 Story Points: 5
 Last Updated: 2026-11-10 19:20:00
 ---

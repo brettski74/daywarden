@@ -1,6 +1,6 @@
 tasks:
   arithmetic:
-    sums:
+    Addition (4-6):
       group: younger
       pass_cooldown: 1
       body:

@@ -29,6 +29,7 @@ import errno
 import hashlib
 import os
 import shutil
+import sqlite3
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -79,6 +80,15 @@ class Answer:
     body: dict
 
 
+@dataclass(frozen=True)
+class Step:
+    """One part of a change, how to take it back, and what a failure says before its reason."""
+
+    make: Callable[[], object]
+    undo: Callable[[], object]
+    failed: str
+
+
 @dataclass
 class Reloads:
     """How a save applies the policy: the decisions service in this process, then the others by socket."""
@@ -114,8 +124,9 @@ class TaskAdmin:
         return History(self.policy_file.parent)
 
     def catalogue(self) -> list[dict[str, str]]:
-        """Return the type and name of every task the policy files define, in order of name, then type."""
-        return [{"type": key.type, "name": key.name} for key in sorted(self._files(), key=lambda key: (key.name, key.type))]
+        """Return the type and name of every task the policy files define, in order of name, ignoring case, then type."""
+        ordered = sorted(self._files(), key=lambda key: (key.name.casefold(), key.name, key.type))
+        return [{"type": key.type, "name": key.name} for key in ordered]
 
     def keys(self) -> set[TaskKey]:
         return set(self._files())
@@ -125,6 +136,10 @@ class TaskAdmin:
         if isinstance(found, Answer):
             return found
         path, text, written = found
+        return Answer(200, self.page_body(key, path, _version(text), written))
+
+    def page_body(self, key: TaskKey, path: Path, version: str, written: WrittenTask) -> dict:
+        """Return a task page's data. A new task's page is built from an empty ``written`` and no version."""
         kind = key.type
         fields = {key: written.fields.get(key, "") for key in COMMON_FIELDS}
         if kind == PARENT_CHECK:
@@ -135,7 +150,7 @@ class TaskAdmin:
             "name": key.name,
             "type": kind,
             "file": str(path),
-            "version": _version(text),
+            "version": version,
             "groups": list(written.groups),
             "clients": clients,
             "fields": fields,
@@ -148,7 +163,7 @@ class TaskAdmin:
             body["skip_counting"] = number_lists_admin.skip_counting_page(written)
         elif kind == ARITHMETIC:
             body["arithmetic"] = number_lists_admin.arithmetic_page(written)
-        return Answer(200, body)
+        return body
 
     def save(self, key: TaskKey, request: Mapping, username: str) -> Answer:
         found = self._read(key)
@@ -187,14 +202,49 @@ class TaskAdmin:
         failed: str = "The words could not be moved, so nothing was saved",
         moved_all: Callable[[], None] | None = None,
     ) -> Answer:
-        """Check and make a save: the task's new text and the planned file moves, as one change.
+        """Check and make a save: the task's new text and the planned file moves, as one change."""
+        steps = []
+        if new_text != text:
+            steps.append(
+                Step(
+                    lambda: replace_text(path, new_text),
+                    lambda: replace_text(path, text),
+                    f"{path} could not be written, so nothing was saved",
+                )
+            )
+        return self.change(
+            key, {path: new_text}, moves, steps, username,
+            confirmed=confirmed, moved=moved, failed=failed, moved_all=moved_all,
+            done=f"Saved {key.name}.", commit=f"saved task {key}", paths=[path],
+        )
+
+    def change(
+        self,
+        key: TaskKey,
+        overrides: Mapping[Path, str],
+        moves: list[tuple[Path, Path]],
+        steps: Sequence[Step],
+        username: str,
+        *,
+        confirmed: bool,
+        moved: str | None,
+        failed: str,
+        done: str,
+        commit: str,
+        paths: Sequence[Path],
+        moved_all: Callable[[], None] | None = None,
+    ) -> Answer:
+        """Check and make one change to the policy files and the data directory.
 
         Hand edits in the config directory are checked and committed first.
-        The whole policy is loaded with the new text and the files already
-        moved, and refused when it would not load. Then the files move, the
-        text is written, every service reloads, and the save is committed.
-        When a move or the write fails, the moves already made are reversed.
-        ``moved_all`` runs once every file has moved and the text is written.
+        The whole policy is loaded with ``overrides`` in place of the files
+        they name and the planned moves already made, and refused when it
+        would not load. Then the files move and each step is made in order.
+        When a move or a step fails, everything already done is taken back.
+        ``moved_all`` runs once every step is made. With any steps, every
+        service reloads, and ``paths`` are committed with ``commit``, after
+        the time and the parent, such as ``saved task spelling/spelling``.
+        ``done`` begins the message, such as ``Saved spelling.``.
         """
         history = self.history
         try:
@@ -206,7 +256,7 @@ class TaskAdmin:
             problems = self._problems()
             if problems:
                 return Answer(400, {"error": HAND_EDITS_BROKEN, "errors": problems})
-        refused = self._check(moves, {path: new_text})
+        refused = self._check(moves, overrides)
         if refused is not None:
             return refused
         checked = self._checked
@@ -220,29 +270,36 @@ class TaskAdmin:
         if hand:
             self._commit(f"{stamp(when)} hand edits found before a portal save", username, when, None, warnings)
         try:
-            done = move_files(moves)
+            moved_files = move_files(moves)
         except OSError as error:
             return Answer(500, {"error": f"{failed}: {error}"})
-        if new_text != text:
+        made: list[Step] = []
+        for step in steps:
             try:
-                replace_text(path, new_text)
-            except OSError as error:
-                undo_moves(done)
-                return Answer(500, {"error": f"{path} could not be written, so nothing was saved: {error}"})
+                step.make()
+            except (OSError, sqlite3.Error) as error:
+                for earlier in reversed(made):
+                    try:
+                        earlier.undo()
+                    except (OSError, sqlite3.Error) as problem:
+                        print(f"task {key}: could not take back a step of a failed change: {problem}", flush=True)
+                undo_moves(moved_files)
+                return Answer(500, {"error": f"{step.failed}: {error}"})
+            made.append(step)
         if moved_all is not None:
             moved_all()
         parts = []
-        if new_text != text or hand:
+        if steps or hand:
             applied = self._reload(warnings)
             if applied is not None:
                 return applied
-            parts.append(f"Saved {key.name}. The decisions, observations, and autoconfig services are using it.")
+            parts.append(f"{done} The decisions, observations, and autoconfig services are using it.")
         if moved:
             parts.append(moved)
-        if new_text != text:
-            relative = _within(path, self.policy_file.parent)
-            if relative is not None and history.kept:
-                self._commit(f"{stamp(when)} {username}: saved task {key}", username, when, [relative], warnings)
+        if steps:
+            relative = [found for found in (_within(path, self.policy_file.parent) for path in paths) if found is not None]
+            if relative and history.kept:
+                self._commit(f"{stamp(when)} {username}: {commit}", username, when, relative, warnings)
         return Answer(200, {"message": " ".join(parts), "warnings": warnings})
 
     def retire(self, task: TaskKey, key: object) -> Answer:
@@ -319,11 +376,15 @@ class TaskAdmin:
         found = self._read(task)
         if isinstance(found, Answer) or task.type != spelling.SPELLING:
             return None
-        if pool not in spelling.ALL_POOLS or "/" in file_name or file_name.startswith("."):
-            return None
         try:
             settings = _settings(found[2])
         except ValueError:
+            return None
+        return self.pool_file(settings, pool, file_name)
+
+    def pool_file(self, settings: spelling.Settings, pool: str, file_name: str) -> Path | None:
+        """Return a recording in one of the pools ``settings`` names, or None."""
+        if pool not in spelling.ALL_POOLS or "/" in file_name or file_name.startswith("."):
             return None
         candidate = self.data_root() / settings.directory(pool) / file_name
         return candidate if candidate.is_file() else None
