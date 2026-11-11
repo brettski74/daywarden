@@ -5,7 +5,7 @@ import { WEEK, fakeService, renderPortal, shown, type Call, type Reply } from ".
 import { media, useFakeMedia } from "./test/recorder";
 
 const TAKE = "TakeTakeTakeTake";
-const WEEK_API = "/parent/api/tasks/spelling/week";
+const WEEK_API = "/parent/api/tasks/spelling/spelling/week";
 type Week = typeof WEEK;
 
 useFakeMedia();
@@ -32,7 +32,7 @@ async function openWeek({ week = WEEK as Week, answer, found = 5 }: { week?: Wee
     if (call.path === `${WEEK_API}/recordings`) return { body: { message: "Kept 2 clips for the new week. They go into the pools on Apply.", warnings: [] } };
     return undefined;
   });
-  const view = renderPortal("/parent/tasks/spelling/week");
+  const view = renderPortal("/parent/tasks/spelling/spelling/week");
   await screen.findByRole("heading", { name: "New week's words" });
   return { calls, fetches: () => fetched, change: (next: Week) => (shownWeek = next), ...view };
 }
@@ -66,13 +66,13 @@ async function recordTake(dialog: HTMLElement) {
 describe("opening the new week's words", () => {
   it("is a link in the spelling page's context bar to its own address", async () => {
     fakeService();
-    const { router } = renderPortal("/parent/tasks/spelling");
+    const { router } = renderPortal("/parent/tasks/spelling/spelling");
     const link = await screen.findByRole("link", { name: "New week's words" });
-    expect(link).toHaveAttribute("href", "/parent/tasks/spelling/week");
+    expect(link).toHaveAttribute("href", "/parent/tasks/spelling/spelling/week");
     await userEvent.click(link);
     expect(await screen.findByRole("heading", { name: "New week's words" })).toBeInTheDocument();
-    expect(shown(router)).toBe("/parent/tasks/spelling/week");
-    expect(crumb()).toHaveAttribute("href", "/parent/tasks/spelling");
+    expect(shown(router)).toBe("/parent/tasks/spelling/spelling/week");
+    expect(crumb()).toHaveAttribute("href", "/parent/tasks/spelling/spelling");
   });
 
   it("lists each word with where it is now, its word and sentence clips, and its sentence text", async () => {
@@ -96,8 +96,8 @@ describe("opening the new week's words", () => {
     await userEvent.click(screen.getByRole("button", { name: "rope" }));
     expect(media.played).toEqual([
       `${WEEK_API}/clips/00c0ffee.opus`,
-      "/parent/api/tasks/spelling/audio/revision/fish.sentence.wav",
-      "/parent/api/tasks/spelling/audio/current/rope.wav",
+      "/parent/api/tasks/spelling/spelling/audio/revision/fish.sentence.wav",
+      "/parent/api/tasks/spelling/spelling/audio/current/rope.wav",
     ]);
   });
 });
@@ -190,7 +190,7 @@ describe("entering and editing the list", () => {
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByRole("button", { name: "Stay" })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole("button", { name: "Stay" }));
-    expect(shown(router)).toBe("/parent/tasks/spelling/week");
+    expect(shown(router)).toBe("/parent/tasks/spelling/spelling/week");
     expect(screen.getByRole("textbox", { name: /^Words, separated by commas/ })).toHaveValue("newt");
   });
 });
@@ -272,7 +272,7 @@ describe("recording the week", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(posts(calls, `${WEEK_API}/recordings`)).toHaveLength(1));
     expect(posts(calls, `${WEEK_API}/recordings`)[0].body).toEqual({ take: TAKE, clips: [{ word: "frog", kind: "word", clip: "aaaaaa-1" }] });
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toEqual([]);
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")).toEqual([]);
   });
 
   it("shows Back undoing the last decision during the week's review", async () => {
@@ -301,7 +301,7 @@ describe("applying or cancelling", () => {
       answer: (call) => (call.path === `${WEEK_API}/apply` ? { body: { message, warnings: [] } } : undefined),
     });
     await userEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling"));
+    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling/spelling"));
     expect(posts(calls, `${WEEK_API}/apply`)[0].body).toEqual({ version: "v1" });
     expect(await screen.findByRole("heading", { name: "spelling" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(message);
@@ -329,7 +329,7 @@ describe("applying or cancelling", () => {
     const target = screen.getByRole("textbox", { name: "Required Correct (Current Pool)" });
     await userEvent.type(target, "5");
     await userEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling"));
+    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling/spelling"));
     expect(posts(calls, `${WEEK_API}/apply`)[1].body).toEqual({ version: "v1", settings: { current_required: "5", revision_required: "1" } });
   });
 
@@ -345,7 +345,7 @@ describe("applying or cancelling", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     dialog = await screen.findByRole("alertdialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "Throw away" }));
-    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling"));
+    await waitFor(() => expect(shown(router)).toBe("/parent/tasks/spelling/spelling"));
     expect(posts(calls, `${WEEK_API}/cancel`)).toHaveLength(1);
     expect(await screen.findByText("Threw away the new week's setup. The pools have not changed.")).toBeInTheDocument();
   });

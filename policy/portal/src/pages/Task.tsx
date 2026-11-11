@@ -16,10 +16,26 @@ import { ApiError, api, pageOf } from "../api";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { label } from "../labels";
+import { arithmeticLists, problemsText, shownArithmetic, type ArithmeticData } from "../arithmetic";
+import type { NumberRow, ServiceRow } from "../numberTable";
 import { FIX_FIRST, blocked, blocksChanged, countsText, loaded, toRequest, type Block, type PosData } from "../sentences";
+import {
+  FIX_ON_PAGE,
+  differenceProblems,
+  differenceRequest,
+  shownDifference,
+  skipBlocked,
+  skipCounts,
+  type ListEdit,
+  type ListEdits,
+  type SkipData,
+} from "../skipCounting";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { PartsOfSpeechAdmin } from "./PartsOfSpeech";
+import { ArithmeticAdmin } from "./Arithmetic";
+import { SkipCountingAdmin } from "./SkipCounting";
 import { POOL_FILTERS, SpellingAdmin, listedPools, type Pool, type SpellingData } from "./Spelling";
+import { routeTask, taskPath } from "../taskRef";
 
 export type TaskData = {
   name: string;
@@ -31,6 +47,8 @@ export type TaskData = {
   fields: Record<string, string>;
   spelling?: SpellingData;
   parts_of_speech?: PosData;
+  skip_counting?: SkipData;
+  arithmetic?: ArithmeticData;
 };
 
 export type Result = {
@@ -50,9 +68,11 @@ type Edits = {
   moves: Record<string, Pool>;
   /** A parts of speech task's sentences, once anything in them has been touched. */
   blocks: Block[] | null;
+  /** Each weighted number list touched, such as a skip counting task's difference. */
+  lists: ListEdits;
 };
 
-const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null };
+const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null, lists: {} };
 
 const GROUPS: { legend: string; keys: string[] }[] = [
   { legend: "Cooldowns and limits", keys: ["pass_cooldown", "failure_cooldown", "max_skips", "max_passes"] },
@@ -60,15 +80,11 @@ const GROUPS: { legend: string; keys: string[] }[] = [
 ];
 const PLACEHOLDERS: Record<string, string> = { pass_cooldown: "1", available_from: "yyyy-mm-dd", due_date: "yyyy-mm-dd" };
 
-export function taskPath(name: string): string {
-  return `/tasks/${encodeURIComponent(name)}`;
-}
-
 /** What another page, such as the new week's words, reports on the task page it opens. */
 export type Reported = { message: string; warnings: string[] };
 
 export async function taskLoader({ request, params }: LoaderFunctionArgs): Promise<TaskData> {
-  return api<TaskData>(taskPath(params.name ?? ""), { page: pageOf(request), signal: request.signal });
+  return api<TaskData>(taskPath(routeTask(params)), { page: pageOf(request), signal: request.signal });
 }
 
 /**
@@ -87,7 +103,7 @@ export function taskShouldRevalidate({ currentUrl, nextUrl, formMethod, actionRe
 /** Save the page, or retire one word. Sent from the page on show, so a refusal returns to it. */
 export async function taskAction({ request, params }: ActionFunctionArgs): Promise<Result> {
   const { intent, ...body } = (await request.json()) as { intent: "save" | "retire" } & Record<string, unknown>;
-  const path = taskPath(params.name ?? "") + (intent === "retire" ? "/retire" : "");
+  const path = taskPath(routeTask(params)) + (intent === "retire" ? "/retire" : "");
   try {
     const done = await api<{ message: string; warnings: string[] }>(path, { page: pageOf(request), method: "POST", body });
     return { intent, ok: true, ...done };
@@ -99,16 +115,18 @@ export async function taskAction({ request, params }: ActionFunctionArgs): Promi
 
 export function Task() {
   const data = useLoaderData() as TaskData;
-  return <TaskEditor key={data.name} data={data} />;
+  return <TaskEditor key={`${data.type}/${data.name}`} data={data} />;
 }
 
 function changed(data: TaskData, edits: Edits): boolean {
   const differs = (shown: Record<string, string>, edited: Record<string, string>) =>
     Object.entries(edited).some(([key, value]) => value.trim() !== (shown[key] ?? "").trim());
-  const settings = (data.spelling ?? data.parts_of_speech)?.settings ?? {};
+  const settings = (data.spelling ?? data.parts_of_speech ?? data.skip_counting ?? data.arithmetic)?.settings ?? {};
   if (differs(data.fields, edits.fields) || differs(settings, edits.settings)) return true;
   if (edits.groups !== null && edits.groups.join("\n") !== data.groups.join("\n")) return true;
   if (data.parts_of_speech && edits.blocks !== null && blocksChanged(data.parts_of_speech, edits.blocks)) return true;
+  if (data.skip_counting && shownDifference(data.skip_counting, edits.settings, edits.lists.difference).changed) return true;
+  if (data.arithmetic && Object.keys(arithmeticLists(shownArithmetic(data.arithmetic, edits.settings, edits.lists))).length > 0) return true;
   const pools = new Map(data.spelling?.words.map((word) => [word.key, word.pool]) ?? []);
   return Object.entries(edits.moves).some(([key, pool]) => pools.has(key) && pools.get(key) !== pool);
 }
@@ -128,15 +146,25 @@ function TaskEditor({ data }: { data: TaskData }) {
   const pos = data.parts_of_speech;
   const shownBlocks = useMemo(() => (pos ? loaded(pos) : []), [pos]);
   const blocks = edits.blocks ?? shownBlocks;
-  const held = pos !== undefined && blocked(blocks);
+  const skip = data.skip_counting;
+  const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
+  const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
+  const sums = data.arithmetic ? shownArithmetic(data.arithmetic, edits.settings, edits.lists) : null;
+  const held =
+    (pos !== undefined && blocked(blocks)) || (difference !== null && skipBlocked(difference, differenceTrouble)) || (sums !== null && sums.count > 0);
+  const fixFirst = pos ? FIX_FIRST : FIX_ON_PAGE;
 
   const save = useCallback(
     (confirmed = false) => {
       if (fetcher.state !== "idle" || !dirty) return;
       if (held) {
-        setResult({ intent: "save", ok: false, error: FIX_FIRST });
+        setResult({ intent: "save", ok: false, error: fixFirst });
         return;
       }
+      const lists: Record<string, ServiceRow[] | "default"> = {};
+      const sentDifference = difference ? differenceRequest(difference) : undefined;
+      if (sentDifference !== undefined) lists.difference = sentDifference;
+      if (sums) Object.assign(lists, arithmeticLists(sums));
       const groups = edits.groups ?? data.groups;
       fetcher.submit(
         {
@@ -146,18 +174,29 @@ function TaskEditor({ data }: { data: TaskData }) {
           groups,
           ...(data.spelling ? { settings: { ...data.spelling.settings, ...edits.settings }, moves: edits.moves } : {}),
           ...(pos ? { settings: { ...pos.settings, ...edits.settings }, sentences: toRequest(blocks) } : {}),
+          ...(skip ? { settings: { ...skip.settings, ...edits.settings }, lists } : {}),
+          ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
           confirmed,
         },
         { method: "post", encType: "application/json" },
       );
     },
-    [fetcher, data, edits, dirty, held, pos, blocks],
+    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums],
   );
 
   const changeBlocks = useCallback(
     (change: (current: Block[]) => Block[]) => setEdits((current) => ({ ...current, blocks: change(current.blocks ?? shownBlocks) })),
     [shownBlocks],
   );
+
+  /** Change a number list's rows. A list not yet touched, or the default list, starts from the rows on show. */
+  const changeList = (field: string, shown: NumberRow[], change: (rows: NumberRow[]) => NumberRow[]) =>
+    setEdits((current) => {
+      const now = current.lists[field];
+      return { ...current, lists: { ...current.lists, [field]: change(Array.isArray(now) ? now : shown) } };
+    });
+  const setList = (field: string, list: ListEdit) => setEdits((current) => ({ ...current, lists: { ...current.lists, [field]: list } }));
+  const setSetting = (key: string, text: string) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }));
 
   const retire = useCallback(
     (key: string) => fetcher.submit({ intent: "retire", word: key }, { method: "post", encType: "application/json" }),
@@ -235,7 +274,7 @@ function TaskEditor({ data }: { data: TaskData }) {
           </label>
         )}
         {data.spelling && (
-          <Link className="button button-quiet" to={`${taskPath(data.name)}/week`}>
+          <Link className="button button-quiet" to={`${taskPath(data)}/week`}>
             <CalendarPlus aria-hidden="true" />
             New week's words
           </Link>
@@ -252,7 +291,7 @@ function TaskEditor({ data }: { data: TaskData }) {
             className="button"
             onClick={() => save()}
             disabled={fetcher.state !== "idle" || !dirty || held}
-            title={held ? FIX_FIRST : dirty ? "Save (Ctrl+S)" : "Nothing to save"}
+            title={held ? fixFirst : dirty ? "Save (Ctrl+S)" : "Nothing to save"}
           >
             <Save aria-hidden="true" />
             Save
@@ -311,7 +350,7 @@ function TaskEditor({ data }: { data: TaskData }) {
 
       {data.spelling ? (
         <SpellingAdmin
-          task={data.name}
+          task={data}
           data={data.spelling}
           filter={pool}
           settings={edits.settings}
@@ -333,6 +372,24 @@ function TaskEditor({ data }: { data: TaskData }) {
           onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
           onBlocks={changeBlocks}
         />
+      ) : skip && difference ? (
+        <SkipCountingAdmin
+          data={skip}
+          settings={edits.settings}
+          shown={difference}
+          problems={differenceTrouble}
+          onSetting={setSetting}
+          onRows={(change) => changeList("difference", difference.rows, change)}
+          onDefault={() => setList("difference", "default")}
+        />
+      ) : data.arithmetic && sums ? (
+        <ArithmeticAdmin
+          data={data.arithmetic}
+          settings={edits.settings}
+          shown={sums}
+          onSetting={setSetting}
+          onRows={(field, change) => changeList(field, sums[field].rows, change)}
+        />
       ) : (
         <p>Task-specific administration for {data.type} tasks is not built yet.</p>
       )}
@@ -341,6 +398,8 @@ function TaskEditor({ data }: { data: TaskData }) {
         {result && <Outcome result={result} />}
         {data.spelling && <span>{counts(data.spelling, pool)}</span>}
         {pos && <span>{countsText(blocks)}</span>}
+        {difference && <span>{skipCounts(difference, differenceTrouble)}</span>}
+        {sums && <span>{problemsText(sums)}</span>}
       </StatusBar>
 
       {asking !== null && (

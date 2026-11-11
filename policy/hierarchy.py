@@ -4,8 +4,10 @@ A file may include other files, and a directory include reads the ``*.yaml``
 and ``*.yml`` files in that directory, in lexicographic order, without walking
 into subdirectories. A file already loaded is skipped, so an include cycle is
 not an error. Names are unique inside each of the six namespaces. The same
-spelling may be used in two namespaces. Tasks are the sixth. Their bodies
-are opaque here, except that an ``arithmetic`` body is checked by
+spelling may be used in two namespaces. Tasks are the sixth. ``tasks`` maps
+each task type to the tasks of that type, by name, and a task is its type and
+its name together, so two tasks may share a name when their types differ.
+Their bodies are opaque here, except that an ``arithmetic`` body is checked by
 ``policy.arithmetic``, a ``parts_of_speech`` body by
 ``policy.parts_of_speech``, a ``skip_counting`` body by
 ``policy.skip_counting``, and a ``spelling`` body and its word directories by
@@ -49,7 +51,7 @@ from policy.clients import Lookup, UnresolvedAddress, normalize_ip, resolve_addr
 from policy.clock import named_zone
 from policy.pac import SWITCHES, DirectEntries, parse_extra
 from policy.problems import Collector, Problems, problems_of
-from policy.tasks import Task
+from policy.tasks import Task, TaskKey
 
 # A redirect to this location goes to the task pages on the policy server.
 REVISION_TASK = "revision_task"
@@ -69,6 +71,8 @@ _TIMESTAMP = "tag:yaml.org,2002:timestamp"
 _DURATION = re.compile(r"^(\d+)([hms])$")
 _SIZE = re.compile(r"^(\d+)([bkMGT])$")
 _DECIMAL = re.compile(r"^[+-]?(?:0|[1-9][0-9]*)$")
+# A problem written where it is: ``path:line:column: message``.
+_PLACED = re.compile(r"(.*?:\d+:\d+): (.*)", re.DOTALL)
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _START_CLOCK = re.compile(
     r"^(?:(?P<h1>[01]\d|2[0-3]):(?P<m1>[0-5]\d)|(?P<h2>[01]\d|2[0-3])(?P<m2>[0-5]\d))$"
@@ -110,7 +114,6 @@ _SCALARS = {"entry", "timezone", "hostname", "port", "bucket_length", "time_grac
 _PORT_TEXT = re.compile(r"[1-9][0-9]*")
 _SECTIONS = {"client_groups", "site_groups", "time_windows", "quotas", "rule_sets", "tasks"}
 _TASK_KEYS = {
-    "type",
     "group",
     "groups",
     "pass_cooldown",
@@ -284,8 +287,10 @@ class Policy:
     def quota(self, name: str) -> Quota | None:
         return _named(self.quotas, name)
 
-    def task(self, name: str) -> Task | None:
-        return _named(self.tasks, name)
+    def task(self, key: TaskKey) -> Task | None:
+        if not isinstance(key, tuple):
+            raise TypeError("a task is named by its type and its name")
+        return next((task for task in self.tasks if task.key == key), None)
 
 
 def _named(items, name):
@@ -317,8 +322,8 @@ class _Build:
     window_where: dict[str, str] = field(default_factory=dict)
     quotas: dict[str, _RawQuota] = field(default_factory=dict)
     quota_where: dict[str, str] = field(default_factory=dict)
-    tasks: dict[str, Task] = field(default_factory=dict)
-    task_where: dict[str, str] = field(default_factory=dict)
+    tasks: dict[TaskKey, Task] = field(default_factory=dict)
+    task_where: dict[TaskKey, str] = field(default_factory=dict)
     rule_sets: dict[str, tuple[Rule, ...]] = field(default_factory=dict)
     ruleset_where: dict[str, str] = field(default_factory=dict)
     proxy_configuration: DirectEntries = DirectEntries()
@@ -437,8 +442,8 @@ def load(
     return _finish(build, previous, lookup, warn)
 
 
-def task_files(path: str | Path) -> dict[str, Path]:
-    """Return the file that defines each task, by task name, following the includes.
+def task_files(path: str | Path) -> dict[TaskKey, Path]:
+    """Return the file that defines each task, by type and name, following the includes.
 
     Nothing is checked beyond what finding the tasks needs, and the data
     directory is not read. A file that cannot be read defines nothing.
@@ -448,7 +453,7 @@ def task_files(path: str | Path) -> dict[str, Path]:
         return {}
     build = _Build(task_data=False)
     _load_file(root, root.resolve(), set(), build)
-    return {name: Path(where.rsplit(":", 2)[0]) for name, where in build.task_where.items()}
+    return {key: Path(where.rsplit(":", 2)[0]) for key, where in build.task_where.items()}
 
 
 def compose(text: str, source: Path) -> yaml.Node | None:
@@ -619,9 +624,32 @@ def _take_quotas(node: yaml.Node, build: _Build) -> None:
 
 
 def _take_tasks(node: yaml.Node, build: _Build) -> None:
-    for name, body, where in _entities(node, "task", build):
-        ok, task = build.attempt(where, _task, name, body, where, build.task_data)
-        _claim(build, build.tasks, build.task_where, name, task if ok else _BROKEN, where, "task")
+    """Take ``tasks``, a mapping of task types to mappings of task names. A task is its type and name together."""
+    for kind, names, _where in _entities(node, "task type", build):
+        for name, body, where in _entities(names, "task", build, shown=lambda key, kind=kind: f"task {str(TaskKey(kind, key))!r}"):
+            key = TaskKey(kind, name)
+            named = f"task {str(key)!r}"
+            try:
+                task = _task(key, body, where, build.task_data)
+            except ValueError as error:
+                build.problems.extend(_about(problem, named) for problem in problems_of(error))
+                task = _BROKEN
+            if key in build.task_where:
+                build.fail(f"{where}: {named} is already defined at {build.task_where[key]}")
+                continue
+            build.task_where[key] = where
+            if task is not _BROKEN:
+                build.tasks[key] = task
+
+
+def _about(problem: str, named: str) -> str:
+    """Return a problem with the task it is about named after where it is written."""
+    if named in problem:
+        return problem
+    found = _PLACED.match(problem)
+    if found is None:
+        return f"{named}: {problem}"
+    return f"{found.group(1)}: {named}: {found.group(2)}"
 
 
 def _take_proxy_configuration(node: yaml.Node, build: _Build) -> None:
@@ -688,12 +716,10 @@ _QUIZ_FIELDS: dict[str, Callable[[Mapping], object]] = {
 }
 
 
-def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Task:
+def _task(key: TaskKey, node: yaml.Node, where: str, task_data: bool = True) -> Task:
     pairs = _pairs(node)
     fields = Collector()
     fields.take(_reject_unknown, set(pairs), _TASK_KEYS, where)
-    if "type" not in pairs:
-        fields.add(f"{where}: type is required")
     groups = fields.take(_task_groups, pairs, where)
 
     def optional(key: str, parse: Callable, *args, **kwargs):
@@ -708,18 +734,17 @@ def _task(name: str, node: yaml.Node, where: str, task_data: bool = True) -> Tas
     skips = optional("max_skips", _whole, minimum=0)
     passes = optional("max_passes", _whole, minimum=0)
     document = {} if "body" not in pairs else fields.take(_document, pairs["body"], f"{where}: body")
-    kind = optional("type", _text)
-    parse = (_QUIZ_BODIES if task_data else _QUIZ_FIELDS).get(kind)
+    parse = (_QUIZ_BODIES if task_data else _QUIZ_FIELDS).get(key.type)
     if parse is not None and document is not None:
         try:
             parse(document)
         except ValueError as exc:
             for problem in problems_of(exc):
-                fields.add(f"{_body_at(pairs.get('body'), problem, where)}: task {name!r}: body.{problem}")
+                fields.add(f"{_body_at(pairs.get('body'), problem, where)}: task {str(key)!r}: body.{problem}")
     fields.finish(ConfigError)
     return Task(
-        name,
-        kind,
+        key.name,
+        key.type,
         groups,
         DEFAULT_PASS_COOLDOWN if cooldown is None else cooldown,
         json.dumps(document, ensure_ascii=False, separators=(",", ":")),
@@ -763,11 +788,11 @@ def _take_rule_sets(node: yaml.Node, build: _Build) -> None:
         _claim(build, build.rule_sets, build.ruleset_where, name, tuple(rules), where, "rule set")
 
 
-def _entities(node: yaml.Node, label: str, build: _Build):
+def _entities(node: yaml.Node, label: str, build: _Build, shown: Callable[[str], str] | None = None):
     if not isinstance(node, yaml.MappingNode):
         build.fail(f"{_at(node)}: must be a mapping")
         return
-    for name, body in _lenient_pairs(node, build).items():
+    for name, body in _lenient_pairs(node, build, shown).items():
         if not name.strip():
             build.fail(f"{_at(body)}: {label} name must not be empty")
             continue
@@ -1157,10 +1182,10 @@ def _check_references(build: _Build) -> None:
         "quota": set(build.quota_where),
         "rule set": set(build.ruleset_where),
     }
-    for name, task in build.tasks.items():
+    for key, task in build.tasks.items():
         for group in task.groups:
             if group not in known["client group"]:
-                build.fail(f"{build.task_where[name]}: task {name!r}: unknown client group {group!r}")
+                build.fail(f"{build.task_where[key]}: task {str(key)!r}: unknown client group {group!r}")
     for name, raw in build.quotas.items():
         if raw.ruleset not in known["rule set"]:
             build.fail(f"{build.quota_where[name]}: quota {name!r}: unknown rule set {raw.ruleset!r}")
@@ -1298,20 +1323,30 @@ def _pairs(node: yaml.Node) -> dict[str, yaml.Node]:
     return found
 
 
-def _lenient_pairs(node: yaml.Node, build: _Build) -> dict[str, yaml.Node]:
-    """Like ``_pairs``, but a bad or repeated key is noted and skipped, and the rest are kept."""
+def _lenient_pairs(
+    node: yaml.Node, build: _Build, shown: Callable[[str], str] | None = None
+) -> dict[str, yaml.Node]:
+    """Like ``_pairs``, but a bad or repeated key is noted and skipped, and the rest are kept.
+
+    ``shown`` says what a repeated key names, such as ``task 'spelling/week-1'``.
+    """
     if not isinstance(node, yaml.MappingNode):
         build.fail(f"{_at(node)}: must be a mapping")
         return {}
     found: dict[str, yaml.Node] = {}
+    first: dict[str, yaml.Node] = {}
     for key_node, value_node in node.value:
         if not isinstance(key_node, yaml.ScalarNode) or key_node.tag != _STR:
             shown = key_node.value if isinstance(key_node, yaml.ScalarNode) else key_node.id
             build.fail(f"{_at(key_node)}: mapping keys must be strings, not {shown!r}")
         elif key_node.value in found:
-            build.fail(f"{_at(key_node)}: duplicate key {key_node.value!r}")
+            if shown is None:
+                build.fail(f"{_at(key_node)}: duplicate key {key_node.value!r}, already at {_at(first[key_node.value])}")
+            else:
+                build.fail(f"{_at(key_node)}: {shown(key_node.value)} is already defined at {_at(first[key_node.value])}")
         else:
             found[key_node.value] = value_node
+            first[key_node.value] = key_node
     return found
 
 

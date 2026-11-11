@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy.engine import classify_client, decide  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
-from policy.tasks import AttemptStore, Task  # noqa: E402
+from policy.tasks import AttemptStore, Task, TaskKey  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
@@ -68,24 +68,23 @@ client_groups:
   older:
     addresses: ["192.0.2.50"]
 tasks:
-  parts-of-speech-1:
-    type: parts_of_speech
-    group: younger
-    pass_cooldown: 21
-    failure_cooldown: 1
-    body:
-      sentences:
-        - sentence: "The cat sat."
-          parts: { noun: [cat] }
-  parts-of-speech-2:
-    type: parts_of_speech
-    groups: [younger, older]
-    pass_cooldown: 21
-    due_date: 2026-11-09
-    body:
-      sentences:
-        - sentence: "A dog ran."
-          parts: { verb: [ran] }
+  parts_of_speech:
+    parts-of-speech-1:
+      group: younger
+      pass_cooldown: 21
+      failure_cooldown: 1
+      body:
+        sentences:
+          - sentence: "The cat sat."
+            parts: { noun: [cat] }
+    parts-of-speech-2:
+      groups: [younger, older]
+      pass_cooldown: 21
+      due_date: 2026-11-09
+      body:
+        sentences:
+          - sentence: "A dog ran."
+            parts: { verb: [ran] }
 rule_sets:
   gate:
     - condition: tasks_required
@@ -97,7 +96,7 @@ rule_sets:
 
 def test_a_task_is_only_eligible_for_an_assigned_group(tmp_path):
     policy = _policy(HOUSE, tmp_path)
-    task = policy.task("parts-of-speech-1")
+    task = policy.task(TaskKey("parts_of_speech", "parts-of-speech-1"))
     assert task is not None
     assert task.document() == {"sentences": [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}]}
     assert classify_client(policy, YOUNGER) == "younger"
@@ -108,9 +107,9 @@ def test_a_task_is_only_eligible_for_an_assigned_group(tmp_path):
         assert store.is_eligible(task, "younger", today)
         assert store.is_eligible(task, "younger", today)
         assert not store.is_eligible(task, "older", today)
-        store.record("younger", task.name, "failure", _at(2), detail={"picked": "verb"})
-        assert [row.outcome for row in store.attempts("younger", task.name)] == ["failure"]
-        assert store.attempts("older", task.name) == ()
+        store.record("younger", task.key, "failure", _at(2), detail={"picked": "verb"})
+        assert [row.outcome for row in store.attempts("younger", task.key)] == ["failure"]
+        assert store.attempts("older", task.key) == ()
         assert store.attempts("younger")[0].detail == {"picked": "verb"}
 
 
@@ -118,7 +117,7 @@ def test_a_pass_cooldown_waits_until_the_household_day_it_names():
     task = _task(pass_cooldown=21, failure_cooldown=1)
     passed = _day(5)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "pass", _at(5))
+        store.record("younger", task.key, "pass", _at(5))
         assert not store.is_eligible(task, "younger", passed + timedelta(days=20))
         assert store.is_eligible(task, "younger", passed + timedelta(days=21))
 
@@ -126,13 +125,13 @@ def test_a_pass_cooldown_waits_until_the_household_day_it_names():
 def test_a_failure_uses_the_failure_cooldown_and_an_abandon_does_not():
     task = _task(pass_cooldown=21, failure_cooldown=1)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "failure", _at(2))
+        store.record("younger", task.key, "failure", _at(2))
         assert not store.is_eligible(task, "younger", _day(2))
         assert store.is_eligible(task, "younger", _day(3))
 
     abandoned = _task()
     with AttemptStore(":memory:") as store:
-        store.record("younger", abandoned.name, "abandoned", _at(2))
+        store.record("younger", abandoned.key, "abandoned", _at(2))
         assert store.is_eligible(abandoned, "younger", _day(2))
         assert store.is_eligible(abandoned, "younger", _day(3))
 
@@ -140,16 +139,16 @@ def test_a_failure_uses_the_failure_cooldown_and_an_abandon_does_not():
 def test_an_omitted_failure_cooldown_does_not_make_a_failure_wait():
     task = _task(failure_cooldown=None, pass_cooldown=21)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "failure", _at(2))
+        store.record("younger", task.key, "failure", _at(2))
         assert store.is_eligible(task, "younger", _day(2))
 
 
 def test_coming_back_returns_the_attempt_already_in_progress():
     with AttemptStore(":memory:") as store:
-        first = store.begin("younger", "parts-of-speech-1", _at(2), detail={"shown": [1]})
-        second = store.begin("younger", "parts-of-speech-1", _at(2, 17))
-        other_task = store.begin("younger", "parts-of-speech-2", _at(2))
-        other_group = store.begin("older", "parts-of-speech-1", _at(2))
+        first = store.begin("younger", TaskKey("parts_of_speech", "parts-of-speech-1"), _at(2), detail={"shown": [1]})
+        second = store.begin("younger", TaskKey("parts_of_speech", "parts-of-speech-1"), _at(2, 17))
+        other_task = store.begin("younger", TaskKey("parts_of_speech", "parts-of-speech-2"), _at(2))
+        other_group = store.begin("older", TaskKey("parts_of_speech", "parts-of-speech-1"), _at(2))
         assert second.id == first.id
         assert second.started_at == first.started_at
         assert second.detail == {"shown": [1]}
@@ -175,16 +174,16 @@ def test_todays_pass_count_is_the_passes_finished_on_this_household_day(tmp_path
         assert decide(policy, client_ip=YOUNGER, url="https://example.com/", at=moment, ledger=usage).decision[
             "action"
         ] == "deny"
-        store.record("younger", "parts-of-speech-1", "pass", moment)
-        store.record("younger", "parts-of-speech-1", "failure", _at(2, 17))
-        store.record("older", "parts-of-speech-2", "pass", _at(2, 18))
+        store.record("younger", TaskKey("parts_of_speech", "parts-of-speech-1"), "pass", moment)
+        store.record("younger", TaskKey("parts_of_speech", "parts-of-speech-1"), "failure", _at(2, 17))
+        store.record("older", TaskKey("parts_of_speech", "parts-of-speech-2"), "pass", _at(2, 18))
         assert usage.successes("younger", _day(2)) == 1
         assert store.passes_on("younger", _day(2)) == 1
         assert usage.successes("older", _day(2)) == 1
         assert decide(policy, client_ip=YOUNGER, url="https://example.com/", at=moment, ledger=usage).decision[
             "action"
         ] == "deny"
-        store.record("younger", "parts-of-speech-2", "pass", _at(2, 19))
+        store.record("younger", TaskKey("parts_of_speech", "parts-of-speech-2"), "pass", _at(2, 19))
         assert usage.successes("younger", _day(2)) == 2
         assert decide(policy, client_ip=YOUNGER, url="https://example.com/", at=moment, ledger=usage).decision[
             "action"
@@ -198,7 +197,7 @@ def test_a_pass_at_the_first_minutes_of_the_day_counts_for_the_new_day(tmp_path)
     late = datetime(2026, 11, 2, 23, 50, tzinfo=ZONE)
     with UsageStore(":memory:") as usage:
         store = AttemptStore(connection=usage.connection)
-        store.record("younger", "parts-of-speech-1", "pass", early)
+        store.record("younger", TaskKey("parts_of_speech", "parts-of-speech-1"), "pass", early)
         assert usage.successes("younger", date(2026, 11, 3)) == 1
         assert usage.successes("younger", date(2026, 11, 2)) == 0
         assert decide(policy, client_ip=YOUNGER, url="https://example.com/", at=early, ledger=usage).decision[
@@ -207,7 +206,7 @@ def test_a_pass_at_the_first_minutes_of_the_day_counts_for_the_new_day(tmp_path)
         assert decide(policy, client_ip=YOUNGER, url="https://example.com/", at=late, ledger=usage).decision[
             "action"
         ] == "deny"
-        store.record("younger", "parts-of-speech-2", "pass", late)
+        store.record("younger", TaskKey("parts_of_speech", "parts-of-speech-2"), "pass", late)
         assert usage.successes("younger", date(2026, 11, 2)) == 1
         assert usage.successes("younger", date(2026, 11, 3)) == 1
 
@@ -216,16 +215,16 @@ def test_attempt_rows_and_the_skip_days_derived_from_them_survive_a_restart(tmp_
     task = _task(max_skips=3, failure_cooldown=0, pass_cooldown=0)
     path = tmp_path / "attempts.sqlite3"
     with AttemptStore(path) as store:
-        store.record("younger", task.name, "abandoned", _at(2))
-        store.record("younger", task.name, "failure", _at(3))
-        started = store.begin("younger", task.name, _at(4))
+        store.record("younger", task.key, "abandoned", _at(2))
+        store.record("younger", task.key, "failure", _at(3))
+        started = store.begin("younger", task.key, _at(4))
     with AttemptStore(path) as store:
-        assert [row.outcome for row in store.attempts("younger", task.name)] == [
+        assert [row.outcome for row in store.attempts("younger", task.key)] == [
             "abandoned",
             "failure",
             "in_progress",
         ]
-        assert store.in_progress("younger", task.name).id == started.id
+        assert store.in_progress("younger", task.key).id == started.id
         assert not store.is_required(task, "younger", _day(4))
         store.finish(started.id, "abandoned", _at(4), {})
         assert store.is_required(task, "younger", _day(5))
@@ -248,7 +247,7 @@ def test_a_future_due_date_does_not_require_the_task_and_the_due_day_does():
         assert store.is_eligible(task, "younger", _day(4))
         assert not store.is_required(task, "younger", _day(4))
         assert store.is_required(task, "younger", _day(5))
-        store.record("older", shared.name, "pass", _at(4))
+        store.record("older", shared.key, "pass", _at(4))
         assert store.is_required(shared, "younger", _day(5))
         assert not store.is_required(shared, "older", _day(5))
 
@@ -256,10 +255,10 @@ def test_a_future_due_date_does_not_require_the_task_and_the_due_day_does():
 def test_a_pass_before_the_due_date_means_that_date_does_not_require_it():
     task = _task(due_date=_day(5), pass_cooldown=1, failure_cooldown=0, max_skips=1)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "pass", _at(2))
+        store.record("younger", task.key, "pass", _at(2))
         assert not store.is_required(task, "younger", _day(5))
         assert store.is_eligible(task, "younger", _day(3))
-        store.record("younger", task.name, "abandoned", _at(3))
+        store.record("younger", task.key, "abandoned", _at(3))
         assert not store.is_required(task, "younger", _day(3))
         assert store.is_required(task, "younger", _day(4))
 
@@ -268,7 +267,7 @@ def test_a_due_failure_stays_required_once_the_failure_cooldown_ends():
     # A 1-day failure cooldown blocks the finish day and allows the next one.
     task = _task(due_date=_day(2), failure_cooldown=1, pass_cooldown=21)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "failure", _at(2))
+        store.record("younger", task.key, "failure", _at(2))
         assert store.passes_on("younger", _day(2)) == 0
         assert not store.is_eligible(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(2))
@@ -280,23 +279,23 @@ def test_two_tasks_of_one_type_keep_separate_histories():
     first = _task(name="parts-of-speech-1", due_date=_day(2), pass_cooldown=0, failure_cooldown=None)
     second = _task(name="parts-of-speech-2", due_date=_day(2), pass_cooldown=0, failure_cooldown=None)
     with AttemptStore(":memory:") as store:
-        store.record("younger", first.name, "pass", _at(2))
+        store.record("younger", first.key, "pass", _at(2))
         assert not store.is_required(first, "younger", _day(2))
         assert store.is_required(second, "younger", _day(2))
-        assert store.attempts("younger", second.name) == ()
+        assert store.attempts("younger", second.key) == ()
 
 
 def test_three_skip_days_leave_the_task_optional_until_the_next_day():
     task = _task(max_skips=3, pass_cooldown=0, failure_cooldown=0)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "abandoned", _at(2))
-        store.record("younger", task.name, "abandoned", _at(2, 18))
+        store.record("younger", task.key, "abandoned", _at(2))
+        store.record("younger", task.key, "abandoned", _at(2, 18))
         assert not store.is_required(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(3))
-        store.record("younger", task.name, "failure", _at(3))
-        store.record("younger", task.name, "abandoned", _at(3, 18))
+        store.record("younger", task.key, "failure", _at(3))
+        store.record("younger", task.key, "abandoned", _at(3, 18))
         assert not store.is_required(task, "younger", _day(3))
-        store.record("younger", task.name, "abandoned", _at(4))
+        store.record("younger", task.key, "abandoned", _at(4))
         assert not store.is_required(task, "younger", _day(4))
         assert store.is_eligible(task, "younger", _day(5))
         assert store.is_required(task, "younger", _day(5))
@@ -308,15 +307,15 @@ def test_the_november_abandon_calendar_resets_after_a_pass():
         assert store.is_eligible(task, "younger", _day(2))
         for day in (2, 3, 4):
             assert not store.is_required(task, "younger", _day(day))
-            store.record("younger", task.name, "abandoned", _at(day))
+            store.record("younger", task.key, "abandoned", _at(day))
             assert not store.is_required(task, "younger", _day(day))
         assert store.is_required(task, "younger", _day(5))
-        store.record("younger", task.name, "pass", _at(5))
+        store.record("younger", task.key, "pass", _at(5))
         assert not store.is_eligible(task, "younger", _day(25))
         assert store.is_eligible(task, "younger", _day(26))
         for day in (26, 27, 28):
             assert not store.is_required(task, "younger", _day(day))
-            store.record("younger", task.name, "abandoned", _at(day))
+            store.record("younger", task.key, "abandoned", _at(day))
             assert not store.is_required(task, "younger", _day(day))
         assert store.is_required(task, "younger", _day(29))
 
@@ -324,11 +323,11 @@ def test_the_november_abandon_calendar_resets_after_a_pass():
 def test_a_pass_clears_skip_days():
     task = _task(max_skips=3, pass_cooldown=0, failure_cooldown=1)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "pass", _at(1))
-        store.record("younger", task.name, "abandoned", _at(2))
-        store.record("younger", task.name, "abandoned", _at(3))
+        store.record("younger", task.key, "pass", _at(1))
+        store.record("younger", task.key, "abandoned", _at(2))
+        store.record("younger", task.key, "abandoned", _at(3))
         assert not store.is_required(task, "younger", _day(4))
-        store.record("younger", task.name, "failure", _at(4))
+        store.record("younger", task.key, "failure", _at(4))
         assert not store.is_required(task, "younger", _day(4))
         assert store.is_eligible(task, "younger", _day(5))
         assert store.is_required(task, "younger", _day(5))
@@ -339,11 +338,11 @@ def test_several_misses_on_one_household_day_are_one_skip():
     with AttemptStore(":memory:") as store:
         for hour in (16, 17, 18):
             assert store.is_eligible(task, "younger", _day(2))
-            store.record("younger", task.name, "failure", _at(2, hour))
+            store.record("younger", task.key, "failure", _at(2, hour))
         assert not store.is_required(task, "younger", _day(3))
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "failure", _at(2))
-        store.record("younger", task.name, "abandoned", _at(2, 18))
+        store.record("younger", task.key, "failure", _at(2))
+        store.record("younger", task.key, "abandoned", _at(2, 18))
         assert not store.is_required(task, "younger", _day(3))
 
 
@@ -353,7 +352,7 @@ def test_failures_on_three_days_require_the_task_on_the_fourth():
         for day in (2, 3, 4):
             assert store.is_eligible(task, "younger", _day(day))
             assert not store.is_required(task, "younger", _day(day))
-            store.record("younger", task.name, "failure", _at(day))
+            store.record("younger", task.key, "failure", _at(day))
             assert not store.is_required(task, "younger", _day(day))
         assert store.is_eligible(task, "younger", _day(5))
         assert store.is_required(task, "younger", _day(5))
@@ -369,7 +368,7 @@ def test_due_date_and_max_skips_each_require_the_task_on_their_own():
     by_skips = _task(due_date=_day(10), max_skips=1, pass_cooldown=0, failure_cooldown=0)
     by_due = _task(due_date=_day(2), max_skips=3, pass_cooldown=0, failure_cooldown=None)
     with AttemptStore(":memory:") as store:
-        store.record("younger", by_skips.name, "abandoned", _at(2))
+        store.record("younger", by_skips.key, "abandoned", _at(2))
         assert store.is_required(by_skips, "younger", _day(3))
         assert store.is_required(by_due, "younger", _day(2))
         assert not store.is_required(by_due, "younger", _day(1))
@@ -405,8 +404,8 @@ def test_parent_check_ignores_dates_skips_and_the_pass_cap():
         assert store.is_eligible(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(2))
         assert not store.is_eligible(task, "older", _day(2))
-        store.record("younger", task.name, "pass", _at(2), task_set="parent_check")
-        store.record("younger", task.name, "pass", _at(2, 17), task_set="parent_check")
+        store.record("younger", task.key, "pass", _at(2), task_set="parent_check")
+        store.record("younger", task.key, "pass", _at(2, 17), task_set="parent_check")
         assert store.passes_on("younger", _day(2)) == 2
         assert store.is_eligible(task, "younger", _day(2))
         assert not store.is_required(task, "younger", _day(2))
@@ -425,13 +424,13 @@ def test_max_passes_retires_the_task_for_that_client_group_only():
     task = _task(max_passes=3, pass_cooldown=21, failure_cooldown=1, groups=("younger", "older"))
     other = _task(name="parts-of-speech-2", max_passes=3, pass_cooldown=21)
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "pass", _at(1, month=10))
-        store.record("younger", task.name, "pass", _at(22, month=10))
+        store.record("younger", task.key, "pass", _at(1, month=10))
+        store.record("younger", task.key, "pass", _at(22, month=10))
         third_day = date(2026, 11, 12)
         assert store.is_eligible(task, "younger", third_day)
         assert store.is_eligible(task, "older", _day(2))
         assert store.is_eligible(other, "younger", _day(2))
-        store.record("younger", task.name, "pass", datetime(2026, 11, 12, 16, tzinfo=ZONE))
+        store.record("younger", task.key, "pass", datetime(2026, 11, 12, 16, tzinfo=ZONE))
         assert store.passes_on("younger", third_day) == 1
         assert not store.is_eligible(task, "younger", third_day + timedelta(days=21))
         due = _task(
@@ -447,11 +446,11 @@ def test_max_passes_retires_the_task_for_that_client_group_only():
 def test_changing_max_passes_uses_the_passes_already_stored():
     history = _task(max_passes=3, pass_cooldown=21)
     with AttemptStore(":memory:") as store:
-        store.record("younger", history.name, "pass", _at(1, month=10))
-        store.record("younger", history.name, "pass", _at(22, month=10))
+        store.record("younger", history.key, "pass", _at(1, month=10))
+        store.record("younger", history.key, "pass", _at(22, month=10))
         today = date(2026, 11, 12)
         assert store.is_eligible(history, "younger", today)
-        started = store.begin("younger", history.name, datetime(2026, 11, 12, 16, tzinfo=ZONE))
+        started = store.begin("younger", history.key, datetime(2026, 11, 12, 16, tzinfo=ZONE))
         lowered = _task(max_passes=2, pass_cooldown=21)
         assert not store.is_eligible(lowered, "younger", today)
         done = store.finish(started.id, "pass", datetime(2026, 11, 12, 17, tzinfo=ZONE), {"ok": True})
@@ -473,7 +472,7 @@ def test_editing_the_body_does_not_ask_for_another_pass():
     original = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body=cat)
     edited = _task(max_passes=1, pass_cooldown=0, failure_cooldown=None, body=dog)
     with AttemptStore(":memory:") as store:
-        store.record("younger", original.name, "pass", _at(2))
+        store.record("younger", original.key, "pass", _at(2))
         assert not store.is_eligible(edited, "younger", _day(3))
         assert edited.document()["sentences"][0]["sentence"] == "A dog ran."
 
@@ -486,20 +485,20 @@ client_groups:
   younger:
     addresses: ["192.0.2.40"]
 tasks:
-  worksheet-1:
-    type: worksheet
-    groups: [younger, default]
-    pass_cooldown: 0
-    failure_cooldown: 0
-    available_from: "2026-11-02"
-    due_date: 2026-11-05
-    max_skips: 3
-    max_passes: 3
-    body:
-      mark: 8
-      sentences:
-        - words: [The, cat]
-          noun: [cat]
+  worksheet:
+    worksheet-1:
+      groups: [younger, default]
+      pass_cooldown: 0
+      failure_cooldown: 0
+      available_from: "2026-11-02"
+      due_date: 2026-11-05
+      max_skips: 3
+      max_passes: 3
+      body:
+        mark: 8
+        sentences:
+          - words: [The, cat]
+            noun: [cat]
 rule_sets:
   open:
     - condition: always
@@ -507,7 +506,7 @@ rule_sets:
 """,
         tmp_path,
     )
-    task = policy.task("worksheet-1")
+    task = policy.task(TaskKey("worksheet", "worksheet-1"))
     assert task.groups == ("younger", "default")
     assert task.pass_cooldown == 0
     assert task.failure_cooldown == 0
@@ -522,35 +521,35 @@ rule_sets:
     ("task_body", "message"),
     [
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    max_skips: -1\n",
+            "group: younger\n      pass_cooldown: 21\n      max_skips: -1\n",
             "zero or more",
         ),
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    max_passes: -1\n",
+            "group: younger\n      pass_cooldown: 21\n      max_passes: -1\n",
             "zero or more",
         ),
         (
-            'type: worksheet\n    group: younger\n    pass_cooldown: 21\n    available_from: "tomorrow"\n',
+            'group: younger\n      pass_cooldown: 21\n      available_from: "tomorrow"\n',
             "date",
         ),
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    due_date: 2026-11-05 15:00\n",
+            "group: younger\n      pass_cooldown: 21\n      due_date: 2026-11-05 15:00\n",
             "date",
         ),
         (
-            "type: worksheet\n    group: older\n    pass_cooldown: 21\n",
+            "group: older\n      pass_cooldown: 21\n",
             "unknown client group",
         ),
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21d\n",
+            "group: younger\n      pass_cooldown: 21d\n",
             "whole number",
         ),
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    body: [1, 2]\n",
+            "group: younger\n      pass_cooldown: 21\n      body: [1, 2]\n",
             "mapping",
         ),
         (
-            "type: worksheet\n    group: younger\n    pass_cooldown: 21\n    note: extra\n",
+            "group: younger\n      pass_cooldown: 21\n      note: extra\n",
             "unknown setting",
         ),
     ],
@@ -562,19 +561,38 @@ def test_a_task_the_loader_cannot_read_is_a_load_error(tmp_path, task_body, mess
         "  younger:\n"
         '    addresses: ["192.0.2.40"]\n'
         "tasks:\n"
-        "  quiz:\n"
-        f"    {task_body}"
+        "  worksheet:\n"
+        "    quiz:\n"
+        f"      {task_body}"
         "rule_sets:\n"
         "  open:\n"
         "    - condition: always\n"
         "      when_true: { action: allow }\n"
     )
-    with pytest.raises(ConfigError, match=message):
+    with pytest.raises(ConfigError, match=message) as raised:
         _policy(text, tmp_path)
+    assert all("task 'worksheet/quiz'" in problem for problem in raised.value.problems)
 
 
-def test_a_task_needs_a_type_and_a_client_group(tmp_path):
+def test_a_task_needs_a_client_group(tmp_path):
     base = (
+        "entry: open\n"
+        "tasks:\n"
+        "  worksheet:\n"
+        "    quiz:\n"
+        "      group: default\n"
+        "rule_sets:\n"
+        "  open:\n"
+        "    - condition: always\n"
+        "      when_true: { action: allow }\n"
+    )
+    assert _policy(base, tmp_path).task(TaskKey("worksheet", "quiz")).groups == ("default",)
+    with pytest.raises(ConfigError, match="task 'worksheet/quiz': group or groups"):
+        _policy(base.replace("      group: default\n", "      pass_cooldown: 1\n"), tmp_path)
+
+
+def test_a_policy_in_the_old_layout_does_not_load(tmp_path):
+    text = (
         "entry: open\n"
         "tasks:\n"
         "  quiz:\n"
@@ -585,19 +603,17 @@ def test_a_task_needs_a_type_and_a_client_group(tmp_path):
         "    - condition: always\n"
         "      when_true: { action: allow }\n"
     )
-    with pytest.raises(ConfigError, match="type is required"):
-        _policy(base.replace("    type: worksheet\n", ""), tmp_path)
-    with pytest.raises(ConfigError, match="group or groups"):
-        _policy(base.replace("    group: default\n", "    pass_cooldown: 1\n"), tmp_path)
+    with pytest.raises(ConfigError, match="must be a mapping"):
+        _policy(text, tmp_path)
 
 
 def test_a_task_without_a_pass_cooldown_is_offered_again_the_next_household_day(tmp_path):
     text = (
         "entry: open\n"
         "tasks:\n"
-        "  quiz:\n"
-        "    type: worksheet\n"
-        "    group: younger\n"
+        "  worksheet:\n"
+        "    quiz:\n"
+        "      group: younger\n"
         "client_groups:\n"
         "  younger:\n"
         '    addresses: ["192.0.2.40"]\n'
@@ -606,9 +622,9 @@ def test_a_task_without_a_pass_cooldown_is_offered_again_the_next_household_day(
         "    - condition: always\n"
         "      when_true: { action: allow }\n"
     )
-    task = _policy(text, tmp_path).task("quiz")
+    task = _policy(text, tmp_path).task(TaskKey("worksheet", "quiz"))
     assert task.pass_cooldown == 1
     with AttemptStore(":memory:") as store:
-        store.record("younger", task.name, "pass", _at(5, 9))
+        store.record("younger", task.key, "pass", _at(5, 9))
         assert not store.is_eligible(task, "younger", _day(5))
         assert store.is_eligible(task, "younger", _day(6))

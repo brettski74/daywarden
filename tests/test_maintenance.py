@@ -13,9 +13,11 @@ sys.path.insert(0, str(ROOT))
 
 from policy.hierarchy import load  # noqa: E402
 from policy.maintenance import main  # noqa: E402
-from policy.tasks import AttemptStore  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
+SUMS = TaskKey("arithmetic", "sums")
+WORDS = TaskKey("spelling", "words")
 NOW = datetime(2026, 11, 2, 16, 0, tzinfo=ZONE)
 
 POLICY = """\
@@ -27,32 +29,33 @@ client_groups:
   older:
     addresses: ["192.0.2.50"]
 tasks:
-  sums:
-    type: arithmetic
-    groups: [younger, older]
-    pass_cooldown: 1
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 4s
-      correct_answers_required: 5
-      operands:
-        - { from: 1, to: 9, weight: 1 }
-  times:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 1
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 4s
-      correct_answers_required: 5
-      operands:
-        - { from: 1, to: 9, weight: 1 }
-  words:
-    type: spelling
-    groups: [younger, older]
-    pass_cooldown: 0
+  arithmetic:
+    sums:
+      groups: [younger, older]
+      pass_cooldown: 1
+      body:
+        operation: addition
+        max_timeout: 10s
+        min_timeout: 4s
+        correct_answers_required: 5
+        operands:
+          - { from: 1, to: 9, weight: 1 }
+    times:
+      group: younger
+      pass_cooldown: 1
+      body:
+        operation: addition
+        max_timeout: 10s
+        min_timeout: 4s
+        correct_answers_required: 5
+        operands:
+          - { from: 1, to: 9, weight: 1 }
+  spelling:
+    words:
+      groups: [younger, older]
+      pass_cooldown: 0
+    week-1:
+      group: younger
 rule_sets:
   gate:
     - condition: always
@@ -68,13 +71,16 @@ def house(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICY_FILE", str(policy_file))
     monkeypatch.setenv("POLICY_DB", str(database))
     with AttemptStore(database) as store:
-        store.record("younger", "sums", "pass", NOW - timedelta(minutes=30))
-        store.record("younger", "sums", "failure", NOW - timedelta(hours=2))
-        store.record("older", "sums", "pass", NOW - timedelta(minutes=10))
-        store.record("younger", "times", "abandoned", NOW - timedelta(days=3))
-        store.record("younger", "words", "pass", NOW - timedelta(minutes=5))
-        store.record("younger", "parent_check", "pass", NOW - timedelta(minutes=20))
-        store.begin("older", "words", NOW - timedelta(hours=3))
+        store.record("younger", SUMS, "pass", NOW - timedelta(minutes=30))
+        store.record("younger", SUMS, "failure", NOW - timedelta(hours=2))
+        store.record("older", SUMS, "pass", NOW - timedelta(minutes=10))
+        store.record("younger", TaskKey("arithmetic", "times"), "abandoned", NOW - timedelta(days=3))
+        store.record("younger", WORDS, "pass", NOW - timedelta(minutes=5))
+        store.record("younger", TaskKey("parent_check", "parent_check"), "pass", NOW - timedelta(minutes=20))
+        store.begin("older", WORDS, NOW - timedelta(hours=3))
+        # week-1 was an arithmetic task before it became a spelling task.
+        store.record("younger", TaskKey("arithmetic", "week-1"), "pass", NOW - timedelta(days=2))
+        store.record("younger", TaskKey("spelling", "week-1"), "failure", NOW - timedelta(days=1))
     return database, policy_file
 
 
@@ -86,7 +92,7 @@ def _run(*argv):
 
 def _left(database):
     with AttemptStore(database) as store:
-        return [(row.client_group, row.task, row.outcome) for row in store.everything()]
+        return [(row.client_group, row.task_type, row.task, row.outcome) for row in store.everything()]
 
 
 def _removed(database, *argv):
@@ -100,8 +106,8 @@ def _removed(database, *argv):
 def test_client_and_task_together_match_only_that_groups_attempts_on_that_task(house):
     database, _policy = house
     assert _removed(database, "remove-attempts", "--client", "younger", "--task", "sums") == [
-        ("younger", "sums", "pass"),
-        ("younger", "sums", "failure"),
+        ("younger", "arithmetic", "sums", "pass"),
+        ("younger", "arithmetic", "sums", "failure"),
     ]
 
 
@@ -109,30 +115,52 @@ def test_two_task_values_match_either_task(house):
     database, _policy = house
     removed = _removed(database, "remove-attempts", "--task", "times", "--task", "words")
     assert sorted(removed) == sorted(
-        [("younger", "times", "abandoned"), ("younger", "words", "pass"), ("older", "words", "in_progress")]
+        [
+            ("younger", "arithmetic", "times", "abandoned"),
+            ("younger", "spelling", "words", "pass"),
+            ("older", "spelling", "words", "in_progress"),
+        ]
     )
 
 
-def test_type_matches_every_task_of_that_type_in_the_policy_file(house):
+def test_type_matches_the_type_stored_with_each_attempt_whatever_the_policy_says_now(house):
     database, _policy = house
+    status, output = _run("remove-attempts", "--type", "arithmetic")
+    assert status == 0
+    assert "type" in output.splitlines()[0]
     removed = _removed(database, "remove-attempts", "--type", "arithmetic")
-    assert {task for _client, task, _outcome in removed} == {"sums", "times"}
-    assert len(removed) == 4
+    assert {(kind, task) for _client, kind, task, _outcome in removed} == {
+        ("arithmetic", "sums"),
+        ("arithmetic", "times"),
+        ("arithmetic", "week-1"),
+    }
+    assert len(removed) == 5
 
 
-def test_a_type_no_task_has_matches_nothing_and_says_so(house):
+def test_a_task_name_matches_every_type_and_with_a_type_matches_one_task(house):
+    database, _policy = house
+    status, output = _run("remove-attempts", "--task", "week-1")
+    assert "2 attempts would be removed" in output
+    assert _removed(database, "remove-attempts", "--task", "week-1", "--type", "spelling") == [
+        ("younger", "spelling", "week-1", "failure")
+    ]
+    assert _removed(database, "remove-attempts", "--task", "week-1") == [("younger", "arithmetic", "week-1", "pass")]
+
+
+def test_a_type_no_attempt_has_matches_nothing(house):
     database, _policy = house
     before = _left(database)
     status, output = _run("remove-attempts", "--type", "division", "--yes")
     assert status == 0
-    assert "no task in the policy file has type division" in output
     assert "no attempts match" in output
     assert _left(database) == before
 
 
-def test_parent_check_type_matches_rows_stored_under_that_name(house):
+def test_parent_check_type_matches_rows_stored_with_that_type(house):
     database, _policy = house
-    assert _removed(database, "remove-attempts", "--type", "parent_check") == [("younger", "parent_check", "pass")]
+    assert _removed(database, "remove-attempts", "--type", "parent_check") == [
+        ("younger", "parent_check", "parent_check", "pass")
+    ]
 
 
 def test_newer_than_and_older_than_split_on_the_finish_time(house):
@@ -141,7 +169,7 @@ def test_newer_than_and_older_than_split_on_the_finish_time(house):
     assert status == 0
     assert "pass" in output and "failure" not in output
     assert _removed(database, "remove-attempts", "--task", "sums", "--client", "younger", "--older-than", "1h") == [
-        ("younger", "sums", "failure")
+        ("younger", "arithmetic", "sums", "failure")
     ]
 
 
@@ -149,7 +177,7 @@ def test_an_attempt_in_progress_is_aged_from_its_start(house):
     database, _policy = house
     assert _removed(database, "remove-attempts", "--client", "older", "--task", "words", "--newer-than", "2h") == []
     assert _removed(database, "remove-attempts", "--client", "older", "--task", "words", "--older-than", "2h") == [
-        ("older", "words", "in_progress")
+        ("older", "spelling", "words", "in_progress")
     ]
 
 
@@ -173,7 +201,7 @@ def test_no_filter_is_refused_unless_all_is_given(house, capsys):
     assert _left(database) == before
     status, output = _run("remove-attempts", "--all", "--yes")
     assert status == 0
-    assert "removed 7 attempts" in output
+    assert "removed 9 attempts" in output
     assert _left(database) == []
 
 
@@ -188,7 +216,7 @@ def test_an_age_must_be_a_whole_number_of_minutes_hours_or_days(house, age, caps
 def test_removing_a_pass_makes_the_task_eligible_again_and_lowers_todays_count(house):
     database, policy_file = house
     policy = load(policy_file)
-    task = policy.task("sums")
+    task = policy.task(SUMS)
     with AttemptStore(database) as store:
         assert not store.is_eligible(task, "younger", NOW.date())
         assert store.passes_on("younger", NOW.date()) == 3
@@ -198,11 +226,12 @@ def test_removing_a_pass_makes_the_task_eligible_again_and_lowers_todays_count(h
         assert store.passes_on("younger", NOW.date()) == 2
 
 
-def test_type_without_a_policy_file_stops_and_removes_nothing(house, monkeypatch, tmp_path):
+@pytest.mark.parametrize("broken", ["missing", "unloadable"])
+def test_type_works_when_the_policy_file_does_not_load(house, monkeypatch, tmp_path, broken):
     database, _policy = house
-    monkeypatch.setenv("POLICY_FILE", str(tmp_path / "missing.yaml"))
-    before = _left(database)
-    with pytest.raises(SystemExit) as stopped:
-        _run("remove-attempts", "--type", "arithmetic", "--yes")
-    assert "--type needs the policy file" in str(stopped.value.code)
-    assert _left(database) == before
+    policy_file = tmp_path / "other.yaml"
+    if broken == "unloadable":
+        policy_file.write_text("tasks:\n  sums:\n    type: arithmetic\n", encoding="utf-8")
+    monkeypatch.setenv("POLICY_FILE", str(policy_file))
+    removed = _removed(database, "remove-attempts", "--type", "arithmetic")
+    assert len(removed) == 5

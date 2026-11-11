@@ -230,7 +230,7 @@ def _settings(body: Mapping) -> Settings:
     if "difference" in body:
         differences = weighted(body["difference"], "difference", _difference, enough, _ENTRY_KEYS)
     else:
-        differences = weighted(_default_differences(maximum), "difference", _difference, enough, _ENTRY_KEYS)
+        differences = weighted(default_differences(maximum), "difference", _difference, enough, _ENTRY_KEYS)
     needed, field = (most, "maximum_questions") if most is not None else _larger(required, least, body)
     total = _sequences_up_to(bounds, needed, length)
     if total < needed:
@@ -253,18 +253,19 @@ def _settings(body: Mapping) -> Settings:
     )
 
 
-def _default_differences(maximum: int) -> list[dict]:
-    """Return the default difference list.
+def default_differences(maximum: int | None = None) -> list[dict]:
+    """Return the default difference list, as entries written in a ``difference`` list.
 
-    Each is capped at its default maximum or the body's, whichever is lower.
-    25 and -25 always start on a multiple of 25.
+    Each is capped at its default maximum or ``maximum``, whichever is lower.
+    Without ``maximum``, each keeps its own cap. 25 and -25 always start on a
+    multiple of 25.
     """
     written = []
     for value in _DEFAULT_DIFFERENCES:
         entry: dict = {"value": value, "weight": 1}
         cap = _DEFAULT_CAPS[abs(value)]
         if cap is not None:
-            entry["maximum_value"] = min(cap, maximum)
+            entry["maximum_value"] = cap if maximum is None else min(cap, maximum)
         if abs(value) in _DEFAULT_MULTIPLES:
             entry["multiples_only"] = True
         written.append(entry)

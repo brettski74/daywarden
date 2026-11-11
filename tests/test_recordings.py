@@ -56,7 +56,7 @@ def _cut(house: House, take: str, **settings) -> tuple[int, dict]:
 
 
 def _keep(house: House, take: str, key: str, **kept: str) -> tuple[int, dict]:
-    return _post(house, "/parent/api/tasks/spelling/recordings", {"take": take, "word": key, "clips": kept})
+    return _post(house, "/parent/api/tasks/spelling/spelling/recordings", {"take": take, "word": key, "clips": kept})
 
 
 def _pending(house: House) -> list[str]:
@@ -264,7 +264,7 @@ def test_a_keep_naming_a_clip_that_is_gone_or_a_word_that_is_not_there_writes_no
 
 
 def test_a_keep_on_a_task_that_is_not_spelling_is_refused(house):
-    status, body = _post(house, "/parent/api/tasks/sums/recordings", {"take": "A" * 16, "word": "rope", "clips": {"word": "abcdef-1"}})
+    status, body = _post(house, "/parent/api/tasks/worksheet/sums/recordings", {"take": "A" * 16, "word": "rope", "clips": {"word": "abcdef-1"}})
     assert status == 400
     assert "not a spelling task" in body["error"]
 
@@ -273,13 +273,13 @@ def test_every_recording_address_refuses_without_a_session_and_never_redirects(h
     for method, path in [
         ("POST", "/parent/api/recordings/AAAAAAAAAAAAAAAA/cut"),
         ("POST", "/parent/api/recordings/AAAAAAAAAAAAAAAA/discard"),
-        ("POST", "/parent/api/tasks/spelling/recordings"),
+        ("POST", "/parent/api/tasks/spelling/spelling/recordings"),
         ("GET", "/parent/api/recordings/AAAAAAAAAAAAAAAA/abcdef-1.opus"),
     ]:
         status, _body, headers = call(house.app, method, path, json_body={} if method == "POST" else None)
         assert status == 401, path
         assert "location" not in headers
-    for path in ("/parent/api/recordings/AAAAAAAAAAAAAAAA/cut", "/parent/api/tasks/spelling/recordings"):
+    for path in ("/parent/api/recordings/AAAAAAAAAAAAAAAA/cut", "/parent/api/tasks/spelling/spelling/recordings"):
         assert call(house.app, "POST", path, body=b"{}", content_type="text/plain", cookie=house.cookie)[0] == 415
 
 

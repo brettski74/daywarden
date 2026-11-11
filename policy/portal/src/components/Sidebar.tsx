@@ -13,6 +13,7 @@ import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
 import { KEY_STEP, useSidebar, useTaskList } from "../sidebar";
+import { taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
 
@@ -23,7 +24,7 @@ export const ENTRIES: Entry[] = [
 ];
 
 /** Task Administration: a button that expands the list of tasks, each a link to its page. */
-function TaskGroup({ tasks }: { tasks: string[] }) {
+function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
   const onTaskPage = useLocation().pathname.startsWith("/tasks/");
   const { expanded, setExpanded } = useTaskList(onTaskPage);
   const { shown, moving, toggle } = useExpander(expanded, setExpanded);
@@ -46,9 +47,9 @@ function TaskGroup({ tasks }: { tasks: string[] }) {
       {shown && (
         <div className="nav-sub" inert={!expanded}>
           <ul id="task-list">
-            {tasks.map((name) => (
-              <li key={name}>
-                <NavLink to={`/tasks/${encodeURIComponent(name)}`}>{name}</NavLink>
+            {tasks.map((task) => (
+              <li key={`${task.type}/${task.name}`}>
+                <NavLink to={taskPath(task)}>{taskLabel(task, tasks)}</NavLink>
               </li>
             ))}
           </ul>
@@ -58,7 +59,7 @@ function TaskGroup({ tasks }: { tasks: string[] }) {
   );
 }
 
-export function Sidebar({ username, tasks }: { username: string; tasks: string[] }) {
+export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[] }) {
   const { width, limits, collapsed, resize, setCollapsed } = useSidebar();
   const setExpanded = useCallback((value: boolean) => setCollapsed(!value), [setCollapsed]);
   const { shown, moving, toggle: toggleSidebar } = useExpander(!collapsed, setExpanded);

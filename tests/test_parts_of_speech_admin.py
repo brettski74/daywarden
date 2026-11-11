@@ -17,30 +17,31 @@ from test_task_admin import HOUSE, House, _git  # noqa: E402
 from policy import check  # noqa: E402
 from policy.parts_of_speech import Session  # noqa: E402
 from policy.parts_of_speech_admin import tidy  # noqa: E402
+from policy.tasks import TaskKey  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
 FOX = "The quick, brown fox jumped over the lazy dog."
 DRY = "Dry the dishes with a dry towel."
 WORDS = """\
-  words:
-    type: parts_of_speech
-    group: younger
-    pass_cooldown: 7
-    body:
-      timeout: 45s
-      sentences:
-        # The fox, as the README has it.
-        - sentence: "The quick, brown fox jumped over the lazy dog."
-          parts:
-            noun: [dog, fox]   # out of order on purpose
-            verb: [jumped]
-            Adjectives: [quick, brown, lazy]
-        - sentence: Dry the dishes with a dry towel.
-          timeout: 2m
-          parts:
-            verb: ["dry[1]"]
-            noun: [dishes, towel]
-            adjective: ["dry[2]"]
+  parts_of_speech:
+    words:
+      group: younger
+      pass_cooldown: 7
+      body:
+        timeout: 45s
+        sentences:
+          # The fox, as the README has it.
+          - sentence: "The quick, brown fox jumped over the lazy dog."
+            parts:
+              noun: [dog, fox]   # out of order on purpose
+              verb: [jumped]
+              Adjectives: [quick, brown, lazy]
+          - sentence: Dry the dishes with a dry towel.
+            timeout: 2m
+            parts:
+              verb: ["dry[1]"]
+              noun: [dishes, towel]
+              adjective: ["dry[2]"]
 """
 TEXT = HOUSE + WORDS
 
@@ -52,16 +53,16 @@ def house(tmp_path, monkeypatch):
 
 def _shown(house) -> list[dict]:
     """Return the sentences as the page has them, in the form a save sends them back."""
-    sentences = house.page("words")["parts_of_speech"]["sentences"]
+    sentences = house.page("parts_of_speech/words")["parts_of_speech"]["sentences"]
     return [{"origin": index, **sentence} for index, sentence in enumerate(sentences)]
 
 
 def _body(house) -> dict:
-    return yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["words"]["body"]
+    return yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["parts_of_speech"]["words"]["body"]
 
 
 def test_the_page_shows_the_settings_and_each_sentence_with_its_rows_in_order(house):
-    page = house.page("words")
+    page = house.page("parts_of_speech/words")
     assert page["parts_of_speech"] == {
         "settings": {"timeout": "45s", "correct_answers_required": ""},
         "sentences": [
@@ -90,22 +91,22 @@ def test_the_page_shows_the_settings_and_each_sentence_with_its_rows_in_order(ho
 
 
 def test_a_save_with_nothing_changed_writes_nothing(house):
-    status, body = house.save("words", sentences=_shown(house), settings={"timeout": "45s"})
+    status, body = house.save("parts_of_speech/words", sentences=_shown(house), settings={"timeout": "45s"})
     assert (status, body["message"]) == (200, "Nothing has changed, so nothing was saved.")
     assert house.policy.read_text(encoding="utf-8") == TEXT
 
 
 def test_settings_are_written_in_the_body_and_cleared_ones_lose_their_line(house):
-    status, body = house.save("words", settings={"timeout": "", "correct_answers_required": "1"})
+    status, body = house.save("parts_of_speech/words", settings={"timeout": "", "correct_answers_required": "1"})
     assert status == 200, body
-    assert house.policy.read_text(encoding="utf-8") == TEXT.replace("      timeout: 45s\n", "").replace(
-        "            adjective: [\"dry[2]\"]\n", "            adjective: [\"dry[2]\"]\n      correct_answers_required: 1\n"
+    assert house.policy.read_text(encoding="utf-8") == TEXT.replace("        timeout: 45s\n", "").replace(
+        "              adjective: [\"dry[2]\"]\n", "              adjective: [\"dry[2]\"]\n        correct_answers_required: 1\n"
     )
-    assert house.task("words").document()["correct_answers_required"] == 1
+    assert house.task("parts_of_speech/words").document()["correct_answers_required"] == 1
 
 
 def test_more_correct_answers_than_sentences_is_refused_naming_the_field(house):
-    status, body = house.save("words", settings={"correct_answers_required": "3"})
+    status, body = house.save("parts_of_speech/words", settings={"correct_answers_required": "3"})
     assert status == 400
     assert any("correct_answers_required" in problem for problem in body["errors"])
     assert house.policy.read_text(encoding="utf-8") == TEXT
@@ -121,16 +122,16 @@ def test_only_the_changed_sentence_is_written_again_with_tidied_names_and_merged
         {"name": "Proper Nouns", "words": [5]},
     ]
     sentences[1]["timeout"] = ""
-    status, body = house.save("words", sentences=sentences)
+    status, body = house.save("parts_of_speech/words", sentences=sentences)
     assert status == 200, body
     text = house.policy.read_text(encoding="utf-8")
     assert text == TEXT.replace(
-        '        - sentence: Dry the dishes with a dry towel.\n          timeout: 2m\n          parts:\n'
-        '            verb: ["dry[1]"]\n            noun: [dishes, towel]\n            adjective: ["dry[2]"]\n',
-        "        - sentence: Dry the dishes with a dry towel.\n          parts:\n"
-        '            verb: [Dry]\n            noun: [dishes, towel]\n            subject: []\n            proper noun: ["dry[2]"]\n',
+        '          - sentence: Dry the dishes with a dry towel.\n            timeout: 2m\n            parts:\n'
+        '              verb: ["dry[1]"]\n              noun: [dishes, towel]\n              adjective: ["dry[2]"]\n',
+        "          - sentence: Dry the dishes with a dry towel.\n            parts:\n"
+        '              verb: [Dry]\n              noun: [dishes, towel]\n              subject: []\n              proper noun: ["dry[2]"]\n',
     )
-    shown = house.page("words")["parts_of_speech"]["sentences"][1]["parts"]
+    shown = house.page("parts_of_speech/words")["parts_of_speech"]["sentences"][1]["parts"]
     assert [part["name"] for part in shown] == ["verb", "noun", "subject", "proper noun"]
 
 
@@ -141,18 +142,18 @@ def test_a_new_sentence_is_added_at_the_end_and_a_deleted_one_loses_its_lines(ho
             {"name": "noun", "words": [2, 6]},
         ]},
     ]
-    status, body = house.save("words", sentences=sentences)
+    status, body = house.save("parts_of_speech/words", sentences=sentences)
     assert status == 200, body
     text = house.policy.read_text(encoding="utf-8")
     assert FOX not in text
     assert "# The fox, as the README has it." in text
     assert text.endswith(
-        '            adjective: ["dry[2]"]\n'
-        "        - sentence: Yes, the cat sat on the mat.\n"
-        "          parts:\n"
-        '            interjection: ["Yes"]\n'
-        "            noun: [cat, mat]\n"
-        "          timeout: 30s\n"
+        '              adjective: ["dry[2]"]\n'
+        "          - sentence: Yes, the cat sat on the mat.\n"
+        "            parts:\n"
+        '              interjection: ["Yes"]\n'
+        "              noun: [cat, mat]\n"
+        "            timeout: 30s\n"
     )
     assert [sentence["sentence"] for sentence in _body(house)["sentences"]] == [DRY, "Yes, the cat sat on the mat."]
     assert check.main(["--quiet"]) == 0
@@ -161,7 +162,7 @@ def test_a_new_sentence_is_added_at_the_end_and_a_deleted_one_loses_its_lines(ho
 def test_a_sentence_the_policy_would_refuse_is_named_and_nothing_is_written(house):
     sentences = _shown(house)
     sentences[0]["timeout"] = "soon"
-    status, body = house.save("words", sentences=sentences)
+    status, body = house.save("parts_of_speech/words", sentences=sentences)
     assert status == 400
     assert any("sentences entry 1: timeout" in problem for problem in body["errors"]), body
     assert house.policy.read_text(encoding="utf-8") == TEXT
@@ -179,7 +180,7 @@ def test_a_sentence_the_policy_would_refuse_is_named_and_nothing_is_written(hous
 def test_a_request_the_page_would_never_send_is_refused(house, change, says):
     sentences = _shown(house)
     change(sentences)
-    status, body = house.save("words", sentences=sentences)
+    status, body = house.save("parts_of_speech/words", sentences=sentences)
     assert status == 400
     assert says in body["error"]
     assert house.policy.read_text(encoding="utf-8") == TEXT
@@ -203,31 +204,31 @@ def test_row_names_are_tidied(typed, written):
 
 def test_the_next_run_asks_the_saved_sentences_and_a_run_in_progress_keeps_its_own(house):
     started = datetime(2026, 11, 9, 16, 0, tzinfo=ZONE)
-    running = Session({}, house.task("words").document(), random.Random(1))
+    running = Session({}, house.task("parts_of_speech/words").document(), random.Random(1))
     running.issue(started)
     sentences = _shown(house)
     sentences[0]["parts"] = [{"name": "noun", "words": [3]}, {"name": "verb", "words": [4]}]
-    assert house.save("words", sentences=sentences)[0] == 200
-    later = Session(running.detail, house.task("words").document(), random.Random(1))
+    assert house.save("parts_of_speech/words", sentences=sentences)[0] == 200
+    later = Session(running.detail, house.task("parts_of_speech/words").document(), random.Random(1))
     assert [sentence.text for sentence in later.settings.sentences] == [FOX, DRY]
     assert [part.name for part in later.settings.sentences[0].parts] == ["noun", "verb", "Adjectives"]
-    fresh = Session({}, house.task("words").document(), random.Random(1))
+    fresh = Session({}, house.task("parts_of_speech/words").document(), random.Random(1))
     fresh.issue(started)
     assert [(part.name, part.words) for part in fresh.settings.sentences[0].parts] == [("noun", (3,)), ("verb", (4,))]
 
 
 def test_a_sentences_save_is_committed_as_the_parent(tmp_path, monkeypatch):
     kept = House(tmp_path, monkeypatch, history=True, text=TEXT)
-    status, body = kept.save("words", sentences=_shown(kept)[:1])
+    status, body = kept.save("parts_of_speech/words", sentences=_shown(kept)[:1])
     assert status == 200, body
-    assert kept.log()[0].endswith(" ada: saved task words")
+    assert kept.log()[0].endswith(" ada: saved task parts_of_speech/words")
     assert _git(kept.config, "status", "--porcelain") == ""
 
 
 def test_a_hand_edit_since_the_page_opened_refuses_the_save(house):
-    version = house.page("words")["version"]
+    version = house.page("parts_of_speech/words")["version"]
     sentences = _shown(house)[:1]
     house.policy.write_text(TEXT.replace("timeout: 2m", "timeout: 3m"), encoding="utf-8")
-    status, body = house.save("words", version=version, sentences=sentences)
+    status, body = house.save("parts_of_speech/words", version=version, sentences=sentences)
     assert status == 409
     assert "timeout: 3m" in house.policy.read_text(encoding="utf-8")

@@ -2,7 +2,8 @@
 
 The parent types the week's words, records them, and applies the list. Until
 Apply, the setup in progress is kept on the service, one for each spelling
-task, in ``.weeks/<task>/`` under the data directory: ``state.json`` holds
+task, in ``.weeks/<task name>/`` under the data directory, since only
+spelling tasks have one: ``state.json`` holds
 the list, the sentence text typed for each word, and the clips kept for it,
 and the kept clips sit beside it. The pool scans never look there, and Apply
 is a set of renames on one file system.
@@ -36,6 +37,7 @@ from policy.owned import make_directory, own_like
 from policy.recordings import GONE
 from policy.task_admin import STALE, Answer, TaskAdmin, _changes, _settings, _version
 from policy.task_edit import EditError, rewrite_task
+from policy.tasks import TaskKey
 
 DIRECTORY = ".weeks"
 STATE = "state.json"
@@ -176,14 +178,16 @@ class Weeks:
 
     # Answers
 
-    def page(self, name: str) -> Answer:
-        found = self._task(name)
+    def page(self, task: TaskKey) -> Answer:
+        found = self._task(task)
         if isinstance(found, Answer):
             return found
+        name = task.name
         path, text, written, settings = found
         rows = self._rows(name)
         body: dict = {
             "name": name,
+            "type": task.type,
             "version": _version(text),
             "file": str(path),
             "targets": {key: written.body.get(key, "") for key in TARGETS},
@@ -224,7 +228,7 @@ class Weeks:
         body["ambiguous"] = [row.key for row in rows if row.key.lower() in planned.ambiguous]
         return Answer(200, body)
 
-    def save(self, name: str, request: Mapping) -> Answer:
+    def save(self, task: TaskKey, request: Mapping) -> Answer:
         """Check and keep the week's list and its sentence text. Nothing in a pool changes.
 
         ``request`` has ``rows``, the list as it is on the page, each naming
@@ -232,9 +236,10 @@ class Weeks:
         follow an edit, and ``add``, more words typed or pasted, split by
         ``split_words``.
         """
-        found = self._task(name)
+        found = self._task(task)
         if isinstance(found, Answer):
             return found
+        name = task.name
         _path, _text, _written, settings = found
         asked, added = request.get("rows", []), request.get("add", "")
         if not isinstance(asked, list) or not all(isinstance(row, Mapping) for row in asked) or not isinstance(added, str):
@@ -288,14 +293,15 @@ class Weeks:
         message = f"Saved the week's list of {count} word{'' if count == 1 else 's'}." if rows else "The week's list is empty."
         return Answer(200, {"message": message, "warnings": []})
 
-    def keep(self, name: str, request: Mapping) -> Answer:
+    def keep(self, task: TaskKey, request: Mapping) -> Answer:
         """Keep clips from a take as pending recordings of words on the list, replacing older pending ones.
 
         ``request`` names the take and lists each clip kept with its word and kind.
         """
-        found = self._task(name)
+        found = self._task(task)
         if isinstance(found, Answer):
             return found
+        name = task.name
         take, kept = request.get("take"), request.get("clips")
         if not isinstance(take, str) or not isinstance(kept, list) or not kept:
             return Answer(400, {"error": "Name the take and each clip kept, with its word and kind."})
@@ -344,29 +350,31 @@ class Weeks:
             {"message": f"Kept {count} clip{'' if count == 1 else 's'} for the new week. They go into the pools on Apply.", "warnings": []},
         )
 
-    def clip(self, name: str, file_name: str) -> Path | None:
+    def clip(self, task: TaskKey, file_name: str) -> Path | None:
         """Return a pending clip of the task's setup, or None."""
-        if not _CLIP.fullmatch(file_name) or name not in self.tasks.names():
+        if not _CLIP.fullmatch(file_name) or task.type != spelling.SPELLING or task not in self.tasks.keys():
             return None
-        path = self.folder(name) / file_name
+        path = self.folder(task.name) / file_name
         return path if path.is_file() else None
 
-    def cancel(self, name: str) -> Answer:
-        found = self._task(name)
+    def cancel(self, task: TaskKey) -> Answer:
+        found = self._task(task)
         if isinstance(found, Answer):
             return found
+        name = task.name
         shutil.rmtree(self.folder(name), ignore_errors=True)
         return Answer(200, {"message": "Threw away the new week's setup. The pools have not changed.", "warnings": []})
 
-    def apply(self, name: str, request: Mapping, username: str) -> Answer:
+    def apply(self, task: TaskKey, request: Mapping, username: str) -> Answer:
         """Make the week's list the current pool, as one change that is checked first.
 
         ``request`` may change ``current_required`` and ``revision_required``
         in the same step, naming the version of the policy file it saw.
         """
-        found = self._task(name)
+        found = self._task(task)
         if isinstance(found, Answer):
             return found
+        name = task.name
         path, text, written, settings = found
         rows = self._rows(name)
         if not rows:
@@ -390,17 +398,17 @@ class Weeks:
             if not isinstance(targets, Mapping) or set(targets) - set(TARGETS):
                 return Answer(400, {"error": "Only current_required and revision_required can be changed with Apply."})
             try:
-                changes = _changes(written, {"settings": dict(targets)})
+                changes = _changes(spelling.SPELLING, written, {"settings": dict(targets)})
                 if changes:
                     if request.get("version") != _version(text):
                         return Answer(409, {"error": STALE, "stale": True})
-                    new_text = rewrite_task(text, path, name, changes)
+                    new_text = rewrite_task(text, path, task, changes)
             except (EditError, ValueError) as error:
                 return Answer(400, {"error": str(error)})
         moves, summary = self._moves(name, settings, rows, entries, planned)
         folder = self.folder(name)
         return self.tasks.write(
-            name, path, text, new_text, moves, username,
+            task, path, text, new_text, moves, username,
             confirmed=True, moved=summary, failed="The new week could not be applied, and every file was moved back",
             moved_all=lambda: shutil.rmtree(folder, ignore_errors=True),
         )
@@ -454,13 +462,13 @@ class Weeks:
 
     # Reading and writing the setup
 
-    def _task(self, name: str) -> tuple[Path, str, object, spelling.Settings] | Answer:
-        found = self.tasks._read(name)
+    def _task(self, task: TaskKey) -> tuple[Path, str, object, spelling.Settings] | Answer:
+        found = self.tasks._read(task)
         if isinstance(found, Answer):
             return found
         path, text, written = found
-        if written.fields.get("type") != spelling.SPELLING:
-            return Answer(400, {"error": f"{name} is not a spelling task, so it has no week's words."})
+        if task.type != spelling.SPELLING:
+            return Answer(400, {"error": f"{task.name} is not a spelling task, so it has no week's words."})
         try:
             settings = _settings(written)
         except ValueError as error:

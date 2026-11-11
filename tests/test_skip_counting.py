@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from conftest import needs_node, run_page  # noqa: E402
+from conftest import merge_task_types, needs_node, run_page  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
@@ -33,7 +33,7 @@ from policy.skip_counting import (  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, respond_task  # noqa: E402
-from policy.tasks import AttemptStore, skip_days  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey, skip_days  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
@@ -121,9 +121,9 @@ def test_bad_settings_fail_the_policy_load_and_keep_the_previous_policy(tmp_path
     with pytest.raises(ConfigError) as raised:
         load(path, previous=good)
     message = str(raised.value)
-    assert "'count'" in message
+    assert "'skip_counting/count'" in message
     assert f"body.{field}" in message
-    assert good.task("count").document() == {}
+    assert good.task(TaskKey("skip_counting", "count")).document() == {}
 
 
 @pytest.mark.parametrize(
@@ -315,7 +315,7 @@ def test_the_story_example_loads_and_needs_eight_points(tmp_path):
         "timeout": "2m",
     }
     policy = _policy(tmp_path, body)
-    settings = parse_settings(policy.task("count").document())
+    settings = parse_settings(policy.task(TaskKey("skip_counting", "count")).document())
     assert (settings.required, settings.minimum_questions, settings.maximum_questions) == (8, 10, 15)
     assert settings.timeout == 120_000
 
@@ -685,10 +685,10 @@ def test_reaching_the_maximum_without_the_points_is_a_failure_with_its_cooldown(
     assert results[-1]["result"] == "failure"
     failed = quiz.attempt()
     assert failed.outcome == "failure"
-    task = quiz.policy.task("count")
+    task = quiz.policy.task(TaskKey("skip_counting", "count"))
     assert not quiz.store.is_eligible(task, "younger", START.date() + timedelta(days=1))
     assert quiz.store.is_eligible(task, "younger", START.date() + timedelta(days=2))
-    assert skip_days("count", "younger", quiz.store.attempts("younger")) == {START.date()}
+    assert skip_days(TaskKey("skip_counting", "count"), "younger", quiz.store.attempts("younger")) == {START.date()}
 
 
 @pytest.mark.parametrize(
@@ -765,9 +765,9 @@ def test_the_progress_shows_quarter_points_and_the_question_number(tmp_path):
 def test_the_end_offers_the_next_task_only_when_one_is_eligible(tmp_path):
     other = """\
   spelling:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+    spelling:
+      group: younger
+      pass_cooldown: 0
 """
     with_other = Quiz(tmp_path / "a", {"maximum_questions": 8}, extra=other)
     with_other.open(START)
@@ -987,7 +987,7 @@ def test_giving_up_an_optional_task_closes_the_question_and_abandons(tmp_path):
     page = quiz.give_up(START + timedelta(seconds=2))
     assert page.status == 302
     assert ("location", "https://tasks.example/tasks/choose") in page.headers
-    abandoned = quiz.store.attempts("younger", "count")[-1]
+    abandoned = quiz.store.attempts("younger", TaskKey("skip_counting", "count"))[-1]
     assert abandoned.outcome == "abandoned"
     assert abandoned.detail["questions"][-1]["outcome"] == "timeout"
 
@@ -1010,7 +1010,7 @@ def test_giving_up_on_the_last_question_records_the_failure_it_decides(tmp_path)
     quiz.play(["1"] * 7)
     quiz.ask(quiz.now)
     quiz.give_up(quiz.now + timedelta(seconds=2))
-    assert quiz.store.attempts("younger", "count")[-1].outcome == "failure"
+    assert quiz.store.attempts("younger", TaskKey("skip_counting", "count"))[-1].outcome == "failure"
 
 
 def test_a_reload_that_finishes_the_minimum_passes_the_attempt(tmp_path):
@@ -1070,11 +1070,11 @@ def test_the_service_runs_a_skip_counting_question(tmp_path, monkeypatch):
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
     app = create_app()
 
-    status, _headers, body = _call(app, "GET", "/tasks/count")
+    status, _headers, body = _call(app, "GET", "/tasks/skip_counting/count")
     assert status == 200
     assert b"Skip counting" in body
-    assert _call(app, "POST", "/tasks/count", query=b"do=visit", body=b"{}")[0] == 200
-    status, headers, body = _call(app, "POST", "/tasks/count", query=b"do=question", body=b"{}")
+    assert _call(app, "POST", "/tasks/skip_counting/count", query=b"do=visit", body=b"{}")[0] == 200
+    status, headers, body = _call(app, "POST", "/tasks/skip_counting/count", query=b"do=question", body=b"{}")
     assert status == 200
     assert headers["content-type"] == "application/json"
     question = json.loads(body)
@@ -1084,7 +1084,7 @@ def test_the_service_runs_a_skip_counting_question(tmp_path, monkeypatch):
     entries = [str(start + 5 * position) for position, value in enumerate(question["boxes"]) if value is None]
     assert len(filled) == 3
     answer = json.dumps({"id": question["id"], "entries": entries, "expired": False}).encode()
-    status, _headers, body = _call(app, "POST", "/tasks/count", query=b"do=answer", body=answer)
+    status, _headers, body = _call(app, "POST", "/tasks/skip_counting/count", query=b"do=answer", body=answer)
     result = json.loads(body)
     assert status == 200
     assert result["outcome"] == "correct"
@@ -1102,8 +1102,12 @@ def _house(
     failure_cooldown: int | None = None,
     due: str | None = None,
 ) -> str:
-    due_line = f"    due_date: {due}\n" if due else ""
-    failure_line = f"    failure_cooldown: {failure_cooldown}\n" if failure_cooldown is not None else ""
+    due_line = f"      due_date: {due}\n" if due else ""
+    failure_line = f"      failure_cooldown: {failure_cooldown}\n" if failure_cooldown is not None else ""
+    tasks = (
+        f"  skip_counting:\n    count:\n      group: younger\n      pass_cooldown: {cooldown}\n"
+        f"{failure_line}{due_line}      body: {json.dumps(body)}\n{extra}"
+    )
     return f"""\
 entry: gate
 timezone: America/Toronto
@@ -1113,12 +1117,7 @@ client_groups:
   younger:
     addresses: ["{YOUNGER}"]
 tasks:
-  count:
-    type: skip_counting
-    group: younger
-    pass_cooldown: {cooldown}
-{failure_line}{due_line}    body: {json.dumps(body)}
-{extra}rule_sets:
+{merge_task_types(tasks)}rule_sets:
   gate:
     - condition: always
       when_true: {{ action: allow }}
@@ -1163,7 +1162,7 @@ class Quiz:
             self.policy,
             self.store,
             method=method,
-            path="/tasks/count",
+            path="/tasks/skip_counting/count",
             client_ip=YOUNGER,
             now=now,
             query=query,
@@ -1202,7 +1201,7 @@ class Quiz:
         return payload
 
     def attempt(self):
-        return self.store.attempts("younger", "count")[-1]
+        return self.store.attempts("younger", TaskKey("skip_counting", "count"))[-1]
 
     def detail(self):
         return self.attempt().detail

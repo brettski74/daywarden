@@ -32,6 +32,10 @@ apply to every story, epic, and implementation summary:
 8. **An epic's Behaviour holds only the checks that span its children,** such as "S004.1 to S004.6 are done". Each
    child's checks are in the child.
 
+## Refining stories
+
+If any aspects of a story are ambiguous, unclear or conflict with other requirements already given, ask the user targeted questions in groups of up to 5 questions at a time. Keep asking questions until the ambiguities or other issues have been resolved to a level of confidence that allows you to confidently write the detailed requirements.
+
 ## Acceptance through external interfaces
 
 Code review is rare. The reviewer accepts a story through the interfaces a user can see: the policy file and other

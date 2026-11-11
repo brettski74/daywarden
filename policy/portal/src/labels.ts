@@ -20,6 +20,17 @@ export const LABELS: Record<string, string> = {
   revision_dir: "Revision Pool Directory",
   attic_dir: "Attic Directory",
   alphabet_dir: "Alphabet Directory",
+  sequence_length: "Sequence Length",
+  completed: "Completed",
+  minimum_value: "Minimum Value",
+  maximum_value: "Maximum Value",
+  consecutive: "Consecutive",
+  multiples_only: "Multiples Only",
+  minimum_questions: "Minimum Questions",
+  maximum_questions: "Maximum Questions",
+  operation: "Operation",
+  max_timeout: "Max Timeout",
+  min_timeout: "Min Timeout",
 };
 
 export function label(field: string): string {

@@ -1,7 +1,7 @@
 """Child-facing task pages.
 
-Any task assigned to the child's client group opens at its own URL, whatever
-the task sets say, so a bookmark always works. An attempt is stored with the
+Any task assigned to the child's client group opens at its own URL,
+``/tasks/<type>/<name>``, whatever the task sets say, so a bookmark always works. An attempt is stored with the
 set its task was in when it started, and a practice attempt counts for
 nothing. ``/tasks/next`` is the picker, which opens an available task, and
 ``/tasks/choose`` is the selector, which lists them. Below them, the selector
@@ -48,8 +48,8 @@ from policy.selection import (
     picked_task_url,
     picker_url,
     sections,
+    task_key_from_path,
     task_media_from_path,
-    task_name_from_path,
     task_page_url,
 )
 from policy.skip_counting import SKIP_COUNTING
@@ -90,8 +90,8 @@ def respond_task(
 
     A post with ``do`` in the query is a quiz request, answered with JSON.
     Any other post to a task is "Try a different task". ``back`` is asked,
-    after a pass, for the page this computer was sent away from. A task
-    name that is not one of this group's tasks goes to the picker.
+    after a pass, for the page this computer was sent away from. A type
+    and name that is not one of this group's tasks goes to the picker.
     """
     client = classify_client(policy, client_ip)
     today = household_day(now)
@@ -99,9 +99,9 @@ def respond_task(
         return _pick(policy, store, client, now)
     if path == CHOOSER_PATH:
         return _choose(policy, store, client, now)
-    name = task_name_from_path(path)
+    key = task_key_from_path(path)
     action = (query or {}).get("do")
-    task = None if name is None else configured_task(policy.tasks, name, client)
+    task = None if key is None else configured_task(policy.tasks, key, client)
     if task is None:
         if method.upper() == "POST" and action is not None:
             return reload()
@@ -114,20 +114,20 @@ def respond_task(
             )
         return _give_up(policy, store, task, client, now, path, back)
     sets = store.task_sets(policy.tasks, client, today)
-    attempt = store.open(client, task.name, now, task_set=sets.set_of(task.name), reopen_within=EXPIRY)
+    attempt = store.open(client, task.key, now, task_set=sets.set_of(task.key), reopen_within=EXPIRY)
     return _show(policy, store, task, attempt, sets, path, now, stuck=False)
 
 
 def task_media(policy: Policy, store: AttemptStore, *, path: str, client_ip: str, now: datetime) -> Path | None:
-    """Return the audio file a ``/tasks/<name>/audio/<file>`` path names, or None.
+    """Return the audio file a ``/tasks/<type>/<name>/audio/<file>`` path names, or None.
 
     Any task assigned to this client group serves its audio.
     """
     found = task_media_from_path(path)
     if found is None:
         return None
-    name, file_name = found
-    task = configured_task(policy.tasks, name, classify_client(policy, client_ip))
+    key, file_name = found
+    task = configured_task(policy.tasks, key, classify_client(policy, client_ip))
     quiz = None if task is None else _QUIZZES.get(task.type)
     if quiz is None or not hasattr(quiz, "media"):
         return None
@@ -150,7 +150,7 @@ def _choose(policy: Policy, store: AttemptStore, client: str, now: datetime) -> 
     if not found.main:
         return _nothing(policy, found.practice)
     if len(found.main) == 1 and not found.after and not found.practice:
-        return _redirect(task_page_url(policy, found.main[0].name))
+        return _redirect(task_page_url(policy, found.main[0].key))
     body = (
         f"<h1>{_e(CHOOSE)}</h1>\n"
         f'<ul id="choices" class="choices">\n{_links(policy, found.main, "")}\n</ul>\n'
@@ -174,9 +174,16 @@ def _nothing(policy: Policy, practice: tuple[Task, ...]) -> PageResponse:
 def _links(policy: Policy, tasks: tuple[Task, ...], kind: str) -> str:
     style = "big " + kind if kind else "big"
     return "\n".join(
-        f'<li><a class="{style}" href="{_e(task_page_url(policy, task.name))}">{_e(task.name)}</a></li>'
+        f'<li><a class="{style}" href="{_e(task_page_url(policy, task.key))}">{_e(_label(policy, task))}</a></li>'
         for task in tasks
     )
+
+
+def _label(policy: Policy, task: Task) -> str:
+    """Return the task's name, with its type when another task has the same name."""
+    if any(other.name == task.name and other.type != task.type for other in policy.tasks):
+        return f"{task.name} ({task.type.replace('_', ' ')})"
+    return task.name
 
 
 def _section(
@@ -208,7 +215,7 @@ def _give_up(
     back: Back | None,
 ) -> PageResponse:
     location = chooser_url(policy)
-    current = store.in_progress(client, task.name)
+    current = store.in_progress(client, task.key)
     if current is None:
         return _redirect(location)
     sets = store.task_sets(policy.tasks, client, household_day(now))

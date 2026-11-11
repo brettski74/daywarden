@@ -17,7 +17,8 @@ import { label } from "../labels";
 import type { Item, Kind } from "../review";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { RECORDINGS, audioAddress, type Pool } from "./Spelling";
-import { Outcome, taskPath, type Reported } from "./Task";
+import { Outcome, type Reported } from "./Task";
+import { routeTask, taskPath, type TaskRef } from "../taskRef";
 
 export type WeekWord = {
   key: string;
@@ -40,6 +41,7 @@ export type WeekWord = {
 
 export type WeekData = {
   name: string;
+  type: string;
   version: string;
   file: string;
   targets: Record<string, string>;
@@ -66,18 +68,18 @@ type Row = { from: string; key: string; sentence: string };
 const TARGETS = ["current_required", "revision_required"];
 const POOL_NAMES: Record<Pool, string> = { current: "Current", revision: "Revision", attic: "Attic" };
 
-function weekPath(name: string): string {
-  return `${taskPath(name)}/week`;
+function weekPath(task: TaskRef): string {
+  return `${taskPath(task)}/week`;
 }
 
 export async function weekLoader({ request, params }: LoaderFunctionArgs): Promise<WeekData> {
-  return api<WeekData>(weekPath(params.name ?? ""), { page: pageOf(request), signal: request.signal });
+  return api<WeekData>(weekPath(routeTask(params)), { page: pageOf(request), signal: request.signal });
 }
 
 /** Save the list, apply it, or throw the setup away. Sent from the page on show, so a refusal returns to it. */
 export async function weekAction({ request, params }: ActionFunctionArgs): Promise<WeekResult> {
   const { intent, ...body } = (await request.json()) as { intent: Intent } & Record<string, unknown>;
-  const path = weekPath(params.name ?? "") + (intent === "save" ? "" : `/${intent}`);
+  const path = weekPath(routeTask(params)) + (intent === "save" ? "" : `/${intent}`);
   try {
     const done = await api<{ message: string; warnings: string[] }>(path, { page: pageOf(request), method: "POST", body });
     return { intent, ok: true, ...done };
@@ -131,7 +133,7 @@ function named(keys: string[]): string {
 
 export function Week() {
   const data = useLoaderData() as WeekData;
-  return <WeekEditor key={data.name} data={data} />;
+  return <WeekEditor key={`${data.type}/${data.name}`} data={data} />;
 }
 
 function WeekEditor({ data }: { data: WeekData }) {
@@ -178,7 +180,7 @@ function WeekEditor({ data }: { data: WeekData }) {
     if (done.ok && (done.intent === "apply" || done.intent === "cancel")) {
       leaving.current = true;
       const reported: Reported = { message: done.message ?? "", warnings: done.warnings ?? [] };
-      navigate(taskPath(latestData.current.name), { state: reported });
+      navigate(taskPath(latestData.current), { state: reported });
       return;
     }
     setResult(done);
@@ -218,21 +220,21 @@ function WeekEditor({ data }: { data: WeekData }) {
   }
 
   function pending(file: string): string {
-    return `${BASE}/api${weekPath(data.name)}/clips/${encodeURIComponent(file)}`;
+    return `${BASE}/api${weekPath(data)}/clips/${encodeURIComponent(file)}`;
   }
 
   function wordAddress(word: WeekWord): string | null {
     if (word.kept.word) return pending(word.kept.word);
-    return word.clip && word.pool ? audioAddress(data.name, word.pool, word.clip) : null;
+    return word.clip && word.pool ? audioAddress(data, word.pool, word.clip) : null;
   }
 
   function sentenceAddress(word: WeekWord): string | null {
     if (word.kept.sentence) return pending(word.kept.sentence);
-    return word.sentence_clip && word.pool ? audioAddress(data.name, word.pool, word.sentence_clip) : null;
+    return word.sentence_clip && word.pool ? audioAddress(data, word.pool, word.sentence_clip) : null;
   }
 
   async function keep(take: string, kept: Kept[]): Promise<string> {
-    const done = await api<{ message: string }>(`${weekPath(data.name)}/recordings`, {
+    const done = await api<{ message: string }>(`${weekPath(data)}/recordings`, {
       page: null,
       method: "POST",
       body: { take, clips: kept.map(({ item, clip }) => ({ word: item.key, kind: item.kind, clip })) },
@@ -264,7 +266,7 @@ function WeekEditor({ data }: { data: WeekData }) {
           <ol>
             <li>Tasks</li>
             <li>
-              <Link to={taskPath(data.name)}>{data.name}</Link>
+              <Link to={taskPath(data)}>{data.name}</Link>
             </li>
             <li>
               <h1 className="bar-title">New week's words</h1>

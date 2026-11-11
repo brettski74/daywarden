@@ -1,6 +1,6 @@
 """Shared test setup.
 
-Many tests use a ``type: spelling`` task with no body as a stand-in task.
+Many tests use a spelling task with no body as a stand-in task.
 A spelling body is checked against its word and letter directories when
 the policy loads, so the whole session gets a data directory with one
 current word and the alphabet.
@@ -30,6 +30,24 @@ def run_page(page: str, replies: dict, **options) -> list[dict]:
         check=True,
     )
     return json.loads(run.stdout)
+
+
+def merge_task_types(text: str) -> str:
+    """Return the body of a ``tasks:`` section with every block of one type merged into one.
+
+    ``text`` is task types at an indent of two, each with its tasks under it,
+    so tests can join the text of several tasks of the same type.
+    """
+    blocks: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in text.splitlines(keepends=True):
+        if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":"):
+            current = blocks.setdefault(line, [])
+        elif current is not None:
+            current.append(line)
+        elif line.strip():
+            raise ValueError(f"a task line comes before its type: {line!r}")
+    return "".join(header + "".join(lines) for header, lines in blocks.items())
 
 
 def write_wav(path: Path, milliseconds: int = 500, rate: int = 8000) -> Path:

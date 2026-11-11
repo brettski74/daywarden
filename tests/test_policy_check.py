@@ -51,16 +51,16 @@ quotas:
     time_grace: -5m
     ruleset: household
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 5s
-      correct_answers_required: 0
-      operands: [{value: 1, weight: 1}]
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 0
+      body:
+        operation: addition
+        max_timeout: 10s
+        min_timeout: 5s
+        correct_answers_required: 0
+        operands: [{value: 1, weight: 1}]
 rule_sets:
   household:
     - condition: time_window
@@ -73,7 +73,7 @@ SEVEN_ERRORS = [
     ":11:5: site groups 'school' and 'games' both have priority 10",
     ":16:9: period 1: start must be a quoted time",
     ":21:17: time_grace cannot be negative",
-    ":32:7: task 'sums': body.correct_answers_required: must be a whole number, 1 or more",
+    ":32:9: task 'arithmetic/sums': body.correct_answers_required: must be a whole number, 1 or more",
     ":36:7: rule 1: when_true: unknown rule set 'missing'",
 ]
 
@@ -115,23 +115,23 @@ time_windows:
         end: "20:00"
         days: funday
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body:
-      operation: addition
-      max_timeout: 10
-      min_timeout: 5s
-      correct_answers_required: many
-      operands: [{value: 1, weight: 1}]
-  words:
-    type: skip_counting
-    group: younger
-    pass_cooldown: 0
-    body:
-      timeout: 3
-      maximum_questions: none
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 0
+      body:
+        operation: addition
+        max_timeout: 10
+        min_timeout: 5s
+        correct_answers_required: many
+        operands: [{value: 1, weight: 1}]
+  skip_counting:
+    words:
+      group: younger
+      pass_cooldown: 0
+      body:
+        timeout: 3
+        maximum_questions: none
 """
     )
     problems = _problems(_write(tmp_path, "policy.yaml", text))
@@ -156,7 +156,7 @@ def test_a_parts_of_speech_task_lists_a_mistake_in_each_sentence(tmp_path):
             {"sentence": "The hen.", "parts": {"noun": ["hen"]}, "colour": "red"},
         ],
     }
-    text = GOOD + f"tasks:\n  parts:\n    type: parts_of_speech\n    group: younger\n    pass_cooldown: 0\n    body: {json.dumps(body)}\n"
+    text = GOOD + f"tasks:\n  parts_of_speech:\n    parts:\n      group: younger\n      pass_cooldown: 0\n      body: {json.dumps(body)}\n"
     problems = _problems(_write(tmp_path, "policy.yaml", text))
     _assert_listed(problems, ["body.sentences entry 1: parts.noun", "body.sentences entry 3: colour: unknown setting"])
 
@@ -199,10 +199,10 @@ quotas:
     time: lots
     ruleset: household
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: soon
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: soon
 rule_sets:
   broken:
     - condition: sometimes
@@ -276,20 +276,18 @@ def test_spelling_tasks_whose_words_cannot_be_read_are_each_listed(tmp_path, mon
         GOOD.replace("entry: household", "entry: household\nbucket_length: 7m")
         + """\
 tasks:
-  fine:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-  first:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-    body: { current_dir: spelling/missing }
-  second:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-    body: { revision_dir: spelling/gone }
+  spelling:
+    fine:
+      group: younger
+      pass_cooldown: 0
+    first:
+      group: younger
+      pass_cooldown: 0
+      body: { current_dir: spelling/missing }
+    second:
+      group: younger
+      pass_cooldown: 0
+      body: { revision_dir: spelling/gone }
 """
     )
     _assert_listed(

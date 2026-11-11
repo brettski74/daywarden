@@ -34,12 +34,12 @@ def kept(tmp_path, monkeypatch):
 
 
 def _post(house: House, path: str, body: dict) -> tuple[int, dict]:
-    status, text, _headers = call(house.app, "POST", f"/parent/api/tasks/spelling/week{path}", json_body=body, cookie=house.cookie)
+    status, text, _headers = call(house.app, "POST", f"/parent/api/tasks/spelling/spelling/week{path}", json_body=body, cookie=house.cookie)
     return status, json.loads(text)
 
 
 def _page(house: House) -> dict:
-    status, body = house.get("/parent/api/tasks/spelling/week")
+    status, body = house.get("/parent/api/tasks/spelling/spelling/week")
     assert status == 200, body
     return body
 
@@ -243,22 +243,22 @@ def test_a_pending_clip_plays_and_nothing_else_is_served(house):
     _save(house, "frog")
     _keep(house, ("frog", "word"))
     clip = _words(house)["frog"]["kept"]["word"]
-    status, body, headers = call(house.app, "GET", f"/parent/api/tasks/spelling/week/clips/{clip}", cookie=house.cookie)
+    status, body, headers = call(house.app, "GET", f"/parent/api/tasks/spelling/spelling/week/clips/{clip}", cookie=house.cookie)
     assert status == 200
     assert headers["content-type"] == ["audio/ogg"]
     assert body.startswith("RIFF")
-    for path in (f"/parent/api/tasks/spelling/week/clips/{week.STATE}", "/parent/api/tasks/sums/week/clips/" + clip, "/parent/api/tasks/spelling/week/clips/..%2Fstate.json"):
+    for path in (f"/parent/api/tasks/spelling/spelling/week/clips/{week.STATE}", "/parent/api/tasks/worksheet/sums/week/clips/" + clip, "/parent/api/tasks/spelling/spelling/week/clips/..%2Fstate.json"):
         assert call(house.app, "GET", path, cookie=house.cookie)[0] == 404, path
 
 
 def test_every_week_address_needs_a_session_and_a_json_post(house):
     for method, path in [
-        ("GET", "/parent/api/tasks/spelling/week"),
-        ("POST", "/parent/api/tasks/spelling/week"),
-        ("POST", "/parent/api/tasks/spelling/week/recordings"),
-        ("POST", "/parent/api/tasks/spelling/week/cancel"),
-        ("POST", "/parent/api/tasks/spelling/week/apply"),
-        ("GET", "/parent/api/tasks/spelling/week/clips/abcdef01.opus"),
+        ("GET", "/parent/api/tasks/spelling/spelling/week"),
+        ("POST", "/parent/api/tasks/spelling/spelling/week"),
+        ("POST", "/parent/api/tasks/spelling/spelling/week/recordings"),
+        ("POST", "/parent/api/tasks/spelling/spelling/week/cancel"),
+        ("POST", "/parent/api/tasks/spelling/spelling/week/apply"),
+        ("GET", "/parent/api/tasks/spelling/spelling/week/clips/abcdef01.opus"),
     ]:
         status, _body, headers = call(house.app, method, path, json_body={} if method == "POST" else None)
         assert status == 401, path
@@ -268,7 +268,7 @@ def test_every_week_address_needs_a_session_and_a_json_post(house):
 
 
 def test_a_task_that_is_not_spelling_has_no_week(house):
-    status, body = house.get("/parent/api/tasks/sums/week")
+    status, body = house.get("/parent/api/tasks/worksheet/sums/week")
     assert status == 400
     assert "not a spelling task" in body["error"]
 
@@ -342,7 +342,7 @@ def test_a_listed_plain_word_that_takes_a_number_stays_current_under_it(house):
 
 
 def test_a_list_shorter_than_the_target_is_refused_until_the_target_is_lowered_in_the_same_step(kept):
-    kept.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n      current_required: 3"), encoding="utf-8")
+    kept.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n        current_required: 3"), encoding="utf-8")
     _save(kept, "cat\ndog")
     status, body = _apply(kept)
     assert status == 400
@@ -355,7 +355,7 @@ def test_a_list_shorter_than_the_target_is_refused_until_the_target_is_lowered_i
     assert body["message"].startswith("Saved spelling.")
     assert kept.task().document()["current_required"] == 2
     assert kept.files("current") == ["cat.wav", "dog.wav"]
-    assert kept.log()[0].endswith(" ada: saved task spelling")
+    assert kept.log()[0].endswith(" ada: saved task spelling/spelling")
 
 
 def test_a_target_change_on_a_file_edited_since_the_page_opened_is_refused(house):

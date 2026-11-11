@@ -22,9 +22,9 @@ async function openWords(handler?: (call: Call) => Reply | undefined, data: unkn
   const calls = fakeService((call) => {
     const answered = handler?.(call);
     if (answered) return answered;
-    return call.path === "/parent/api/tasks/words" && call.method === "GET" ? { body: data } : undefined;
+    return call.path === "/parent/api/tasks/parts_of_speech/words" && call.method === "GET" ? { body: data } : undefined;
   });
-  renderPortal("/parent/tasks/words");
+  renderPortal("/parent/tasks/parts_of_speech/words");
   await screen.findByRole("heading", { name: "words" });
   return calls;
 }

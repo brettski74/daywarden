@@ -85,14 +85,13 @@ def test_an_eligible_task_uses_the_hostname_and_the_published_port(tmp_path, mon
             "garden",
             None,
             """\
-  sums:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-  words:
-    type: spelling
-    group: older
-    pass_cooldown: 0
+  spelling:
+    sums:
+      group: younger
+      pass_cooldown: 0
+    words:
+      group: older
+      pass_cooldown: 0
 """,
         ),
     )
@@ -101,8 +100,8 @@ def test_an_eligible_task_uses_the_hostname_and_the_published_port(tmp_path, mon
         older = decide(policy, client_ip=OLDER, url=YOUTUBE, at=_at())
         assert younger.decision["location"] == "https://garden:8090/tasks/next"
         assert older.decision["location"] == "https://garden:8090/tasks/next"
-        assert _picked(policy, store) == "https://garden:8090/tasks/sums"
-        assert _picked(policy, store, OLDER) == "https://garden:8090/tasks/words"
+        assert _picked(policy, store) == "https://garden:8090/tasks/spelling/sums"
+        assert _picked(policy, store, OLDER) == "https://garden:8090/tasks/spelling/words"
 
 
 def test_nothing_eligible_lands_on_the_picker(tmp_path, monkeypatch):
@@ -113,11 +112,11 @@ def test_nothing_eligible_lands_on_the_picker(tmp_path, monkeypatch):
             "garden",
             None,
             """\
-  later:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-    available_from: 2026-11-01
+  spelling:
+    later:
+      group: younger
+      pass_cooldown: 0
+      available_from: 2026-11-01
 """,
         ),
     )
@@ -147,17 +146,17 @@ def test_an_omitted_hostname_uses_the_operating_system_name(tmp_path, monkeypatc
             None,
             None,
             """\
-  sums:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+  spelling:
+    sums:
+      group: younger
+      pass_cooldown: 0
 """,
         ),
     )
     assert policy.hostname is None
     with AttemptStore(":memory:") as store:
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
-        assert _picked(policy, store) == "https://lounge:8090/tasks/sums"
+        assert _picked(policy, store) == "https://lounge:8090/tasks/spelling/sums"
     assert trace.decision["location"] == "https://lounge:8090/tasks/next"
 
 
@@ -173,16 +172,16 @@ def test_an_omitted_hostname_uses_the_compose_hosts_name_not_the_containers(tmp_
             None,
             None,
             """\
-  sums:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+  spelling:
+    sums:
+      group: younger
+      pass_cooldown: 0
 """,
         ),
     )
     with AttemptStore(":memory:") as store:
         trace = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
-        assert _picked(policy, store) == "https://study:8090/tasks/sums"
+        assert _picked(policy, store) == "https://study:8090/tasks/spelling/sums"
     assert trace.decision["location"] == "https://study:8090/tasks/next"
     host_file.write_text("not a host\n", encoding="utf-8")
     fallen = decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=_at())
@@ -197,10 +196,10 @@ def test_port_443_is_left_off_and_a_set_port_overrides_the_published_one(tmp_pat
             "garden",
             "443",
             """\
-  sums:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+  spelling:
+    sums:
+      group: younger
+      pass_cooldown: 0
 """,
         ),
     )
@@ -210,18 +209,18 @@ def test_port_443_is_left_off_and_a_set_port_overrides_the_published_one(tmp_pat
             "garden",
             "8443",
             """\
-  sums:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+  spelling:
+    sums:
+      group: younger
+      pass_cooldown: 0
 """,
         ),
     )
     with AttemptStore(":memory:") as store:
         standard = decide(plain, client_ip=YOUNGER, url=YOUTUBE, at=_at())
         reverse = decide(proxied, client_ip=YOUNGER, url=YOUTUBE, at=_at())
-        assert _picked(plain, store) == "https://garden/tasks/sums"
-        assert _picked(proxied, store) == "https://garden:8443/tasks/sums"
+        assert _picked(plain, store) == "https://garden/tasks/spelling/sums"
+        assert _picked(proxied, store) == "https://garden:8443/tasks/spelling/sums"
     assert standard.decision["location"] == "https://garden/tasks/next"
     assert ":443" not in standard.decision["location"]
     assert reverse.decision["location"] == "https://garden:8443/tasks/next"

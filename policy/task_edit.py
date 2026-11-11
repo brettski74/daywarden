@@ -18,7 +18,9 @@ A list, such as a parts of speech task's ``sentences``, is changed with a
 item is written again in its place as a block entry, a removed item loses
 its lines, and a new item goes after the last one. A list written in flow
 style, or inside a flow mapping, is written again as a block list as a
-whole, and a flow body around it becomes a block mapping.
+whole, and a flow body around it becomes a block mapping. A list of flow
+items, such as a skip counting task's ``difference``, is always written again
+as a whole, one flow mapping per line.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from pathlib import Path
 import yaml
 
 from policy.hierarchy import ConfigError, compose, node_data
+from policy.tasks import TaskKey
 
 _PLAIN = re.compile(r"-?[A-Za-z0-9][A-Za-z0-9._+-]*")
 _SIMPLE_STYLES = (None, "", "'", '"')
@@ -73,9 +76,14 @@ class ListItem:
 
 @dataclass(frozen=True)
 class ListEdit:
-    """A list's new items in order. Items kept from the file keep their order."""
+    """A list's new items in order. Items kept from the file keep their order.
+
+    ``flow`` writes the whole list again as a block list of flow items, such
+    as ``- { value: 5, weight: 2 }``, in place of the list the file has.
+    """
 
     items: tuple[ListItem, ...]
+    flow: bool = False
 
 
 def scalar(text: str, *, name: bool = False) -> str:
@@ -98,11 +106,11 @@ def name_list(names: tuple[str, ...] | list[str]) -> str:
     return "[" + ", ".join(scalar(name, name=True) for name in names) + "]"
 
 
-def read_task(text: str, source: Path, name: str) -> WrittenTask:
-    """Return how the file writes the task ``name``."""
-    node = _task_node(text, source, name)
+def read_task(text: str, source: Path, key: TaskKey) -> WrittenTask:
+    """Return how the file writes the task ``key``, under ``tasks``, its type, and its name."""
+    _name_node, node = _task_node(text, source, key)
     if not isinstance(node, yaml.MappingNode):
-        raise EditError(f"{name} is not written as a mapping in {source}")
+        raise EditError(f"{key} is not written as a mapping in {source}")
     fields: dict[str, str] = {}
     groups: tuple[str, ...] = ()
     group_key = None
@@ -126,44 +134,38 @@ def read_task(text: str, source: Path, name: str) -> WrittenTask:
     return WrittenTask(fields, groups, body, group_key, body_data)
 
 
-def rewrite_task(text: str, source: Path, name: str, changes: Mapping[str, object]) -> str:
-    """Return ``text`` with the task ``name`` changed.
+def rewrite_task(text: str, source: Path, key: TaskKey, changes: Mapping[str, object]) -> str:
+    """Return ``text`` with the task ``key`` changed.
 
     ``changes`` maps a field to its new YAML text, or to None to remove it.
     ``body`` maps to a mapping of the body's own changes in the same form,
     where a list may be changed with a ``ListEdit``.
     """
-    node = _task_node(text, source, name)
+    name_node, node = _task_node(text, source, key)
     if not isinstance(node, yaml.MappingNode):
-        raise EditError(f"{name} is not written as a mapping in {source}")
-    step = max(2, _indent(node) - _name_column(text, source, name)) if not node.flow_style else 2
+        raise EditError(f"{key} is not written as a mapping in {source}")
+    step = max(2, _indent(node) - name_node.start_mark.column) if not node.flow_style else 2
     return _apply(text, _edit_mapping(text, node, changes, step))
 
 
-def _task_node(text: str, source: Path, name: str) -> yaml.Node:
+def _task_node(text: str, source: Path, key: TaskKey) -> tuple[yaml.Node, yaml.Node]:
+    """Return the node of the task's name and the node of the task itself."""
     try:
         root = compose(text, source)
     except ConfigError as error:
         raise EditError(str(error)) from error
     if not isinstance(root, yaml.MappingNode):
         raise EditError(f"{source}: the file must be a mapping")
-    for key, _key_node, value in _entries(root):
-        if key != "tasks" or not isinstance(value, yaml.MappingNode):
+    for section, _section_node, types in _entries(root):
+        if section != "tasks" or not isinstance(types, yaml.MappingNode):
             continue
-        for task, _task_key, body in _entries(value):
-            if task.strip() == name:
-                return body
-    raise EditError(f"{source} does not define the task {name}")
-
-
-def _name_column(text: str, source: Path, name: str) -> int:
-    root = compose(text, source)
-    for key, _key_node, value in _entries(root):
-        if key == "tasks" and isinstance(value, yaml.MappingNode):
-            for task, task_key, _body in _entries(value):
-                if task.strip() == name:
-                    return task_key.start_mark.column
-    return 0
+        for kind, _kind_node, names in _entries(types):
+            if kind.strip() != key.type or not isinstance(names, yaml.MappingNode):
+                continue
+            for name, name_node, body in _entries(names):
+                if name.strip() == key.name:
+                    return name_node, body
+    raise EditError(f"{source} does not define the task {key}")
 
 
 def _entries(node: yaml.MappingNode) -> list[tuple[str, yaml.Node, yaml.Node]]:
@@ -227,7 +229,7 @@ def _edit_mapping(text: str, node: yaml.MappingNode, changes: Mapping[str, objec
             continue
         key_node, value = present[key]
         if isinstance(change, ListEdit):
-            if isinstance(value, yaml.SequenceNode) and not value.flow_style and value.value:
+            if isinstance(value, yaml.SequenceNode) and not value.flow_style and value.value and not change.flow:
                 edits += _edit_sequence(text, value, change, step, depth + 1)
             else:
                 start, end = _entry_span(text, key_node, value)
@@ -346,12 +348,12 @@ def _list_entry(key: str, edit: ListEdit, indent: str, step: int) -> str:
     if not edit.items:
         return f"{indent}{key}: []\n"
     inner = indent + " " * step
-    return f"{indent}{key}:\n" + "".join(_list_item(item.data, inner, step) for item in edit.items)
+    return f"{indent}{key}:\n" + "".join(_list_item(item.data, inner, step, flow=edit.flow) for item in edit.items)
 
 
-def _list_item(data: object, indent: str, step: int) -> str:
-    """Return one block list item, its dash at ``indent``."""
-    if not isinstance(data, Mapping) or not data:
+def _list_item(data: object, indent: str, step: int, *, flow: bool = False) -> str:
+    """Return one block list item, its dash at ``indent``. ``flow`` writes it on one line."""
+    if flow or not isinstance(data, Mapping) or not data:
         return f"{indent}- {_value(data)}\n"
     inner = indent + "  "
     lines = "".join(_data_entry(key, value, inner, step) for key, value in data.items())

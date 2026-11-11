@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.parts_of_speech import default_required, parse_settings, split_words  # noqa: E402
+from policy.tasks import TaskKey  # noqa: E402
 
 EXAMPLE = """\
 timeout: 45s
@@ -38,13 +39,13 @@ def _house(body: str) -> str:
         "  younger:\n"
         '    addresses: ["192.0.2.40"]\n'
         "tasks:\n"
-        "  parts-of-speech-1:\n"
-        "    type: parts_of_speech\n"
-        "    group: younger\n"
-        "    pass_cooldown: 21\n"
-        "    failure_cooldown: 1\n"
-        "    body:\n"
-        f"{textwrap.indent(body, '      ')}"
+        "  parts_of_speech:\n"
+        "    parts-of-speech-1:\n"
+        "      group: younger\n"
+        "      pass_cooldown: 21\n"
+        "      failure_cooldown: 1\n"
+        "      body:\n"
+        f"{textwrap.indent(body, '        ')}"
         "rule_sets:\n"
         "  open:\n"
         "    - condition: always\n"
@@ -61,16 +62,16 @@ def _write(directory: Path, body: str) -> Path:
 def _settings(directory: Path, body: str):
     policy = load(_write(directory, body))
     assert policy is not None
-    return parse_settings(policy.task("parts-of-speech-1").document())
+    return parse_settings(policy.task(TaskKey("parts_of_speech", "parts-of-speech-1")).document())
 
 
 def _refused(directory: Path, body: str) -> str:
     good = load(_write(directory, EXAMPLE))
     with pytest.raises(ConfigError) as raised:
         load(_write(directory, body), previous=good)
-    assert good.task("parts-of-speech-1").document()["sentences"][0]["parts"]["noun"] == ["fox", "dog"]
+    assert good.task(TaskKey("parts_of_speech", "parts-of-speech-1")).document()["sentences"][0]["parts"]["noun"] == ["fox", "dog"]
     message = str(raised.value)
-    assert "task 'parts-of-speech-1': body." in message
+    assert "task 'parts_of_speech/parts-of-speech-1': body." in message
     return message
 
 
@@ -151,7 +152,7 @@ def test_the_example_error_names_the_task_sentence_part_and_entry(tmp_path):
     body = EXAMPLE.replace('adjective: ["dry[2]"]', 'adjective: ["dry[3]"]')
     message = _refused(tmp_path, body)
     assert (
-        "task 'parts-of-speech-1': body.sentences entry 2: parts.adjective: "
+        "task 'parts_of_speech/parts-of-speech-1': body.sentences entry 2: parts.adjective: "
         '"dry[3]": the sentence has only 2 of "dry"'
     ) in message
 

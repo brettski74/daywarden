@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from conftest import write_alphabet, write_wav  # noqa: E402
+from conftest import merge_task_types, write_alphabet, write_wav  # noqa: E402
 
 from policy import spelling  # noqa: E402
 from policy.child_page import PRACTICE_LINE  # noqa: E402
@@ -41,7 +41,7 @@ from policy.spelling import (  # noqa: E402
 )
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, respond_task, task_media  # noqa: E402
-from policy.tasks import AttemptStore  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
@@ -91,7 +91,11 @@ def _house(body: dict, *, rules: str | None = None, sites: str = "", extra: str 
     - condition: always
       when_true: { action: allow }
 """
-    due_line = f"    due_date: {due}\n" if due else ""
+    due_line = f"      due_date: {due}\n" if due else ""
+    tasks = (
+        f"  spelling:\n    words:\n      group: younger\n      pass_cooldown: 0\n"
+        f"{due_line}      body: {json.dumps(body)}\n{extra}"
+    )
     return f"""\
 entry: gate
 timezone: America/Toronto
@@ -101,12 +105,7 @@ client_groups:
   younger:
     addresses: ["{YOUNGER}"]
 {sites}tasks:
-  words:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
-{due_line}    body: {json.dumps(body)}
-{extra}rule_sets:
+{merge_task_types(tasks)}rule_sets:
 {rules}"""
 
 
@@ -285,10 +284,10 @@ def test_bad_configuration_fails_the_load_and_keeps_the_previous_policy(
     with pytest.raises(ConfigError) as raised:
         load(path, previous=good)
     message = str(raised.value)
-    assert "'words'" in message
+    assert "'spelling/words'" in message
     for fragment in expected:
         assert fragment in message
-    assert good.task("words").document() == {}
+    assert good.task(TaskKey("spelling", "words")).document() == {}
 
 
 @pytest.mark.parametrize(
@@ -308,7 +307,7 @@ def test_a_word_in_two_pools_fails_the_load_naming_the_task_the_field_and_both_f
     _files(data, f"spelling/{second}", "Rope.wav")
     with pytest.raises(ConfigError) as raised:
         load(_write(tmp_path / "bad", _house({})), previous=good)
-    assert f"task 'words': body.{field}: Rope.wav is also in {other} as rope.wav; a word belongs to one pool" in str(
+    assert f"task 'spelling/words': body.{field}: Rope.wav is also in {other} as rope.wav; a word belongs to one pool" in str(
         raised.value
     )
 
@@ -359,7 +358,7 @@ def test_a_load_without_task_data_skips_the_pools_but_still_checks_the_fields(tm
         load(path)
     loaded = load(path, task_data=False)
     assert loaded is not None
-    assert loaded.task("words").document() == body
+    assert loaded.task(TaskKey("spelling", "words")).document() == body
     bad = _write(tmp_path / "bad", _house({"colour": "blue"}))
     with pytest.raises(ConfigError, match="body.colour"):
         load(bad, task_data=False)
@@ -372,7 +371,7 @@ def test_the_observations_service_loads_a_spelling_policy_without_the_data_direc
     path = _write(tmp_path / "policy", _house({"revision_required": 10}))
     policy = observations._load_policy(path)
     assert policy is not None
-    assert policy.task("words").document() == {"revision_required": 10}
+    assert policy.task(TaskKey("spelling", "words")).document() == {"revision_required": 10}
 
 
 def test_pool_problems_lists_every_problem_in_a_directory_and_scan_pool_raises_the_first(data, any_length):
@@ -756,7 +755,7 @@ class Quiz:
             self.policy,
             self.store,
             method=method,
-            path="/tasks/words",
+            path="/tasks/spelling/words",
             client_ip=YOUNGER,
             now=now,
             query=query,
@@ -791,7 +790,7 @@ class Quiz:
         return payload
 
     def attempt(self):
-        return self.store.attempts("younger", "words")[-1]
+        return self.store.attempts("younger", TaskKey("spelling", "words"))[-1]
 
     def detail(self):
         return self.attempt().detail
@@ -852,7 +851,7 @@ def test_a_question_carries_audio_urls_and_never_the_word_or_its_length(tmp_path
     }
     word_name = question["word_url"].rsplit("/", 1)[1]
     sentence_name = question["sentence_url"].rsplit("/", 1)[1]
-    assert question["word_url"].startswith("/tasks/words/audio/")
+    assert question["word_url"].startswith("/tasks/spelling/words/audio/")
     assert len(word_name) == len("x" * 32 + ".wav")
     assert sentence_name.endswith(".sentence.wav") and len(sentence_name) == 32 + len(".sentence.wav")
     assert read_media_name(word_name) == (CURRENT, "extemporaneously", False, "wav")
@@ -981,11 +980,11 @@ def test_reloading_closes_the_open_question_as_a_timeout_and_puts_it_back(tmp_pa
 def test_giving_up_shows_the_missed_words_including_the_one_left_showing(tmp_path, data):
     _words(data, "spelling/current", "rope", "cat", "dog")
     other = """\
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body: { operation: addition, max_timeout: 10s, min_timeout: 4s, correct_answers_required: 2, operands: [{ value: 1, weight: 1 }] }
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 0
+      body: { operation: addition, max_timeout: 10s, min_timeout: 4s, correct_answers_required: 2, operands: [{ value: 1, weight: 1 }] }
 """
     quiz = Quiz(tmp_path, extra=other)
     quiz.open(START)
@@ -1006,7 +1005,7 @@ def test_giving_up_shows_the_missed_words_including_the_one_left_showing(tmp_pat
 def test_the_missed_words_after_giving_up_practice_keep_the_practice_palette_and_line(tmp_path, data):
     _words(data, "spelling/current", "rope", "cat", "dog")
     quiz = Quiz(tmp_path)
-    quiz.store.record("younger", "words", "pass", START - timedelta(hours=2))
+    quiz.store.record("younger", TaskKey("spelling", "words"), "pass", START - timedelta(hours=2))
     quiz.open(START)
     assert quiz.attempt().task_set == "practice"
     quiz.spell(False)
@@ -1079,18 +1078,18 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path,
 def test_word_audio_is_served_for_a_task_passed_today_but_not_for_another_groups_task(tmp_path, data):
     _words(data, "spelling/current", "rope")
     other = """\
-  theirs:
-    type: spelling
-    group: default
-    pass_cooldown: 0
+  spelling:
+    theirs:
+      group: default
+      pass_cooldown: 0
 """
     quiz = Quiz(tmp_path, extra=other)
-    quiz.store.record("younger", "words", "pass", START - timedelta(hours=1))
+    quiz.store.record("younger", TaskKey("spelling", "words"), "pass", START - timedelta(hours=1))
     assert not quiz.store.task_sets(quiz.policy.tasks, "younger", START.date()).available
     name = token("rope", CURRENT, random.Random(1)) + ".wav"
-    found = task_media(quiz.policy, quiz.store, path=f"/tasks/words/audio/{name}", client_ip=YOUNGER, now=START)
+    found = task_media(quiz.policy, quiz.store, path=f"/tasks/spelling/words/audio/{name}", client_ip=YOUNGER, now=START)
     assert found is not None and found.name.startswith("rope")
-    elsewhere = task_media(quiz.policy, quiz.store, path=f"/tasks/theirs/audio/{name}", client_ip=YOUNGER, now=START)
+    elsewhere = task_media(quiz.policy, quiz.store, path=f"/tasks/spelling/theirs/audio/{name}", client_ip=YOUNGER, now=START)
     assert elsewhere is None
 
 
@@ -1121,11 +1120,11 @@ def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
     app = create_app()
 
-    status, _headers, body = _call(app, "GET", "/tasks/words")
+    status, _headers, body = _call(app, "GET", "/tasks/spelling/words")
     assert status == 200
     assert b"Spelling" in body
-    assert _call(app, "POST", "/tasks/words", query=b"do=visit", body=b"{}")[0] == 200
-    status, _headers, body = _call(app, "POST", "/tasks/words", query=b"do=question", body=b"{}")
+    assert _call(app, "POST", "/tasks/spelling/words", query=b"do=visit", body=b"{}")[0] == 200
+    status, _headers, body = _call(app, "POST", "/tasks/spelling/words", query=b"do=question", body=b"{}")
     question = json.loads(body)
     status, headers, body = _call(app, "GET", question["word_url"])
     assert status == 200
@@ -1138,13 +1137,13 @@ def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch
     status, _headers, body = _call(app, "GET", question["word_url"].replace(".wav", ".mp3"))
     assert status == 200
     assert body == (data / "spelling/current/rope.wav").read_bytes()
-    assert _call(app, "GET", "/tasks/words/audio/rope.wav")[0] == 404
+    assert _call(app, "GET", "/tasks/spelling/words/audio/rope.wav")[0] == 404
     missing = token("cat", CURRENT, random.Random(2))
-    assert _call(app, "GET", f"/tasks/words/audio/{missing}.wav")[0] == 404
+    assert _call(app, "GET", f"/tasks/spelling/words/audio/{missing}.wav")[0] == 404
     replay = json.dumps({"id": question["id"], "clip": "word"}).encode()
-    assert _call(app, "POST", "/tasks/words", query=b"do=replay", body=replay)[0] == 200
+    assert _call(app, "POST", "/tasks/spelling/words", query=b"do=replay", body=replay)[0] == 200
     answer = json.dumps({"id": question["id"], "answer": "rope", "expired": False}).encode()
-    status, _headers, body = _call(app, "POST", "/tasks/words", query=b"do=answer", body=answer)
+    status, _headers, body = _call(app, "POST", "/tasks/spelling/words", query=b"do=answer", body=answer)
     assert json.loads(body)["outcome"] == "correct"
 
 
@@ -1217,7 +1216,7 @@ def test_the_alphabet_is_checked_when_the_policy_loads(tmp_path, data, any_lengt
     with pytest.raises(ConfigError) as raised:
         load(_write(tmp_path / "bad", _house({})), previous=good)
     message = str(raised.value)
-    assert "'words'" in message and "body.alphabet_dir" in message
+    assert "'spelling/words'" in message and "body.alphabet_dir" in message
     for fragment in expected:
         assert fragment in message
 
@@ -1314,7 +1313,7 @@ def test_practice_through_the_page_plays_the_word_and_its_letters_with_the_task_
             assert read_media_name(step["url"].rsplit("/", 1)[1]) == (CURRENT, "don't", False, "wav")
             assert step["ms"] == WORD_MS
         else:
-            assert step["url"] == f"/tasks/words/audio/alphabet.{clip}.wav"
+            assert step["url"] == f"/tasks/spelling/words/audio/alphabet.{clip}.wav"
             assert step["ms"] == LETTER_MS
 
 
@@ -1328,7 +1327,7 @@ def test_practice_is_allowed_on_a_required_task_and_keeps_the_attempt_in_progres
     status, reply = quiz.post(quiz.now + timedelta(seconds=2), "practice", {})
     assert status == 200
     assert (reply["current"], reply["current_required"]) == (0, 2)
-    [attempt] = quiz.store.attempts("younger", "words")
+    [attempt] = quiz.store.attempts("younger", TaskKey("spelling", "words"))
     assert attempt.outcome == "in_progress"
     assert [item["outcome"] for item in attempt.detail["questions"]] == ["correct", "incorrect", "timeout"]
     assert len(attempt.detail["runs"]) == 2
@@ -1376,18 +1375,18 @@ def test_the_service_serves_letter_clips_for_practice(tmp_path, data, monkeypatc
     monkeypatch.setenv("SOUND_DIR", str(_sound_dir(tmp_path / "sounds")))
     app = create_app()
 
-    assert _call(app, "GET", "/tasks/words")[0] == 200
-    status, _headers, body = _call(app, "POST", "/tasks/words", query=b"do=practice", body=b"{}")
+    assert _call(app, "GET", "/tasks/spelling/words")[0] == 200
+    status, _headers, body = _call(app, "POST", "/tasks/spelling/words", query=b"do=practice", body=b"{}")
     assert status == 200
     steps = json.loads(body)["practice"][0]["steps"]
-    assert steps[1]["url"] == "/tasks/words/audio/alphabet.R.wav"
+    assert steps[1]["url"] == "/tasks/spelling/words/audio/alphabet.R.wav"
     for step in steps:
         status, headers, _body = _call(app, "GET", step["url"])
         assert status == 200
         assert headers["content-type"].startswith("audio/wav")
-    assert _call(app, "GET", "/tasks/words/audio/alphabet.r.wav")[2] == (data / "spelling/alphabet/R.wav").read_bytes()
+    assert _call(app, "GET", "/tasks/spelling/words/audio/alphabet.r.wav")[2] == (data / "spelling/alphabet/R.wav").read_bytes()
     for name in ("alphabet.zz.wav", "alphabet.a.txt", "alphabet.wav", "alphabet..wav", "alphabet.hello.wav"):
-        assert _call(app, "GET", f"/tasks/words/audio/{name}")[0] == 404, name
+        assert _call(app, "GET", f"/tasks/spelling/words/audio/{name}")[0] == 404, name
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")

@@ -283,21 +283,21 @@ def test_a_portal_save_commits_hand_edits_then_the_save_and_reloads_every_servic
         daywarden.edit(
             "timezone: Australia/Sydney\n",
             "timezone: Australia/Sydney\nproxy_configuration:\n  direct:\n    extra: ['*.portal.arpa']\n"
-            "tasks:\n  spelling:\n    type: spelling\n    group: younger\n",
+            "tasks:\n  spelling:\n    spelling:\n      group: younger\n",
         )
         added = daywarden.compose("exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada", input_text="s3cret-pass\n")
         assert "parent account ada is saved" in added.stdout
         status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
         assert status == 200
         cookie = headers["set-cookie"].split(";", 1)[0]
-        status, page, _headers = _portal(daywarden, "GET", "/parent/api/tasks/spelling", cookie=cookie)
+        status, page, _headers = _portal(daywarden, "GET", "/parent/api/tasks/spelling/spelling", cookie=cookie)
         assert status == 200, page
         assert {word["key"] for word in page["spelling"]["words"]} == {"rope", "cat"}
 
         status, saved, _headers = _portal(
             daywarden,
             "POST",
-            "/parent/api/tasks/spelling",
+            "/parent/api/tasks/spelling/spelling",
             {"version": page["version"], "fields": {"pass_cooldown": "3"}, "moves": {"cat": "revision"}},
             cookie=cookie,
         )
@@ -309,12 +309,12 @@ def test_a_portal_save_commits_hand_edits_then_the_save_and_reloads_every_servic
         log = subprocess.run(
             ["git", "-C", str(daywarden.config), "log", "-2", "--format=%an %s"], text=True, capture_output=True, check=True
         ).stdout.splitlines()
-        assert log[0].startswith("ada ") and log[0].endswith(" ada: saved task spelling")
+        assert log[0].startswith("ada ") and log[0].endswith(" ada: saved task spelling/spelling")
         assert log[1].startswith("ada ") and log[1].endswith(" hand edits found before a portal save")
         status = subprocess.run(["git", "-C", str(daywarden.config), "status", "--porcelain"], text=True, capture_output=True, check=True)
         assert status.stdout == ""
 
-        status, retired, _headers = _portal(daywarden, "POST", "/parent/api/tasks/spelling/retire", {"word": "rope"}, cookie=cookie)
+        status, retired, _headers = _portal(daywarden, "POST", "/parent/api/tasks/spelling/spelling/retire", {"word": "rope"}, cookie=cookie)
         assert status == 200, retired
         written = [
             daywarden.config / "policy.yaml",
@@ -341,7 +341,7 @@ def test_a_browser_recording_is_cut_and_kept_by_the_decisions_container_as_the_h
     source = _write_wav(tmp_path / "take.wav", _audio(500, 500, 900, 1200, 600)[0])
     subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(source), "-c:a", "libopus", "-f", "webm", str(tmp_path / "take.webm")], check=True)
     try:
-        daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\ntasks:\n  spelling:\n    type: spelling\n    group: younger\n")
+        daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\ntasks:\n  spelling:\n    spelling:\n      group: younger\n")
         assert daywarden.dw("reload").returncode == 0
         daywarden.compose("exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada", input_text="s3cret-pass\n")
         status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
@@ -365,7 +365,7 @@ def test_a_browser_recording_is_cut_and_kept_by_the_decisions_container_as_the_h
         status, kept, _headers = _portal(
             daywarden,
             "POST",
-            "/parent/api/tasks/spelling/recordings",
+            "/parent/api/tasks/spelling/spelling/recordings",
             {"take": take, "word": "sun", "clips": {"word": cut["clips"][0]["id"], "sentence": cut["clips"][1]["id"]}},
             cookie=cookie,
         )

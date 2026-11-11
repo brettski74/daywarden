@@ -14,7 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from conftest import needs_node, run_page  # noqa: E402
+from conftest import merge_task_types, needs_node, run_page  # noqa: E402
 from policy.arithmetic import (  # noqa: E402
     NETWORK_ALLOWANCE_MS,
     Session,
@@ -27,7 +27,7 @@ from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, respond_task  # noqa: E402
-from policy.tasks import AttemptStore  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
@@ -197,9 +197,9 @@ def test_bad_arithmetic_settings_fail_the_policy_load_and_keep_the_previous_poli
     with pytest.raises(ConfigError) as raised:
         load(path, previous=good)
     message = str(raised.value)
-    assert "'sums'" in message
+    assert "'arithmetic/sums'" in message
     assert f"body.{field}" in message
-    assert good.task("sums").document()["correct_answers_required"] == 20
+    assert good.task(TaskKey("arithmetic", "sums")).document()["correct_answers_required"] == 20
 
 
 def test_a_timeout_takes_milliseconds_or_seconds():
@@ -491,9 +491,9 @@ def test_reaching_the_target_is_a_pass_at_that_answer_and_counts_today(tmp_path)
 def test_well_done_offers_the_next_task_only_when_one_is_eligible(tmp_path):
     other = """\
   spelling:
-    type: spelling
-    group: younger
-    pass_cooldown: 0
+    spelling:
+      group: younger
+      pass_cooldown: 0
 """
     with_other = Quiz(tmp_path / "a", _body(correct_answers_required=1), extra=other)
     with_other.open(START)
@@ -625,7 +625,7 @@ def test_giving_up_an_optional_task_closes_the_question_and_abandons(tmp_path):
     page = quiz.give_up(START + timedelta(seconds=2))
     assert page.status == 302
     assert ("location", "https://tasks.example/tasks/choose") in page.headers
-    abandoned = quiz.store.attempts("younger", "sums")[-1]
+    abandoned = quiz.store.attempts("younger", TaskKey("arithmetic", "sums"))[-1]
     assert abandoned.outcome == "abandoned"
     assert abandoned.detail["questions"][-1]["outcome"] == "timeout"
 
@@ -734,7 +734,7 @@ site_groups:
 """
     policy = _policy(tmp_path, _body(), rules=rules, sites=sites)
     sound = decide(policy, client_ip=YOUNGER, url="https://tasks.example/static/sounds/correct/cha-ching.mp3", at=START)
-    page = decide(policy, client_ip=YOUNGER, url="https://tasks.example/tasks/sums", at=START)
+    page = decide(policy, client_ip=YOUNGER, url="https://tasks.example/tasks/arithmetic/sums", at=START)
     assert sound.decision == expected
     assert page.decision == expected
 
@@ -758,16 +758,16 @@ def test_the_service_serves_the_sounds_and_runs_a_question(tmp_path, monkeypatch
     assert _call(app, "GET", "/static/sounds/correct/ATTRIBUTION.md")[0] == 404
     assert _call(app, "GET", "/static/sounds/correct/..%2F..%2Fpolicy.yaml")[0] == 404
 
-    status, _headers, body = _call(app, "GET", "/tasks/sums")
+    status, _headers, body = _call(app, "GET", "/tasks/arithmetic/sums")
     assert status == 200
     assert b"Addition" in body
-    status, headers, body = _call(app, "POST", "/tasks/sums", query=b"do=question", body=b"{}")
+    status, headers, body = _call(app, "POST", "/tasks/arithmetic/sums", query=b"do=question", body=b"{}")
     assert status == 200
     assert headers["content-type"] == "application/json"
     question = json.loads(body)
     assert question["question"] == "6 + 7 ="
     answer = json.dumps({"id": question["id"], "answer": "13", "expired": False}).encode()
-    status, _headers, body = _call(app, "POST", "/tasks/sums", query=b"do=answer", body=answer)
+    status, _headers, body = _call(app, "POST", "/tasks/arithmetic/sums", query=b"do=answer", body=answer)
     result = json.loads(body)
     assert status == 200
     assert result["outcome"] == "correct"
@@ -801,6 +801,72 @@ def test_each_question_is_stored_in_full_and_shown_in_the_attempt_view(tmp_path)
     assert "correct" in page
 
 
+# S026: subtraction, multiplication, and division
+
+SIX_SEVEN = {"first": [{"value": 6, "weight": 1}], "operands": [{"value": 7, "weight": 1}]}
+
+
+@pytest.mark.parametrize(
+    ("operation", "asked", "expected", "label"),
+    [
+        ("multiplication", "6 \u00d7 7 =", 42, "Multiplication"),
+        ("subtraction", "13 \u2212 6 =", 7, "Subtraction"),
+        ("division", "42 \u00f7 6 =", 7, "Division"),
+    ],
+)
+def test_each_operation_asks_with_its_sign_accepts_only_its_answer_and_passes(tmp_path, operation, asked, expected, label):
+    quiz = Quiz(tmp_path, _body(operation=operation, correct_answers_required=1, **SIX_SEVEN))
+    assert f"<h1>{label}</h1>" in quiz.open(START).body
+    question = quiz.ask(START)
+    assert question["question"] == asked
+    wrong = quiz.answer(START + timedelta(seconds=1), question["id"], str(expected + 1))
+    assert (wrong["outcome"], wrong["full"]) == ("incorrect", f"{asked} {expected}")
+    question = quiz.ask(START + timedelta(seconds=2))
+    result = quiz.answer(START + timedelta(seconds=3), question["id"], str(expected))
+    assert (result["outcome"], result["finished"]) == ("correct", True)
+    assert quiz.attempt().outcome == "pass"
+    assert quiz.store.passes_on("younger", START.date()) == 1
+    assert asked in json.dumps(attempt_report(quiz.store, str(quiz.attempt().id), now=START), ensure_ascii=False)
+
+
+@pytest.mark.parametrize(("operation", "sign"), [("subtraction", "\u2212"), ("division", "\u00f7")])
+def test_with_first_set_to_seven_every_question_takes_away_or_divides_by_seven(operation, sign):
+    session = _session(_body(operation=operation, first=[{"value": 7, "weight": 1}], operands=[{"from": 0, "to": 12, "weight": 1}]))
+    rng = random.Random(5)
+    for _ in range(30):
+        question = session.issue(START, rng)
+        assert question["question"].endswith(f" {sign} 7 =")
+        assert question["expected"] == question["n"]
+        session.answer(START, len(session.questions) - 1, str(question["expected"]), expired=False)
+
+
+def test_division_by_a_first_number_free_of_zero_may_divide_zero():
+    session = _session(_body(operation="division", first=[{"value": 7, "weight": 1}], operands=[{"value": 0, "weight": 1}]))
+    question = session.issue(START, random.Random(1))
+    assert (question["question"], question["expected"]) == ("0 \u00f7 7 =", 0)
+    assert session.answer(START, 0, "0", expired=False).outcome == "correct"
+
+
+@pytest.mark.parametrize(
+    ("lists", "field"),
+    [
+        ({"first": [{"value": 0, "weight": 1}]}, "first"),
+        ({"first": [{"from": 0, "to": 3, "weight": 1}]}, "first"),
+        ({"operands": [{"from": 0, "to": 9, "weight": 1}]}, "operands"),
+    ],
+    ids=["first-value", "first-range", "operands-without-first"],
+)
+def test_division_with_zero_in_the_first_numbers_list_fails_the_load(tmp_path, lists, field):
+    good = _policy(tmp_path, _body())
+    path = _write(tmp_path, _house(_body(operation="division", **lists)))
+    with pytest.raises(ConfigError) as raised:
+        load(path, previous=good)
+    message = str(raised.value)
+    assert "'arithmetic/sums'" in message
+    assert f"body.{field}: division cannot divide by 0" in message
+    assert good.task(TaskKey("arithmetic", "sums")).document()["operation"] == "addition"
+
+
 # Helpers
 
 
@@ -818,7 +884,11 @@ def _house(
     - condition: always
       when_true: { action: allow }
 """
-    due_line = f"    due_date: {due}\n" if due else ""
+    due_line = f"      due_date: {due}\n" if due else ""
+    tasks = (
+        f"  arithmetic:\n    sums:\n      group: younger\n      pass_cooldown: {cooldown}\n"
+        f"{due_line}      body: {json.dumps(body)}\n{extra}"
+    )
     return f"""\
 entry: gate
 timezone: America/Toronto
@@ -828,12 +898,7 @@ client_groups:
   younger:
     addresses: ["{YOUNGER}"]
 {sites}tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: {cooldown}
-{due_line}    body: {json.dumps(body)}
-{extra}rule_sets:
+{merge_task_types(tasks)}rule_sets:
 {rules}"""
 
 
@@ -876,7 +941,7 @@ class Quiz:
             self.policy,
             self.store,
             method=method,
-            path="/tasks/sums",
+            path="/tasks/arithmetic/sums",
             client_ip=YOUNGER,
             now=now,
             query=query,
@@ -916,7 +981,7 @@ class Quiz:
         return payload
 
     def attempt(self):
-        return self.store.attempts("younger", "sums")[-1]
+        return self.store.attempts("younger", TaskKey("arithmetic", "sums"))[-1]
 
     def detail(self):
         return self.attempt().detail

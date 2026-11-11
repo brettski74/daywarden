@@ -8,6 +8,8 @@ describe("each portal address opens its page", () => {
     const calls = fakeService();
     renderPortal("/parent/attempts?client=younger");
     expect(await screen.findByRole("link", { name: "spelling-week-3" })).toHaveAttribute("href", "/parent/attempts/42");
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent).slice(0, 2)).toEqual(["Task", "Type"]);
+    expect(screen.getByRole("cell", { name: "spelling" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Client group" })).toHaveValue("younger");
     expect(screen.getByText("Today's score")).toBeInTheDocument();
     expect(calls.map((call) => call.path + call.search)).toContain("/parent/api/attempts?client=younger");

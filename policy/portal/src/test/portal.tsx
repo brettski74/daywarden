@@ -22,6 +22,7 @@ export const ATTEMPTS = {
     {
       id: 42,
       task: "spelling-week-3",
+      type: "spelling",
       set: "Required",
       started: "Saturday 31 October 2026, 16:00",
       finished: "Saturday 31 October 2026, 16:12:30",
@@ -36,6 +37,7 @@ export const NO_GROUP = { ...ATTEMPTS, client: "", message: "Choose a client gro
 export const ATTEMPT = {
   id: 42,
   task: "spelling-week-3",
+  type: "spelling",
   client: "younger",
   times: "Times are Australia/Sydney.",
   summary: [
@@ -55,7 +57,13 @@ export const USAGE = {
   message: "Choose a site group, a client group, or a quota.",
 };
 
-export const TASKS = { tasks: ["check", "spelling", "sums"] };
+export const TASKS = {
+  tasks: [
+    { type: "parent_check", name: "check" },
+    { type: "spelling", name: "spelling" },
+    { type: "worksheet", name: "sums" },
+  ],
+};
 
 const COMMON = {
   pass_cooldown: "1",
@@ -106,6 +114,7 @@ const WEEK_WORD = { becomes: null, renames: null, sentence_clip: null, kept: NO_
 /** A week's list with a word of each kind: new, new with a sentence kept, current, revision, and attic. */
 export const WEEK = {
   name: "spelling",
+  type: "spelling",
   version: "v1",
   file: "/etc/daywarden/policy.yaml",
   targets: { current_required: "", revision_required: "1" },
@@ -168,13 +177,13 @@ function standard(call: Call): Reply {
       return { body: USAGE };
     case "/parent/api/tasks":
       return { body: TASKS };
-    case "/parent/api/tasks/spelling":
+    case "/parent/api/tasks/spelling/spelling":
       return { body: SPELLING };
-    case "/parent/api/tasks/spelling/week":
+    case "/parent/api/tasks/spelling/spelling/week":
       return { body: WEEK };
-    case "/parent/api/tasks/check":
+    case "/parent/api/tasks/parent_check/check":
       return { body: CHECK };
-    case "/parent/api/tasks/sums":
+    case "/parent/api/tasks/worksheet/sums":
       return { body: SUMS };
     case "/parent/api/logout":
       return { body: { signed_out: true } };

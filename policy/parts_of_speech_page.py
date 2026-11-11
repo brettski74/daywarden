@@ -121,7 +121,7 @@ def respond_api(
     back: Back | None = None,
 ) -> PageResponse:
     """Record a page load, issue or bring back a sentence, or judge a try, and answer with JSON."""
-    attempt = store.in_progress(client_group, task.name)
+    attempt = store.in_progress(client_group, task.key)
     if attempt is None:
         return reload()
     session = Session(attempt.detail, task.document(), rng or _RNG)

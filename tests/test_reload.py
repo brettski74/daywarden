@@ -52,16 +52,15 @@ quotas:
     volume_grace: 0b
     ruleset: meter
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body: {json.dumps(SUMS)}
-  spare:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body: {json.dumps(SUMS)}
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 0
+      body: {json.dumps(SUMS)}
+    spare:
+      group: younger
+      pass_cooldown: 0
+      body: {json.dumps(SUMS)}
 rule_sets:
   meter:
     - condition: site_group
@@ -126,7 +125,7 @@ class Service:
     def task(self, method: str, name: str, action: str | None = None, body: bytes = b"") -> tuple[int, str]:
         query = b"" if action is None else f"do={action}".encode()
         status, text, _headers = _call(
-            self.app, method, f"/tasks/{name}", query=query, body=body, peer=PROXY, client=YOUNGER
+            self.app, method, f"/tasks/arithmetic/{name}", query=query, body=body, peer=PROXY, client=YOUNGER
         )
         return status, text
 
@@ -298,7 +297,7 @@ def test_a_quiz_in_progress_carries_on_as_it_would_after_a_restart(service, appl
     service.open_task("sums")
     assert service.answer("sums")["finished"] is False
     service.edit('"correct_answers_required": 2', '"correct_answers_required": 3')
-    service.edit("  spare:\n", "  more:\n")
+    service.edit("    spare:\n", "    more:\n")
     if apply == "reload":
         assert service.reload()[1]["reloaded"] is True
     else:

@@ -2,7 +2,8 @@
 
 The review lists one client group's attempts, newest first, and opens one
 attempt to show the answers and results that were stored. Each attempt says
-which task set it started in. Above the list is where the household day
+its task's type and name, as stored with it, and which task set it started
+in. A task named in the summary is written ``type/name``. Above the list is where the household day
 stands: today's score, the required tasks still outstanding, the potential
 tasks still available, and the potential passes waiting on the required
 ones. A parent records a ``parent_check`` pass from the portal. The child has
@@ -34,6 +35,7 @@ from policy.tasks import (
     AttemptStore,
     Score,
     Task,
+    TaskKey,
     household_day,
 )
 
@@ -111,10 +113,12 @@ def attempt_report(
     return {
         "id": found.id,
         "task": found.task,
+        "type": found.task_type,
         "client": found.client_group,
         "times": timezone_note(timezone),
         "summary": [
             {"label": "Client group", "value": found.client_group},
+            {"label": "Type", "value": found.task_type},
             {"label": "Set", "value": set_label(found)},
             {"label": "Started", "value": _local(found.started_at)},
             {"label": "Finished", "value": _finished(found, today)},
@@ -172,21 +176,21 @@ def outcome_label(attempt: Attempt, today) -> str:
     return attempt.outcome
 
 
-def _parent_task(tasks: Sequence[Task], client_group: str) -> str:
-    """Return a parent_check task assigned to this group, or the type name."""
+def _parent_task(tasks: Sequence[Task], client_group: str) -> TaskKey:
+    """Return a parent_check task assigned to this group, or one named for the type."""
     for task in tasks:
         if task.type == PARENT_CHECK and client_group in task.groups:
-            return task.name
-    return PARENT_CHECK
+            return task.key
+    return TaskKey(PARENT_CHECK, PARENT_CHECK)
 
 
 def _summary(score: Score) -> list[dict]:
     """Return where today stands: the score and the tasks behind it."""
     return [
         {"label": "Today's score", "value": str(score.points)},
-        {"label": "Required tasks outstanding", "value": _names(task.name for task in score.sets.required)},
-        {"label": "Potential tasks available", "value": _names(task.name for task in score.sets.potential)},
-        {"label": "Potential passes waiting on required tasks", "value": _names(score.waiting)},
+        {"label": "Required tasks outstanding", "value": _names(str(task.key) for task in score.sets.required)},
+        {"label": "Potential tasks available", "value": _names(str(task.key) for task in score.sets.potential)},
+        {"label": "Potential passes waiting on required tasks", "value": _names(map(str, score.waiting))},
     ]
 
 
@@ -199,6 +203,7 @@ def _attempt_row(attempt: Attempt, today) -> dict:
     return {
         "id": attempt.id,
         "task": attempt.task,
+        "type": attempt.task_type,
         "set": set_label(attempt),
         "started": _local(attempt.started_at),
         "finished": _finished(attempt, today),

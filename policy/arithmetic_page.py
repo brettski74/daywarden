@@ -109,7 +109,7 @@ def respond_api(
     the page was left is a timeout. Coming back more than an hour after the
     last activity starts a new run. ``back`` names the page a pass returns to.
     """
-    attempt = store.in_progress(client_group, task.name)
+    attempt = store.in_progress(client_group, task.key)
     if attempt is None:
         return reload()
     session = Session(attempt.detail, task.document())

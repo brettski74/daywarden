@@ -20,7 +20,7 @@ from policy import accounts as accounts_module  # noqa: E402
 from policy.accounts import Accounts, _DUMMY, session_limits  # noqa: E402
 from policy.observations import status_for  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
-from policy.tasks import AttemptStore  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
 PASSWORD = "s3cret-pass"
@@ -320,7 +320,7 @@ def test_a_parent_check_without_a_session_or_a_json_body_does_not_record_a_pass(
 def test_without_an_account_or_a_session_the_data_endpoints_show_nothing(service):
     closed = service.app(account=False)
     with PolicyStore(service.database) as store:
-        AttemptStore(connection=store.connection).record("younger", "words", "pass", NOW, detail={"answers": ["wombat"]})
+        AttemptStore(connection=store.connection).record("younger", TaskKey("spelling", "words"), "pass", NOW, detail={"answers": ["wombat"]})
     for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage", "view=client&client=younger"), ("/parent/api/session", "")):
         status, body, _headers = call(closed, "GET", path, query=query)
         assert status == 403, path

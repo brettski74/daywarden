@@ -1,8 +1,8 @@
 Ticket: S026
 Title: Arithmetic administration, subtraction, multiplication, and division
-Status: Draft
+Status: In Progress
 Story Points: 8
-Last Updated: 2026-11-10 00:40:00
+Last Updated: 2026-11-10 08:05:00
 ---
 
 # User Voice
@@ -24,10 +24,12 @@ questions look like the ones at school.
       (`correct_answers_required`). Each label's title is its field name, as in S023.2.
 - [ ] The timeouts and Correct Answers Required are required. An empty one is a problem shown under it, and problems
       block Save as in S025.
-- [ ] A line under the tables says how the chosen operation uses them, and follows the pull-down: "first + operand",
-      "(first + operand) − first, and the answer is the operand", "first × operand", or "(first × operand) ÷ first,
-      and the answer is the operand".
-- [ ] The status bar shows how many problems there are, as in S025.
+- [ ] *Changed in implementation:* A line under the tables says how the chosen operation uses them, and follows the
+      pull-down: "Each question is first + operand.", "Each question is (first + operand) − first, and the answer is
+      the operand.", "Each question is first × operand.", or "Each question is (first × operand) ÷ first, and the
+      answer is the operand."
+- [ ] *Changed in implementation:* The status bar counts every problem on the page, such as "2 problems." or "No
+      problems."
 - [ ] Save, Ctrl+S, the unsaved-changes prompt, the refusal after a hand edit of the policy file, and the config
       history commit work as in S023.2.
 
@@ -79,3 +81,67 @@ S004.6, the formatted arithmetic attempt review, is not part of this story.
 Sizing: the page reuses S025's table and save path, so it is like the parts of speech settings in S007.3, about 3
 points. The three operations were drafted at 2 points each. Built together on the existing operation table, with the
 divide-by-zero check and the docs, they are about 5, which makes 8. It has 18 checks.
+
+# Implementation
+
+## Files Added
+
+- `policy/portal/src/arithmetic.ts`: the arithmetic page's model. The two tables, the required settings, the
+  divide-by-zero rule on the list the first number is drawn from, the problem count, and the lists a save sends.
+- `policy/portal/src/pages/Arithmetic.tsx`: the arithmetic area of the task page.
+- `policy/portal/src/arithmetic.test.tsx`: Vitest tests of the page.
+- `tests/test_arithmetic_admin.py`: the page data and saves through the app, an empty First removed, and refusals.
+
+## Files Changed
+
+- `policy/arithmetic.py`: subtraction, multiplication, and division in `OPERATIONS`, and the divide-by-zero check in
+  `parse_settings`.
+- `policy/number_lists_admin.py` (added in S025): the arithmetic page data and its `first` and `operands` tables.
+- `policy/task_admin.py`: an `arithmetic` task's page carries `arithmetic`, and a save takes its `settings` and
+  `lists`.
+- `policy/portal/src/pages/Task.tsx`: shows the arithmetic area, sends its lists, and counts its problems.
+- `policy/portal/src/labels.ts`: Operation, Max Timeout, and Min Timeout.
+- `policy/portal/src/styles/layout.css` (shared with S025): the two tables side by side.
+- `tests/test_arithmetic.py`: each operation's question, answer, pass, and review, First of 7 alone, `0 ÷ 7`, and
+  the division load failures.
+- `docs/hierarchical-policy.md`: the four operations, where `m` and `n` appear, and the division rule.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+Each operation is one entry in `OPERATIONS`. Subtraction asks `(m + n) − m` and division `(m × n) ÷ m`, both
+expecting `n`, so the draws, weights, recent-question check, and timer are S004.1's unchanged. The signs are written
+as escapes in the source, so an editor cannot swap them for `-`, `x`, or `/`. The divide-by-zero check runs once
+`first` and `operands` have each passed their own checks. It names `first`, or `operands` when the task has no
+`first`, and the loader adds the task and `body.` as it does for every body error.
+
+The page uses S025's table with only From, To, and Weight, with negatives refused and 0 allowed. Its division rule
+is a check of the page's own, given to the table that the first number is drawn from, so it moves to Operands when
+First is emptied and goes when the pull-down leaves Division. An empty First is sent as an empty list, and the
+service removes the field, or does nothing when the file has none. An operation the file names that the service does
+not have is shown in the pull-down as written, so the page still opens.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S026
+
+Set up an `arithmetic` task with `first` of 7 alone, with a comment beside it, and `operands` of a `value` and a
+`from`/`to` range. Keep the config history on.
+
+1. Open the task page. Check The page: the pull-down and its four choices, the titles, the line under the tables
+   following the pull-down, and the status bar. Clear Max Timeout, Min Timeout, and Correct Answers Required one at
+   a time and check each problem and that Save is blocked.
+2. Check The number tables: the three columns, a negative number marked, 0 accepted, the keyboard and saving as in
+   S025, Operands with no rows, First with no rows and its note, and saving then leaves `first` out of the file.
+   Choose Division with a 0 in First, then with First empty and a 0 in Operands, and watch the mark move and go.
+3. Save Multiplication, then Subtraction, then Division, and between saves run each as the child, as in The
+   operations: the start screen's name, the signs, `6 × 7 =`, `13 − 6 =`, `42 ÷ 6 =`, First of 7 alone, and `0 ÷ 7 =`.
+   Finish one run of each, then check today's revision count and the attempt review on the parent pages.
+4. Write a division task with a 0 in `first`, then with `first` from 0 to 3, then with no `first` and a 0 in
+   `operands`, by hand. Run `bin/dw check` and `bin/dw reload` each time, and check the error names the task and the
+   field and the previous policy stays in force.
+5. Read `docs/hierarchical-policy.md` for the four operations and the division rule. Check the policy file and
+   `git log` after a save, and that a hand edit with the page open refuses the save, as in S023.2.

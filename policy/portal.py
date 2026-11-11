@@ -42,8 +42,8 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
-from policy.task_admin import TaskAdmin
-from policy.tasks import AttemptStore
+from policy.task_admin import TaskAdmin, missing
+from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
 from policy.week import Weeks
 
@@ -239,20 +239,20 @@ def install_portal(
         _username, refused = guard(request)
         if refused is not None:
             return refused
-        return _json(200, {"tasks": [] if tasks is None else tasks.names()})
+        return _json(200, {"tasks": [] if tasks is None else tasks.catalogue()})
 
-    @app.get("/parent/api/tasks/{name}")
-    async def task_page(request: Request, name: str) -> Response:
+    @app.get("/parent/api/tasks/{kind}/{name}")
+    async def task_page(request: Request, kind: str, name: str) -> Response:
         _username, refused = guard(request)
         if refused is not None:
             return refused
         if tasks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = tasks.page(name)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = tasks.page(TaskKey(kind, name))
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}")
-    async def task_save(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}")
+    async def task_save(request: Request, kind: str, name: str) -> Response:
         if request.url.scheme != "https":
             return _json(403, {"error": "Open this page over HTTPS."})
         body, refused = await _json_body(request)
@@ -262,12 +262,12 @@ def install_portal(
         if refused is not None:
             return refused
         if tasks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = tasks.save(name, body, username)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = tasks.save(TaskKey(kind, name), body, username)
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/retire")
-    async def task_retire(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/retire")
+    async def task_retire(request: Request, kind: str, name: str) -> Response:
         if request.url.scheme != "https":
             return _json(403, {"error": "Open this page over HTTPS."})
         body, refused = await _json_body(request)
@@ -277,12 +277,12 @@ def install_portal(
         if refused is not None:
             return refused
         if tasks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = tasks.retire(name, body.get("word"))
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = tasks.retire(TaskKey(kind, name), body.get("word"))
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/recordings")
-    async def task_keep(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/recordings")
+    async def task_keep(request: Request, kind: str, name: str) -> Response:
         if request.url.scheme != "https":
             return _json(403, {"error": "Open this page over HTTPS."})
         body, refused = await _json_body(request)
@@ -292,8 +292,8 @@ def install_portal(
         if refused is not None:
             return refused
         if tasks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = tasks.keep(name, body)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = tasks.keep(TaskKey(kind, name), body)
         return _json(answer.status, answer.body)
 
     async def acting(request: Request) -> tuple[dict, str, Response | None]:
@@ -308,62 +308,62 @@ def install_portal(
             return {}, "", refused
         return body, username or "", None
 
-    @app.get("/parent/api/tasks/{name}/week")
-    async def week_page(request: Request, name: str) -> Response:
+    @app.get("/parent/api/tasks/{kind}/{name}/week")
+    async def week_page(request: Request, kind: str, name: str) -> Response:
         _username, refused = guard(request)
         if refused is not None:
             return refused
         if weeks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = weeks.page(name)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = weeks.page(TaskKey(kind, name))
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/week")
-    async def week_save(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/week")
+    async def week_save(request: Request, kind: str, name: str) -> Response:
         body, _username, refused = await acting(request)
         if refused is not None:
             return refused
         if weeks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = weeks.save(name, body)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = weeks.save(TaskKey(kind, name), body)
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/week/recordings")
-    async def week_keep(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/week/recordings")
+    async def week_keep(request: Request, kind: str, name: str) -> Response:
         body, _username, refused = await acting(request)
         if refused is not None:
             return refused
         if weeks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = weeks.keep(name, body)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = weeks.keep(TaskKey(kind, name), body)
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/week/cancel")
-    async def week_cancel(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/week/cancel")
+    async def week_cancel(request: Request, kind: str, name: str) -> Response:
         _body, _username, refused = await acting(request)
         if refused is not None:
             return refused
         if weeks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = weeks.cancel(name)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = weeks.cancel(TaskKey(kind, name))
         return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/tasks/{name}/week/apply")
-    async def week_apply(request: Request, name: str) -> Response:
+    @app.post("/parent/api/tasks/{kind}/{name}/week/apply")
+    async def week_apply(request: Request, kind: str, name: str) -> Response:
         body, username, refused = await acting(request)
         if refused is not None:
             return refused
         if weeks is None:
-            return _json(404, {"error": f"There is no task named {name}."})
-        answer = weeks.apply(name, body, username)
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = weeks.apply(TaskKey(kind, name), body, username)
         return _json(answer.status, answer.body)
 
-    @app.get("/parent/api/tasks/{name}/week/clips/{file_name}")
-    async def week_clip(request: Request, name: str, file_name: str) -> Response:
+    @app.get("/parent/api/tasks/{kind}/{name}/week/clips/{file_name}")
+    async def week_clip(request: Request, kind: str, name: str, file_name: str) -> Response:
         _username, refused = guard(request)
         if refused is not None:
             return refused
-        found = None if weeks is None else weeks.clip(name, file_name)
+        found = None if weeks is None else weeks.clip(TaskKey(kind, name), file_name)
         if found is None:
             return _json(404, {"error": "There is no such recording."})
         return FileResponse(found, media_type="audio/ogg", headers={"cache-control": "private, no-store"})
@@ -426,12 +426,12 @@ def install_portal(
             return _json(404, {"error": "There is no such recording."})
         return FileResponse(found, media_type="audio/ogg", headers={"cache-control": "private, no-store"})
 
-    @app.get("/parent/api/tasks/{name}/audio/{pool}/{file_name}")
-    async def task_audio(request: Request, name: str, pool: str, file_name: str) -> Response:
+    @app.get("/parent/api/tasks/{kind}/{name}/audio/{pool}/{file_name}")
+    async def task_audio(request: Request, kind: str, name: str, pool: str, file_name: str) -> Response:
         _username, refused = guard(request)
         if refused is not None:
             return refused
-        found = None if tasks is None else tasks.audio(name, pool, file_name)
+        found = None if tasks is None else tasks.audio(TaskKey(kind, name), pool, file_name)
         if found is None:
             return _json(404, {"error": "There is no such recording."})
         return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, no-store"})

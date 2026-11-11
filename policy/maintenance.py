@@ -16,13 +16,13 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import TextIO
 
-from policy.tasks import PARENT_CHECK, Attempt, AttemptStore
+from policy.tasks import Attempt, AttemptStore
 
 _AGE = re.compile(r"^(\d+)([mhd])$")
 _AGE_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
@@ -51,25 +51,17 @@ def parse_age(text: str) -> timedelta:
     return timedelta(**{_AGE_UNITS[match.group(2)]: int(match.group(1))})
 
 
-def task_type(attempt: Attempt, task_types: Mapping[str, str]) -> str | None:
-    """Return the type of the task this attempt is on, or None when the policy file has no such task."""
-    found = task_types.get(attempt.task)
-    if found is None and attempt.task == PARENT_CHECK:
-        return PARENT_CHECK
-    return found
-
-
 def select_attempts(
     attempts: Sequence[Attempt],
     chosen: AttemptFilter,
     *,
     now: datetime,
     zone: tzinfo,
-    task_types: Mapping[str, str],
 ) -> list[Attempt]:
     """Return the attempts every filter matches.
 
-    Several values for one filter match any of them. The age of an attempt
+    Several values for one filter match any of them. A task name matches
+    attempts of any type, and a type matches the type stored on each attempt. The age of an attempt
     is measured from its finish, or from its start while it is in progress.
     A stored time without an offset is read in ``zone``.
     """
@@ -79,7 +71,7 @@ def select_attempts(
             continue
         if chosen.tasks and attempt.task not in chosen.tasks:
             continue
-        if chosen.types and task_type(attempt, task_types) not in chosen.types:
+        if chosen.types and attempt.task_type not in chosen.types:
             continue
         age = now - _aware(attempt.finished_at or attempt.started_at, zone)
         if chosen.older_than is not None and age <= chosen.older_than:
@@ -121,7 +113,7 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="TYPE",
-        help="task type in the policy file, such as arithmetic",
+        help="task type stored with each attempt, such as arithmetic",
     )
     remove.add_argument(
         "--older-than",
@@ -155,16 +147,13 @@ def _remove_attempts(parser: argparse.ArgumentParser, args: argparse.Namespace, 
     )
     if chosen.empty and not args.all:
         parser.error("remove-attempts needs a filter, or --all to match every attempt")
-    task_types, zone = _household(need_types=bool(chosen.types))
+    zone = _household_zone()
     database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
     if not database.is_file():
         print(f"no policy database at {database}", file=sys.stderr)
         return 1
-    for name in sorted(chosen.types):
-        if name not in task_types.values() and name != PARENT_CHECK:
-            print(f"no task in the policy file has type {name}", file=out)
     with AttemptStore(database) as store:
-        matched = select_attempts(store.everything(), chosen, now=now, zone=zone, task_types=task_types)
+        matched = select_attempts(store.everything(), chosen, now=now, zone=zone)
         if not matched:
             print("no attempts match", file=out)
             return 0
@@ -177,11 +166,8 @@ def _remove_attempts(parser: argparse.ArgumentParser, args: argparse.Namespace, 
     return 0
 
 
-def _household(*, need_types: bool) -> tuple[dict[str, str], tzinfo]:
-    """Return each task's type and the household timezone from the policy file.
-
-    A policy file that will not load is fatal only when ``--type`` needs it.
-    """
+def _household_zone() -> tzinfo:
+    """Return the household timezone from the policy file, or the machine's when it does not load."""
     # Imported here so --help does not load the policy loader.
     from policy.clock import machine_zone, named_zone
     from policy.hierarchy import ConfigError, load
@@ -192,24 +178,20 @@ def _household(*, need_types: bool) -> tuple[dict[str, str], tzinfo]:
     try:
         policy = load(policy_file, warn=lambda message: print(message, file=sys.stderr))
     except ConfigError as exc:
-        if need_types:
-            raise SystemExit(f"--type needs the policy file, and it did not load: {exc}") from exc
         print(f"the policy file did not load, so the machine timezone is used: {exc}", file=sys.stderr)
-    if policy is None and need_types:
-        raise SystemExit(f"--type needs the policy file, and there is none at {policy_file}")
-    if policy is None:
-        return {}, machine_zone(localtime=localtime)
-    zone = named_zone(policy.timezone) if policy.timezone else machine_zone(localtime=localtime)
-    return {task.name: task.type for task in policy.tasks}, zone
+    if policy is None or not policy.timezone:
+        return machine_zone(localtime=localtime)
+    return named_zone(policy.timezone)
 
 
 def _print_attempts(attempts: Sequence[Attempt], out: TextIO) -> None:
-    rows = [("id", "client group", "task", "outcome", "started", "finished")]
+    rows = [("id", "client group", "type", "task", "outcome", "started", "finished")]
     for attempt in attempts:
         rows.append(
             (
                 str(attempt.id),
                 attempt.client_group,
+                attempt.task_type,
                 attempt.task,
                 attempt.outcome,
                 _when(attempt.started_at),

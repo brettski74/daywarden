@@ -76,9 +76,15 @@ class Operation:
     answer: Callable[[int, int], int]
 
 
+# Subtraction and division ask the question whose answer is n, so the draws and weights work on m and n as for
+# addition and multiplication. The signs are the ones on paper: − (U+2212), × (U+00D7), and ÷ (U+00F7).
 OPERATIONS: dict[str, Operation] = {
     "addition": Operation("addition", "Addition", lambda m, n: f"{m} + {n} =", lambda m, n: m + n),
+    "subtraction": Operation("subtraction", "Subtraction", lambda m, n: f"{m + n} \u2212 {m} =", lambda m, n: n),
+    "multiplication": Operation("multiplication", "Multiplication", lambda m, n: f"{m} \u00d7 {n} =", lambda m, n: m * n),
+    "division": Operation("division", "Division", lambda m, n: f"{m * n} \u00f7 {m} =", lambda m, n: n),
 }
+DIVISION = "division"
 
 
 @dataclass(frozen=True)
@@ -131,6 +137,10 @@ def parse_settings(body: Mapping) -> Settings:
         fields.add("correct_answers_required: must be a whole number, 1 or more")
     first = fields.take(weighted, body["first"], "first", _operand) if "first" in body else None
     operands = fields.take(weighted, body["operands"], "operands", _operand) if "operands" in body else None
+    if name == DIVISION:
+        lefts, field = (first, "first") if "first" in body else (operands, "operands")
+        if lefts is not None and lefts.weight(0):
+            fields.add(f"{field}: division cannot divide by 0, so 0 cannot be in the list the first number is drawn from")
     fields.finish()
     return Settings(OPERATIONS[name], longest, shortest, required, operands, first)
 

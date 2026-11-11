@@ -16,13 +16,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from conftest import merge_task_types  # noqa: E402
 from policy import parts_of_speech_page  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, respond_task  # noqa: E402
-from policy.tasks import AttemptStore, household_day, skip_days  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey, household_day, skip_days  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
 YOUNGER = "192.0.2.40"
@@ -55,7 +56,11 @@ def _ten(required: int | None = None) -> dict:
 
 
 def _house(body: dict, *, due: str | None = None, failure_cooldown: int = 0, extra: str = "") -> str:
-    due_line = f"    due_date: {due}\n" if due else ""
+    due_line = f"      due_date: {due}\n" if due else ""
+    tasks = (
+        f"  parts_of_speech:\n    words:\n      group: younger\n      pass_cooldown: 7\n"
+        f"      failure_cooldown: {failure_cooldown}\n{due_line}      body: {json.dumps(body)}\n{extra}"
+    )
     return f"""\
 entry: gate
 timezone: America/Toronto
@@ -65,13 +70,7 @@ client_groups:
   younger:
     addresses: ["{YOUNGER}"]
 tasks:
-  words:
-    type: parts_of_speech
-    group: younger
-    pass_cooldown: 7
-    failure_cooldown: {failure_cooldown}
-{due_line}    body: {json.dumps(body)}
-{extra}rule_sets:
+{merge_task_types(tasks)}rule_sets:
   gate:
     - condition: always
       when_true: {{ action: allow }}
@@ -108,7 +107,7 @@ class Quiz:
                 self.policy,
                 self.store,
                 method=method,
-                path="/tasks/words",
+                path="/tasks/parts_of_speech/words",
                 client_ip=YOUNGER,
                 now=now,
                 query=query,
@@ -145,7 +144,7 @@ class Quiz:
         return payload
 
     def attempt(self):
-        return self.store.attempts("younger", "words")[-1]
+        return self.store.attempts("younger", TaskKey("parts_of_speech", "words"))[-1]
 
     def detail(self):
         return self.attempt().detail
@@ -638,8 +637,8 @@ def test_every_sentence_is_asked_and_too_few_points_fail(tmp_path, plan, points)
     final = results[-1]
     assert (final["points"], final["required"], final["total"], final["result"]) == (points, 7, 10, "failure")
     assert quiz.attempt().outcome == "failure"
-    assert len(skip_days("words", "younger", quiz.store.attempts("younger"))) == 1
-    task = quiz.policy.task("words")
+    assert len(skip_days(TaskKey("parts_of_speech", "words"), "younger", quiz.store.attempts("younger"))) == 1
+    task = quiz.policy.task(TaskKey("parts_of_speech", "words"))
     assert not quiz.store.is_eligible(task, "younger", household_day(START) + timedelta(days=1))
     assert quiz.store.is_eligible(task, "younger", household_day(START) + timedelta(days=2))
     assert quiz.store.passes_on("younger", household_day(START)) == 0
