@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from policy import clips, number_lists_admin, parts_of_speech_admin, spelling
+from policy import clips, number_lists_admin, parts_of_speech_admin, spelling, spelling_directories
 from policy.arithmetic import ARITHMETIC
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, task_files
@@ -60,7 +60,7 @@ SPELLING_SETTINGS = (
     "letter_pause",
     "word_pause",
 )
-SPELLING_DIRECTORIES = ("current_dir", "revision_dir", "attic_dir", "alphabet_dir")
+SPELLING_DIRECTORIES = spelling_directories.FIELDS
 STALE = (
     "The policy file has changed on the server since this page was opened. "
     "Reload the page and make the change again."
@@ -175,20 +175,68 @@ class TaskAdmin:
         path, text, written = found
         if request.get("version") != _version(text):
             return Answer(409, {"error": STALE, "stale": True})
+        listed = None
         try:
             changes = _changes(key.type, written, request)
-            settings = _settings(written)
+            settings, listed = self.chosen_settings(key.type, written, request.get("directories"))
             moves, moved = self._moves(settings, request.get("moves") or {})
             new_text = rewrite_task(text, path, key, changes) if changes else text
         except _Clash:
-            return self._clash()
+            return self.with_words(self._clash(), listed)
         except (EditError, ValueError) as error:
             return Answer(400, {"error": str(error)})
         if new_text == text and not moves:
             return Answer(200, {"message": "Nothing has changed, so nothing was saved.", "warnings": []})
-        return self.write(
+        answer = self.write(
             key, path, text, new_text, moves, username,
             confirmed=bool(request.get("confirmed")), moved=_moved_words(moved) if moved else None,
+        )
+        return self.with_words(answer, listed)
+
+    def chosen_settings(self, kind: str, written: WrittenTask, asked: object) -> tuple[spelling.Settings, spelling.Settings | None]:
+        """Return a task's spelling settings with any directories the page chose in place of the file's.
+
+        The second is the same settings when the page chose other directories, and None when it did not.
+        """
+        if kind != spelling.SPELLING or asked is None:
+            return _settings(written), None
+        directories = spelling_directories.chosen(written.body, asked)
+        settings = _settings(written, directories)
+        return settings, (settings if directories != spelling_directories.saved(written.body) else None)
+
+    def with_words(self, answer: Answer, settings: spelling.Settings | None) -> Answer:
+        """Add the words in the directories the page chose to a refused save, so the page can list them."""
+        if answer.status != 400 or settings is None:
+            return answer
+        try:
+            entries, problems = spelling.pool_entries(settings, self.data_root())
+        except OSError as error:
+            entries, problems = [], [str(error)]
+        answer.body["spelling"] = {"words": entries, "problems": problems}
+        return answer
+
+    def make_folder(self, key: TaskKey | None, request: Mapping) -> Answer:
+        """Make a directory under the spelling directory at once, for a spelling task's page, or a new task's when ``key`` is None."""
+        if key is not None:
+            found = self._read(key)
+            if isinstance(found, Answer):
+                return found
+            if key.type != spelling.SPELLING:
+                return Answer(400, {"error": f"{key.name} is not a spelling task, so it has no directories."})
+        root = self.data_root()
+        try:
+            made = spelling_directories.make(root, request.get("name"))
+        except spelling_directories.NameRefused as error:
+            return Answer(400, {"error": str(error)})
+        except OSError as error:
+            return Answer(500, {"error": f"The directory could not be made: {error}"})
+        return Answer(
+            200,
+            {
+                "message": f"Made {spelling_directories.SPELLING_DIR}/{made}. It is empty until words are added.",
+                "directory": made,
+                "folders": spelling_directories.folders(root),
+            },
         )
 
     def write(
@@ -374,13 +422,22 @@ class TaskAdmin:
         what = " and ".join(kind for kind in (spelling.WORD_CLIP, spelling.SENTENCE_CLIP) if kind in sources)
         return Answer(200, {"message": f"Saved the new {what} recording{'s' if len(sources) > 1 else ''} of {entry['key']}.", "warnings": []})
 
-    def audio(self, task: TaskKey, pool: str, file_name: str) -> Path | None:
-        """Return a recording in one of a spelling task's pools, or None."""
-        found = self._read(task)
-        if isinstance(found, Answer) or task.type != spelling.SPELLING:
+    def audio(self, task: TaskKey | None, pool: str, file_name: str, directories: Mapping[str, str]) -> Path | None:
+        """Return a recording in one of a spelling task's pools, or None.
+
+        A new task, when ``task`` is None, or a spelling task not written yet
+        plays from the default pools. ``directories`` puts paths from the data
+        directory in place of the task's own, as a page with unsaved
+        directories lists them.
+        """
+        found = None if task is None else self._read(task)
+        if task is not None and task.type != spelling.SPELLING:
             return None
+        if isinstance(found, Answer) and found.status != 404:
+            return None
+        written = found[2] if isinstance(found, tuple) else WrittenTask({}, (), {})
         try:
-            settings = _settings(found[2])
+            settings = _settings(written, {field: spelling._directory(value, field) for field, value in directories.items()})
         except ValueError:
             return None
         return self.pool_file(settings, pool, file_name)
@@ -411,10 +468,10 @@ class TaskAdmin:
             return Answer(400, {"error": str(error)})
 
     def _spelling_page(self, written: WrittenTask) -> dict:
-        directories = {key: written.body.get(key, spelling._DIRECTORIES[key]) for key in SPELLING_DIRECTORIES}
         page = {
             "settings": {key: written.body.get(key, "") for key in SPELLING_SETTINGS},
-            "directories": directories,
+            "directories": spelling_directories.saved(written.body),
+            "folders": spelling_directories.folders(self.data_root()),
             "words": [],
             "problems": [],
         }
@@ -567,6 +624,7 @@ def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, obj
     body: dict[str, object] = {}
     if kind == spelling.SPELLING:
         _diff(body, written.body, request.get("settings"), SPELLING_SETTINGS)
+        body.update(directory_changes(written, request.get("directories")))
     elif kind == PARTS_OF_SPEECH:
         _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
         sentences = parts_of_speech_admin.sentences_edit(written, request.get("sentences"))
@@ -599,9 +657,23 @@ def _diff(changes: dict[str, object], written: Mapping[str, str], asked: object,
         changes[key] = scalar(text) if text else None
 
 
-def _settings(written: WrittenTask) -> spelling.Settings:
-    """Return the spelling directories the file sets, with the defaults for the rest."""
-    return spelling.parse_settings({key: written.body[key] for key in SPELLING_DIRECTORIES if key in written.body})
+def directory_changes(written: WrittenTask, asked: object) -> dict[str, object]:
+    """Return the directory fields ``asked`` changes, as ``rewrite_task`` changes. A field set to its default is removed."""
+    if asked is None:
+        return {}
+    before = spelling_directories.saved(written.body)
+    after = spelling_directories.chosen(written.body, asked)
+    return {
+        field: None if path == spelling._DIRECTORIES[field] else spelling_directories.written(path)
+        for field, path in after.items()
+        if path != before[field]
+    }
+
+
+def _settings(written: WrittenTask, directories: Mapping[str, str] | None = None) -> spelling.Settings:
+    """Return the spelling directories the file sets, with the defaults for the rest, and ``directories`` in their place."""
+    body = {key: written.body[key] for key in SPELLING_DIRECTORIES if key in written.body}
+    return spelling.parse_settings({**body, **(directories or {})})
 
 
 def _due_warning(name: str, groups: list[str]) -> str:

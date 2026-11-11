@@ -383,7 +383,7 @@ def test_a_failed_move_partway_moves_everything_back_and_keeps_the_setup(house, 
     monkeypatch.setattr(os, "rename", failing)
     status, body = _apply(house)
     assert status == 500
-    assert body["error"].startswith("The new week could not be applied, and every file was moved back")
+    assert body["error"].startswith("The words could not be applied, and every file was moved back")
     assert _pools(house) == BEFORE
     assert _setup(house) == setup
 

@@ -1,7 +1,6 @@
-import { CalendarPlus, PencilLine, Save, TextCursorInput, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ListPlus, PencilLine, Save, TextCursorInput, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
-  Link,
   useBlocker,
   useFetcher,
   useLoaderData,
@@ -16,8 +15,11 @@ import {
 import { ApiError, api, pageOf } from "../api";
 import { DateField } from "../components/DateField";
 import { Dialog } from "../components/Dialog";
+import { MenuLinks, type MenuLink } from "../components/MenuLinks";
 import { MultiSelect } from "../components/MultiSelect";
 import { dateProblem } from "../dates";
+import { DIRECTORY_FIELDS, changedDirectories, directoryQuery, sameDirectoryProblems } from "../directories";
+import { THROW_AWAY_TITLE, WORDS_MODES, throwAwayQuestion, wordsPath, type WordsMode } from "../words";
 import { label } from "../labels";
 import { arithmeticLists, problemsText, shownArithmetic, type ArithmeticData } from "../arithmetic";
 import type { NumberRow, ServiceRow } from "../numberTable";
@@ -37,7 +39,7 @@ import { ContextBar, StatusBar, useTitle } from "../slots";
 import { PartsOfSpeechAdmin } from "./PartsOfSpeech";
 import { ArithmeticAdmin } from "./Arithmetic";
 import { SkipCountingAdmin } from "./SkipCounting";
-import { POOL_FILTERS, SpellingAdmin, listedPools, type Pool, type SpellingData } from "./Spelling";
+import { POOL_FILTERS, SAVE_MOVES_FIRST, SpellingAdmin, listedPools, type Listing, type Pool, type SpellingData, type SpellingWord } from "./Spelling";
 import { NEW_TASK, nameProblem, routeTask, taskPath, type TaskRef } from "../taskRef";
 
 export type TaskData = {
@@ -57,7 +59,7 @@ export type TaskData = {
 };
 
 export type Result = {
-  intent: "save" | "retire" | "record" | "lock" | "rename";
+  intent: "save" | "retire" | "record" | "lock" | "rename" | "discard";
   ok: boolean;
   message?: string;
   warnings?: string[];
@@ -68,7 +70,12 @@ export type Result = {
   page?: TaskData;
   /** The task a create or a rename wrote, whose page opens next. */
   task?: TaskRef;
+  /** The words in the directories a refused save chose. */
+  spelling?: { words: SpellingWord[]; problems: string[] };
 };
+
+/** The words in the directories a refused save chose, and those directories. */
+type Refused = { directories: Record<string, string>; words: SpellingWord[]; problems: string[] };
 
 /** What the new task page has before its name and type are locked in. */
 type Blank = { types: string[]; clients: string[]; fields: Record<string, string>; today: string };
@@ -82,9 +89,13 @@ type Edits = {
   blocks: Block[] | null;
   /** Each weighted number list touched, such as a skip counting task's difference. */
   lists: ListEdits;
+  /** A spelling task's directory fields chosen on the page, as paths from the data directory. */
+  directories: Record<string, string>;
 };
 
-const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null, lists: {} };
+const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null, lists: {}, directories: {} };
+const ADD_WORDS = "Add words to the new directories from the Words menu. Its Apply saves the directories with the words.";
+const ADD_WORDS_NEW = "Add words to the new directories from the Words menu, then save the new task.";
 
 const DATES = ["available_from", "due_date"];
 
@@ -123,12 +134,30 @@ export function taskShouldRevalidate({ currentUrl, nextUrl, formMethod, actionRe
 /** Save the page, retire one word, or rename the task. Sent from the page on show, so a refusal returns to it. */
 export async function taskAction({ request, params }: ActionFunctionArgs): Promise<Result> {
   const { intent, ...body } = (await request.json()) as { intent: Result["intent"] } & Record<string, unknown>;
-  const suffix = intent === "retire" ? "/retire" : intent === "rename" ? "/rename" : "";
-  return send(intent, taskPath(routeTask(params)) + suffix, request, body);
+  const suffixes: Partial<Record<Result["intent"], string>> = { retire: "/retire", rename: "/rename", discard: "/week/cancel" };
+  return send(intent, taskPath(routeTask(params)) + (suffixes[intent] ?? ""), request, body);
 }
 
-export async function newTaskLoader({ request }: LoaderFunctionArgs): Promise<Blank> {
-  return api<Blank>(NEW_TASK, { page: pageOf(request), signal: request.signal });
+/**
+ * The New task page. With ``name`` and ``type`` in the query string, as a setup of a new spelling task's words goes
+ * back to it, the name and type are locked in again, and any directory fields there are chosen again.
+ */
+type NewTaskData = Blank & { draft: { name: string; type: string }; locked: TaskData | null; directories: Record<string, string>; refusal: string | null };
+
+export async function newTaskLoader({ request }: LoaderFunctionArgs): Promise<NewTaskData> {
+  const page = pageOf(request);
+  const query = new URL(request.url).searchParams;
+  const blank = await api<Blank>(NEW_TASK, { page, signal: request.signal });
+  const draft = { name: query.get("name") ?? "", type: query.get("type") ?? "" };
+  const directories = Object.fromEntries(DIRECTORY_FIELDS.flatMap((field) => (query.has(field) ? [[field, query.get(field) ?? ""]] : [])));
+  if (!draft.name || !draft.type) return { ...blank, draft, locked: null, directories: {}, refusal: null };
+  try {
+    const locked = await api<TaskData>(`${NEW_TASK}/check`, { page, method: "POST", body: draft, signal: request.signal });
+    return { ...blank, draft, locked, directories, refusal: null };
+  } catch (error) {
+    if (error instanceof ApiError) return { ...blank, draft, locked: null, directories: {}, refusal: error.message };
+    throw error;
+  }
 }
 
 /** Lock in a new task's name and type, which writes nothing, or write the new task. */
@@ -154,15 +183,23 @@ export function Task() {
 }
 
 export function NewTask() {
-  const blank = useLoaderData() as Blank;
+  const blank = useLoaderData() as NewTaskData;
+  const search = useLocation().search;
   const data = useMemo<TaskData>(
     () => ({ name: "", type: "", file: "", version: "", groups: [], clients: blank.clients, fields: blank.fields, today: blank.today }),
     [blank],
   );
-  return <TaskEditor data={data} types={blank.types} />;
+  return <TaskEditor key={search} data={data} types={blank.types} restored={blank} />;
 }
 
-function changed(data: TaskData, edits: Edits): boolean {
+/** The word moves that change a listed word's pool. */
+function pendingMoves(moves: Record<string, Pool>, words: SpellingWord[]): Record<string, Pool> {
+  const pools = new Map(words.map((word) => [word.key, word.pool]));
+  return Object.fromEntries(Object.entries(moves).filter(([key, pool]) => pools.has(key) && pools.get(key) !== pool));
+}
+
+/** Whether anything on the page differs from the file. ``words`` is the spelling word list on show. */
+function changed(data: TaskData, edits: Edits, words: SpellingWord[]): boolean {
   const differs = (shown: Record<string, string>, edited: Record<string, string>) =>
     Object.entries(edited).some(([key, value]) => value.trim() !== (shown[key] ?? "").trim());
   const settings = (data.spelling ?? data.parts_of_speech ?? data.skip_counting ?? data.arithmetic)?.settings ?? {};
@@ -171,8 +208,13 @@ function changed(data: TaskData, edits: Edits): boolean {
   if (data.parts_of_speech && edits.blocks !== null && blocksChanged(data.parts_of_speech, edits.blocks)) return true;
   if (data.skip_counting && shownDifference(data.skip_counting, edits.settings, edits.lists.difference).changed) return true;
   if (data.arithmetic && Object.keys(arithmeticLists(shownArithmetic(data.arithmetic, edits.settings, edits.lists))).length > 0) return true;
-  const pools = new Map(data.spelling?.words.map((word) => [word.key, word.pool]) ?? []);
-  return Object.entries(edits.moves).some(([key, pool]) => pools.has(key) && pools.get(key) !== pool);
+  if (data.spelling && Object.keys(changedDirectories(data.spelling.directories, edits.directories)).length > 0) return true;
+  return Object.keys(pendingMoves(edits.moves, words)).length > 0;
+}
+
+function sameDirectories(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].every((key) => a[key] === b[key]);
 }
 
 /**
@@ -180,17 +222,27 @@ function changed(data: TaskData, edits: Edits): boolean {
  * the name and type, then the type's own section opens, and the next Save
  * writes the task. A written task's page can be renamed.
  */
-function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }) {
+function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: string[]; restored?: NewTaskData }) {
   const reported = useLocation().state as Reported | null;
   const navigate = useNavigate();
   const creating = types !== undefined;
-  const [locked, setLocked] = useState<TaskData | null>(null);
+  const [locked, setLocked] = useState<TaskData | null>(restored?.locked ?? null);
   const data = locked ?? given;
-  const [draft, setDraft] = useState({ name: "", type: "" });
+  const [draft, setDraft] = useState(restored?.draft ?? { name: "", type: "" });
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [edits, setEdits] = useState<Edits>(NO_EDITS);
-  const [result, setResult] = useState<Result | null>(reported?.message ? { intent: "record", ok: true, ...reported } : null);
+  const [edits, setEdits] = useState<Edits>({ ...NO_EDITS, directories: restored?.directories ?? {} });
+  const [result, setResult] = useState<Result | null>(
+    reported?.message
+      ? { intent: "record", ok: true, ...reported }
+      : restored?.refusal
+        ? { intent: "lock", ok: false, error: restored.refusal }
+        : null,
+  );
   const [asking, setAsking] = useState<string | null>(null);
+  const [refused, setRefused] = useState<Refused | null>(null);
+  const [switching, setSwitching] = useState<{ to: string; mode: WordsMode } | null>(null);
+  const discarded = useRef<string | null>(null);
+  const sentDirectories = useRef<Record<string, string>>({});
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<Result>();
   const revalidator = useRevalidator();
@@ -206,12 +258,30 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
   const [checked, setChecked] = useState<string | null>(null);
   const shownProblem = (naming || renaming !== null) && checked !== null ? nameProblem(checked) : null;
   const frozen = naming || renaming !== null;
+  const spelling = data.spelling;
+  const chosen = spelling ? { ...spelling.directories, ...edits.directories } : {};
+  const unsavedDirectories = spelling ? changedDirectories(spelling.directories, chosen) : {};
+  const directoriesMoved = Object.keys(unsavedDirectories).length > 0;
+  const directoryProblems = sameDirectoryProblems(chosen);
+  const listing: Listing = !spelling
+    ? null
+    : !directoriesMoved
+      ? spelling
+      : refused !== null && sameDirectories(refused.directories, chosen)
+        ? refused
+        : null;
+  const listedWords = listing?.words ?? [];
+  const moving = pendingMoves(edits.moves, listedWords);
   const dirty = naming
     ? draft.name !== "" || draft.type !== ""
-    : creating || (renaming !== null ? renaming !== data.name : changed(data, edits));
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) => dirty && !opening.current && currentLocation.pathname !== nextLocation.pathname,
-  );
+    : creating || (renaming !== null ? renaming !== data.name : changed(data, edits, listedWords));
+  // Unsaved directories go with a Words link, so following one asks only when something else is unsaved too.
+  // A new task's name and type go with the link too, once locked in.
+  const otherDirty = dirty && (naming || renaming !== null || changed(data, { ...edits, directories: {} }, listedWords));
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (!dirty || opening.current || currentLocation.pathname === nextLocation.pathname) return false;
+    return otherDirty || !nextLocation.pathname.startsWith(`${taskPath(data)}/words/`);
+  });
   const pos = data.parts_of_speech;
   const shownBlocks = useMemo(() => (pos ? loaded(pos) : []), [pos]);
   const blocks = edits.blocks ?? shownBlocks;
@@ -223,6 +293,7 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
   const held = frozen
     ? problem !== null || (naming && draft.type === "")
     : undated ||
+      Object.keys(directoryProblems).length > 0 ||
       (pos !== undefined && blocked(blocks)) ||
       (difference !== null && skipBlocked(difference, differenceTrouble)) ||
       (sums !== null && sums.count > 0);
@@ -250,13 +321,20 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
       if (sentDifference !== undefined) lists.difference = sentDifference;
       if (sums) Object.assign(lists, arithmeticLists(sums));
       const groups = edits.groups ?? data.groups;
+      sentDirectories.current = chosen;
       fetcher.submit(
         {
           intent: "save",
           ...(creating ? { type: data.type, name: data.name } : { version: data.version }),
           fields: { ...data.fields, ...edits.fields },
           groups,
-          ...(data.spelling ? { settings: { ...data.spelling.settings, ...edits.settings }, moves: edits.moves } : {}),
+          ...(data.spelling
+            ? {
+                settings: { ...data.spelling.settings, ...edits.settings },
+                moves: moving,
+                ...(directoriesMoved ? { directories: unsavedDirectories } : {}),
+              }
+            : {}),
           ...(pos ? { settings: { ...pos.settings, ...edits.settings }, sentences: toRequest(blocks) } : {}),
           ...(skip ? { settings: { ...skip.settings, ...edits.settings }, lists } : {}),
           ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
@@ -265,7 +343,7 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
         post,
       );
     },
-    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums, naming, draft, renaming, creating, frozen, name],
+    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums, naming, draft, renaming, creating, frozen, name, chosen, moving, directoriesMoved, unsavedDirectories],
   );
 
   const changeBlocks = useCallback(
@@ -305,8 +383,18 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
       navigate(taskPath(done.task), { replace: true, state: { message: done.message ?? "", warnings: done.warnings ?? [] } satisfies Reported });
       return;
     }
+    if (done.intent === "discard" && done.ok && discarded.current !== null) {
+      const to = discarded.current;
+      discarded.current = null;
+      navigate(to);
+      return;
+    }
     setResult(done);
-    if (done.intent === "save" && done.ok) setEdits(NO_EDITS);
+    if (done.intent === "save" && !done.ok && done.spelling) setRefused({ directories: sentDirectories.current, ...done.spelling });
+    if (done.intent === "save" && done.ok) {
+      setEdits(NO_EDITS);
+      setRefused(null);
+    }
   }, [fetcher.state, fetcher.data, creating, navigate]);
 
   const isRenaming = renaming !== null;
@@ -315,6 +403,9 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
     nameBox.current?.focus();
     nameBox.current?.select();
   }, [isRenaming]);
+  useEffect(() => {
+    if (naming) nameBox.current?.focus();
+  }, [naming]);
 
   const startRename = () => {
     setResult(null);
@@ -360,6 +451,15 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
     });
   const asked = searchParams.get("pool") ?? "";
   const pool = POOL_FILTERS.some(([option]) => option === asked) ? asked : "";
+  const query = directoryQuery(unsavedDirectories);
+  const wordsLinks: (MenuLink & { mode: WordsMode })[] = WORDS_MODES.map(({ mode, label: text }) => ({ mode, label: text, to: wordsPath(data, mode) + query }));
+  const followWords = (event: MouseEvent<HTMLAnchorElement>, link: MenuLink) => {
+    const mode = wordsLinks.find((each) => each.to === link.to)?.mode;
+    const setup = spelling?.setup;
+    if (!mode || !setup || setup.mode === mode) return;
+    event.preventDefault();
+    setSwitching({ to: link.to, mode });
+  };
 
   return (
     <>
@@ -388,12 +488,7 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
             </select>
           </label>
         )}
-        {data.spelling && !creating && (
-          <Link className="button button-quiet" to={`${taskPath(data)}/week`}>
-            <CalendarPlus aria-hidden="true" />
-            New week's words
-          </Link>
-        )}
+        {spelling && !naming && <MenuLinks label="Words" icon={ListPlus} links={wordsLinks} onFollow={followWords} />}
         <div className="bar-end bar-actions">
           {dirty && (
             <span className="unsaved">
@@ -519,14 +614,20 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
 
       {!naming && (
         <fieldset className="lock-area" disabled={frozen} inert={frozen}>
-          {data.spelling ? (
+          {spelling ? (
             <SpellingAdmin
               task={creating ? null : data}
-              data={data.spelling}
+              data={spelling}
               filter={pool}
               settings={edits.settings}
               moves={edits.moves}
+              chosen={chosen}
+              unsaved={unsavedDirectories}
+              directoryProblems={directoryProblems}
+              listing={listing}
+              directoriesLocked={Object.keys(moving).length > 0 ? SAVE_MOVES_FIRST : null}
               onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
+              onDirectory={(field, path) => setEdits((current) => ({ ...current, directories: { ...current.directories, [field]: path } }))}
               onMove={(key, to) => setEdits((current) => ({ ...current, moves: { ...current.moves, [key]: to } }))}
               onRetire={retire}
               onPlayFailed={(message) => setResult({ intent: "retire", ok: false, error: message })}
@@ -534,6 +635,7 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
                 setResult({ intent: "record", ok: true, message, warnings: [] });
                 if (written) void revalidator.revalidate();
               }}
+              onMade={(message) => setResult({ intent: "record", ok: true, message, warnings: [] })}
             />
           ) : pos ? (
             <PartsOfSpeechAdmin
@@ -569,7 +671,8 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
 
       <StatusBar>
         {result && <Outcome result={result} />}
-        {data.spelling && <span>{counts(data.spelling, pool)}</span>}
+        {result && !result.ok && result.spelling && <span className="status-refused">{creating ? ADD_WORDS_NEW : ADD_WORDS}</span>}
+        {listing && <span>{counts(listing.words, pool)}</span>}
         {pos && <span>{countsText(blocks)}</span>}
         {difference && <span>{skipCounts(difference, differenceTrouble)}</span>}
         {sums && <span>{problemsText(sums)}</span>}
@@ -586,6 +689,20 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
             save(true);
           }}
           onCancel={() => setAsking(null)}
+        />
+      )}
+      {switching !== null && spelling?.setup && (
+        <Dialog
+          title={THROW_AWAY_TITLE}
+          message={throwAwayQuestion(spelling.setup, switching.mode)}
+          confirm="Throw away"
+          cancel="Keep it"
+          onConfirm={() => {
+            discarded.current = switching.to;
+            setSwitching(null);
+            fetcher.submit({ intent: "discard" }, { method: "post", encType: "application/json" });
+          }}
+          onCancel={() => setSwitching(null)}
         />
       )}
       {blocker.state === "blocked" && (
@@ -630,9 +747,9 @@ export function Outcome({ result }: { result: Pick<Result, "ok" | "message" | "w
   );
 }
 
-function counts(spelling: SpellingData, filter: string): string {
+function counts(words: SpellingWord[], filter: string): string {
   const parts = listedPools(filter).map((pool) => {
-    const count = spelling.words.filter((word) => word.pool === pool).length;
+    const count = words.filter((word) => word.pool === pool).length;
     return `${count} ${pool}`;
   });
   return `Words listed: ${parts.join(", ")}.`;

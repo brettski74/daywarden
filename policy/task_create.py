@@ -34,7 +34,6 @@ from policy.task_admin import (
     _changes,
     _Clash,
     _moved_words,
-    _settings,
     _version,
     replace_text,
 )
@@ -89,13 +88,15 @@ class TaskChanges:
         refused = self.taken(key)
         if refused is not None:
             return Answer(400, {"error": refused})
+        listed = None
         try:
             changes = _changes(key.type, _EMPTY, request)
             moves, moved = [], []
             if key.type == SPELLING:
-                moves, moved = self.tasks._moves(_settings(_EMPTY), request.get("moves") or {})
+                settings, listed = self.tasks.chosen_settings(key.type, _EMPTY, request.get("directories"))
+                moves, moved = self.tasks._moves(settings, request.get("moves") or {})
         except _Clash:
-            return self.tasks._clash()
+            return self.tasks.with_words(self.tasks._clash(), listed)
         except (EditError, ValueError) as error:
             return Answer(400, {"error": str(error)})
         text = new_task_text(key, {field: changes[field] for field in _WRITTEN_ORDER if field in changes})
@@ -124,7 +125,7 @@ class TaskChanges:
         )
         if answer.status == 200:
             answer.body["task"] = {"type": key.type, "name": key.name}
-        return answer
+        return self.tasks.with_words(answer, listed)
 
     def _includes(self, root_text: str) -> bool:
         base = self.tasks.policy_file.parent

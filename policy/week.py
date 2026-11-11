@@ -1,20 +1,26 @@
-"""Setting up a new week's spelling words from the parent portal.
+"""Setting up a spelling task's words from the parent portal.
 
-The parent types the week's words, records them, and applies the list. Until
+The parent types the words, records them, and applies the list. Until
 Apply, the setup in progress is kept on the service, one for each spelling
 task, in ``.weeks/<task name>/`` under the data directory, since only
-spelling tasks have one: ``state.json`` holds
-the list, the sentence text typed for each word, and the clips kept for it,
-and the kept clips sit beside it. The pool scans never look there, and Apply
-is a set of renames on one file system.
+spelling tasks have one: ``state.json`` holds the setup's mode, the four
+directories it applies into, the list, the sentence text typed for each
+word, and the clips kept for it, and the kept clips sit beside it. The pool
+scans never look there, and Apply is a set of renames on one file system.
 
-Apply, in one step, moves every current word that is not on the list into
-revision, moves each listed revision or attic word into current, writes each
-kept clip into current in place of the word's older clip of that kind, and
-gives an existing plain word a number when the list adds a new numbered
-meaning of it. An older clip is first moved aside into the setup, so every
-step is a rename and a failure partway moves everything back. The setup,
-with the older clips, is removed once Apply has gone through.
+A setup has one of three modes. Replace Current is a new week: Apply moves
+every current word that is not on the list into revision. Add to Current
+and Add to Revision move no word that is not listed. In each, Apply, in one
+step, moves each listed word into the mode's pool, writes each kept clip
+there in place of the word's older clip of that kind, and gives an existing
+plain word a number when the list adds a new numbered meaning of it. An
+older clip is first moved aside into the setup, so every step is a rename
+and a failure partway moves everything back. The setup, with the older
+clips, is removed once Apply has gone through.
+
+A setup's directories are the task's, or the unsaved ones the task page
+showed when it started. They are kept from its first Check, and Apply
+writes them to the policy file with the words.
 
 The sentence text is only a prompt for the speaker. It is never written into
 a pool or a policy file.
@@ -32,13 +38,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from policy import spelling
+from policy import spelling, spelling_directories
 from policy.owned import make_directory, own_like
 from policy.recordings import GONE
 from policy.task_admin import STALE, Answer, TaskAdmin, _changes, _settings, _version
-from policy.task_edit import EditError, rewrite_task
+from policy.task_edit import EditError, WrittenTask, rewrite_task
+from policy.task_names import name_problem
 from policy.tasks import TaskKey
 
+REPLACE_CURRENT = "replace-current"
+ADD_CURRENT = "add-current"
+ADD_REVISION = "add-revision"
+MODES = (ADD_CURRENT, ADD_REVISION, REPLACE_CURRENT)
+OTHER_SETUP = "Another setup of this task's words is in progress. Reload the page to choose which to keep."
+# A spelling task not written yet, set up from the New task page before its pools have words.
+UNWRITTEN = WrittenTask({}, (), {})
 DIRECTORY = ".weeks"
 STATE = "state.json"
 REPLACED = "replaced"
@@ -67,6 +81,19 @@ class Row:
 
     def record(self) -> dict:
         return {"key": self.key, "sentence": self.sentence, "clips": dict(self.clips)}
+
+
+@dataclass
+class Setup:
+    """A setup in progress: its mode, the directories it applies into, and its list.
+
+    ``directories`` is None for a setup kept before setups had their own,
+    which applies into the task's directories.
+    """
+
+    mode: str
+    directories: dict[str, str] | None
+    rows: list[Row]
 
 
 @dataclass(frozen=True)
@@ -167,7 +194,7 @@ def plan(rows: list[Row], entries: list[dict]) -> Plan:
 
 
 class Weeks:
-    """The new week's setup in progress for each spelling task."""
+    """The setup of words in progress for each spelling task."""
 
     def __init__(self, tasks: TaskAdmin) -> None:
         self.tasks = tasks
@@ -176,20 +203,45 @@ class Weeks:
         plain = name if _PLAIN_TASK.fullmatch(name) else "task-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
         return self.tasks.data_root() / DIRECTORY / plain
 
+    def progress(self, name: str) -> dict | None:
+        """Return the mode and word count of the task's setup in progress, or None."""
+        setup = self._load(name)
+        return None if setup is None else {"mode": setup.mode, "count": len(setup.rows)}
+
     # Answers
 
-    def page(self, task: TaskKey) -> Answer:
+    def page(self, task: TaskKey, query: Mapping[str, str]) -> Answer:
+        """Return the setup page in the mode ``query`` asks for, with the directories it names for a new setup.
+
+        When a setup in another mode is in progress, the list is empty and
+        ``setup`` names that mode, so the page can ask which to keep.
+        """
         found = self._task(task)
         if isinstance(found, Answer):
             return found
         name = task.name
-        path, text, written, settings = found
-        rows = self._rows(name)
+        path, text, written = found
+        setup = self._load(name)
+        mode = query.get("mode") or (setup.mode if setup else REPLACE_CURRENT)
+        if mode not in MODES:
+            return Answer(404, {"error": f"{mode} is not a way of setting up words."})
+        other = setup is not None and setup.mode != mode
+        try:
+            directories = self._directories(written, None if other else setup, spelling_directories.from_query(query))
+            settings = _settings(written, directories)
+        except ValueError as error:
+            return Answer(400, {"error": str(error)})
+        rows = [] if setup is None or other else setup.rows
         body: dict = {
             "name": name,
             "type": task.type,
             "version": _version(text),
-            "file": str(path),
+            "file": "" if path is None else str(path),
+            "written": path is not None,
+            "mode": mode,
+            "setup": None if setup is None else {"mode": setup.mode, "count": len(setup.rows)},
+            "directories": directories,
+            "saved_directories": spelling_directories.saved(written.body),
             "targets": {key: written.body.get(key, "") for key in TARGETS},
             "words": [],
             "needs": [],
@@ -229,26 +281,36 @@ class Weeks:
         return Answer(200, body)
 
     def save(self, task: TaskKey, request: Mapping) -> Answer:
-        """Check and keep the week's list and its sentence text. Nothing in a pool changes.
+        """Check and keep the list and its sentence text. Nothing in a pool changes.
 
         ``request`` has ``rows``, the list as it is on the page, each naming
         the key it was saved as in ``from`` so its sentence and kept clips
         follow an edit, and ``add``, more words typed or pasted, split by
-        ``split_words``.
+        ``split_words``. It names the setup's ``mode``, and for a new setup,
+        any ``directories`` it applies into in place of the task's.
         """
         found = self._task(task)
         if isinstance(found, Answer):
             return found
         name = task.name
-        _path, _text, _written, settings = found
+        _path, _text, written = found
         asked, added = request.get("rows", []), request.get("add", "")
         if not isinstance(asked, list) or not all(isinstance(row, Mapping) for row in asked) or not isinstance(added, str):
             return Answer(400, {"error": "Send the list as rows, each with its key and sentence, and the added words as text."})
-        old = {row.key.lower(): row for row in self._rows(name)}
+        setup = self._load(name)
+        mode = request.get("mode") or (setup.mode if setup else REPLACE_CURRENT)
+        if mode not in MODES:
+            return Answer(400, {"error": f"{mode} is not a way of setting up words."})
+        if setup is not None and setup.mode != mode:
+            return Answer(409, {"error": OTHER_SETUP})
         try:
-            entries, _problems = spelling.pool_entries(settings, self.tasks.data_root())
+            directories = self._directories(written, setup, request.get("directories"))
+            entries, _problems = spelling.pool_entries(_settings(written, directories), self.tasks.data_root())
+        except ValueError as error:
+            return Answer(400, {"error": str(error)})
         except OSError as error:
             return Answer(400, {"error": str(error)})
+        old = {row.key.lower(): row for row in (setup.rows if setup else [])}
         existing = {entry["key"].lower(): entry["key"] for entry in entries}
         errors: list[str] = []
         rows: list[Row] = []
@@ -286,7 +348,7 @@ class Weeks:
         if errors:
             return Answer(400, {"error": REFUSED, "errors": errors})
         dropped = [clip for row in old.values() for clip in row.clips.values()]
-        self._store(name, rows)
+        self._store(name, Setup(mode, directories, rows))
         for clip in dropped:
             (self.folder(name) / clip).unlink(missing_ok=True)
         count = len(rows)
@@ -305,7 +367,10 @@ class Weeks:
         take, kept = request.get("take"), request.get("clips")
         if not isinstance(take, str) or not isinstance(kept, list) or not kept:
             return Answer(400, {"error": "Name the take and each clip kept, with its word and kind."})
-        rows = self._rows(name)
+        setup = self._load(name)
+        if setup is not None and request.get("mode") not in (None, setup.mode):
+            return Answer(409, {"error": OTHER_SETUP})
+        rows = setup.rows if setup else []
         by_key = {row.key.lower(): row for row in rows}
         wanted: list[tuple[Row, str, Path]] = []
         pairs: set[tuple[str, str]] = set()
@@ -338,7 +403,8 @@ class Weeks:
                 if kind in row.clips:
                     replaced.append(row.clips[kind])
                 row.clips[kind] = target.name
-            self._store(name, rows)
+            if setup is not None:
+                self._store(name, setup)
         except OSError as error:
             return Answer(500, {"error": f"The kept clips could not be kept: {error}"})
         for clip in replaced:
@@ -352,7 +418,7 @@ class Weeks:
 
     def clip(self, task: TaskKey, file_name: str) -> Path | None:
         """Return a pending clip of the task's setup, or None."""
-        if not _CLIP.fullmatch(file_name) or task.type != spelling.SPELLING or task not in self.tasks.keys():
+        if not _CLIP.fullmatch(file_name) or isinstance(self._task(task), Answer):
             return None
         path = self.folder(task.name) / file_name
         return path if path.is_file() else None
@@ -366,23 +432,28 @@ class Weeks:
         return Answer(200, {"message": "Threw away the new week's setup. The pools have not changed.", "warnings": []})
 
     def apply(self, task: TaskKey, request: Mapping, username: str) -> Answer:
-        """Make the week's list the current pool, as one change that is checked first.
+        """Put the listed words into the mode's pool, as one change that is checked first.
 
-        ``request`` may change ``current_required`` and ``revision_required``
-        in the same step, naming the version of the policy file it saw.
+        The setup's directories are written to the policy file in the same
+        step, and ``request`` may change ``current_required`` and
+        ``revision_required`` too, naming the version of the policy file it saw.
         """
         found = self._task(task)
         if isinstance(found, Answer):
             return found
         name = task.name
-        path, text, written, settings = found
-        rows = self._rows(name)
-        if not rows:
+        path, text, written = found
+        setup = self._load(name)
+        if setup is None:
             return Answer(400, {"error": "There are no words on the week's list, so nothing was applied."})
+        if request.get("mode") not in (None, setup.mode):
+            return Answer(409, {"error": OTHER_SETUP})
+        rows = setup.rows
         root = self.tasks.data_root()
         try:
+            settings = _settings(written, setup.directories)
             entries, _problems = spelling.pool_entries(settings, root)
-        except OSError as error:
+        except (ValueError, OSError) as error:
             return Answer(400, {"error": str(error)})
         if len({entry["key"].lower() for entry in entries}) != len(entries):
             return self.tasks._clash()
@@ -394,44 +465,55 @@ class Weeks:
             return Answer(400, {"error": f"These words still need a word clip, so nothing was applied: {', '.join(planned.needs)}."})
         new_text = text
         targets = request.get("settings")
-        if targets is not None:
-            if not isinstance(targets, Mapping) or set(targets) - set(TARGETS):
-                return Answer(400, {"error": "Only current_required and revision_required can be changed with Apply."})
-            try:
-                changes = _changes(spelling.SPELLING, written, {"settings": dict(targets)})
-                if changes:
-                    if request.get("version") != _version(text):
-                        return Answer(409, {"error": STALE, "stale": True})
-                    new_text = rewrite_task(text, path, task, changes)
-            except (EditError, ValueError) as error:
-                return Answer(400, {"error": str(error)})
-        moves, summary = self._moves(name, settings, rows, entries, planned)
+        if targets is not None and (not isinstance(targets, Mapping) or set(targets) - set(TARGETS) or path is None):
+            return Answer(400, {"error": "Only current_required and revision_required can be changed with Apply, on a task already written."})
+        try:
+            asked = {"settings": None if targets is None else dict(targets), "directories": setup.directories}
+            changes = _changes(spelling.SPELLING, written, asked) if path is not None else {}
+            if changes:
+                if request.get("version") != _version(text):
+                    return Answer(409, {"error": STALE, "stale": True})
+                new_text = rewrite_task(text, path, task, changes)
+        except (EditError, ValueError) as error:
+            return Answer(400, {"error": str(error)})
+        moves, summary = self._moves(name, setup.mode, settings, rows, entries, planned)
         folder = self.folder(name)
+        if path is None:
+            return self.tasks.change(
+                task, {}, moves, [], username,
+                confirmed=True, moved=f"{summary} Save the new task to use them.", done="", commit="", paths=[],
+                failed="The words could not be applied, and every file was moved back",
+                moved_all=lambda: shutil.rmtree(folder, ignore_errors=True),
+            )
         return self.tasks.write(
             task, path, text, new_text, moves, username,
-            confirmed=True, moved=summary, failed="The new week could not be applied, and every file was moved back",
+            confirmed=True, moved=summary, failed="The words could not be applied, and every file was moved back",
             moved_all=lambda: shutil.rmtree(folder, ignore_errors=True),
         )
 
     # Applying
 
     def _moves(
-        self, name: str, settings: spelling.Settings, rows: list[Row], entries: list[dict], planned: Plan
+        self, name: str, mode: str, settings: spelling.Settings, rows: list[Row], entries: list[dict], planned: Plan
     ) -> tuple[list[tuple[Path, Path]], str]:
-        """Return the renames that apply the week, in an order where no target is taken, and what they do."""
+        """Return the renames that apply the setup, in an order where no target is taken, and what they do."""
         root = self.tasks.data_root()
         folder = self.folder(name)
         listed = {row.key.lower(): row for row in rows}
+        into_pool = spelling.REVISION if mode == ADD_REVISION else spelling.CURRENT
         aside: list[tuple[Path, Path]] = []
         between: list[tuple[Path, Path]] = []
         into: list[tuple[Path, Path]] = []
         to_revision = 0
+        moved_from = dict.fromkeys(spelling.ALL_POOLS, 0)
         for entry in entries:
             key, pool = entry["key"], entry["pool"]
             row = listed.get(key.lower())
             if row is not None:
-                target_pool = spelling.CURRENT
-            elif pool == spelling.CURRENT:
+                target_pool = into_pool
+                if pool != into_pool:
+                    moved_from[pool] += 1
+            elif pool == spelling.CURRENT and mode == REPLACE_CURRENT:
                 target_pool = spelling.REVISION
                 to_revision += 1
             else:
@@ -445,60 +527,79 @@ class Weeks:
                     aside.append((source, folder / REPLACED / f"{len(aside)}-{source.name}"))
                 elif target_pool != pool or new_key != key:
                     between.append((source, target / (new_key + source.name[len(key):])))
-        current = root / settings.directory(spelling.CURRENT)
+        destination = root / settings.directory(into_pool)
         for row in rows:
             final = planned.renames.get(row.key.lower(), row.key)
             for kind in KINDS:
                 if kind in row.clips:
                     suffix = "" if kind == spelling.WORD_CLIP else ".sentence"
-                    into.append((folder / row.clips[kind], current / f"{final}{suffix}.opus"))
+                    into.append((folder / row.clips[kind], destination / f"{final}{suffix}.opus"))
         count = len(rows)
-        parts = [
-            f"Applied the new week: {count} word{' is' if count == 1 else 's are'} current, "
-            f"and {to_revision} went to revision."
-        ]
+        if mode == REPLACE_CURRENT:
+            parts = [
+                f"Applied the new week: {count} word{' is' if count == 1 else 's are'} current, "
+                f"and {to_revision} went to revision."
+            ]
+        else:
+            parts = [_added(count, into_pool, moved_from)]
         parts += [f"The existing {old_key} is now {new_key}." for old_key, new_key in _renamed(entries, planned)]
         return aside + between + into, " ".join(parts)
 
     # Reading and writing the setup
 
-    def _task(self, task: TaskKey) -> tuple[Path, str, object, spelling.Settings] | Answer:
+    def _task(self, task: TaskKey) -> tuple[Path | None, str, WrittenTask] | Answer:
+        """Return the task's file, its text, and how it is written. A spelling task not written yet has no file and an empty body."""
         found = self.tasks._read(task)
+        if isinstance(found, Answer) and found.status == 404 and task.type == spelling.SPELLING:
+            problem = name_problem(task.name)
+            return Answer(400, {"error": problem}) if problem else (None, "", UNWRITTEN)
         if isinstance(found, Answer):
             return found
-        path, text, written = found
         if task.type != spelling.SPELLING:
             return Answer(400, {"error": f"{task.name} is not a spelling task, so it has no week's words."})
-        try:
-            settings = _settings(written)
-        except ValueError as error:
-            return Answer(400, {"error": str(error)})
-        return path, text, written, settings
+        return found
 
-    def _rows(self, name: str) -> list[Row]:
+    def _directories(self, written: WrittenTask, setup: Setup | None, asked: object) -> dict[str, str]:
+        """Return the four directories a setup applies into: its own once kept, or the task's with ``asked`` in their place."""
+        if setup is not None and setup.directories is not None:
+            return dict(setup.directories)
+        if setup is not None:
+            return spelling_directories.saved(written.body)
+        return spelling_directories.chosen(written.body, asked or None)
+
+    def _load(self, name: str) -> Setup | None:
+        """Return the setup in progress, or None. One kept before setups had a mode is Replace Current."""
         try:
             stored = json.loads((self.folder(name) / STATE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return []
+            return None
+        if not isinstance(stored, dict):
+            return None
         rows = []
-        for each in stored.get("words", []) if isinstance(stored, dict) else []:
+        for each in stored.get("words", []):
             try:
                 clips = {kind: clip for kind, clip in each.get("clips", {}).items() if kind in KINDS and _CLIP.fullmatch(clip)}
                 rows.append(Row(str(each["key"]), str(each.get("sentence", "")), clips))
             except (AttributeError, KeyError, TypeError):
                 continue
-        return rows
+        mode = stored.get("mode") if stored.get("mode") in MODES else REPLACE_CURRENT
+        kept = stored.get("directories")
+        directories = None
+        if isinstance(kept, dict) and set(kept) == set(spelling_directories.FIELDS) and all(isinstance(path, str) for path in kept.values()):
+            directories = dict(kept)
+        return Setup(mode, directories, rows) if rows else None
 
-    def _store(self, name: str, rows: list[Row]) -> None:
-        """Keep the list in one step. An empty list, with no clips kept, is no setup at all."""
+    def _store(self, name: str, setup: Setup) -> None:
+        """Keep the setup in one step. An empty list, with no clips kept, is no setup at all."""
         folder = self.folder(name)
-        if not rows:
+        if not setup.rows:
             shutil.rmtree(folder, ignore_errors=True)
             return
         make_directory(folder)
         temporary = folder / f".{STATE}.{os.getpid()}.part"
+        record = {"mode": setup.mode, "directories": setup.directories, "words": [row.record() for row in setup.rows]}
         try:
-            temporary.write_text(json.dumps({"words": [row.record() for row in rows]}, indent=2) + "\n", encoding="utf-8")
+            temporary.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
             own_like(temporary, folder.stat())
             os.replace(temporary, folder / STATE)
         except BaseException:
@@ -514,6 +615,19 @@ def _mixed(rows: list[Row], existing: Mapping[str, str]) -> list[str]:
         for row in rows
         if split_key(row.key)[1] is None and row.key.lower() in numbered and row.key.lower() not in existing
     ]
+
+
+def _added(count: int, pool: str, moved_from: Mapping[str, int]) -> str:
+    """Say what an Add to Current or Add to Revision did, such as ``Added 6 words to current, 2 of them moved from revision.``"""
+    moved = [f"{number} from {'the attic' if each == spelling.ATTIC else each}" for each, number in moved_from.items() if number]
+    said = f"Added {count} word{'' if count == 1 else 's'} to {pool}"
+    if not moved:
+        return said + "."
+    if count == 1:
+        return f"{said}, moved {moved[0].split(' ', 1)[1]}."
+    first, *rest = moved
+    number, where = first.split(" ", 1)
+    return f"{said}, {number} of them moved {where}{''.join(f' and {other}' for other in rest)}."
 
 
 def _renamed(entries: list[dict], planned: Plan) -> list[tuple[str, str]]:

@@ -1,7 +1,8 @@
 import { CalendarCheck, ListChecks, MessageSquareText, Mic, MicVocal, Pencil, PencilLine, Save, Volume2, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as KeyEvent } from "react";
 import {
   Link,
+  redirect,
   useBlocker,
   useFetcher,
   useLoaderData,
@@ -13,12 +14,14 @@ import {
 import { ApiError, BASE, api, pageOf } from "../api";
 import { Dialog } from "../components/Dialog";
 import { RecordDialog, type Kept } from "../components/RecordDialog";
+import { DIRECTORY_FIELDS, changedDirectories, shownDirectory } from "../directories";
 import { label } from "../labels";
 import type { Item, Kind } from "../review";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { RECORDINGS, audioAddress, type Pool } from "./Spelling";
 import { Outcome, type Reported } from "./Task";
 import { routeTask, taskPath, type TaskRef } from "../taskRef";
+import { THROW_AWAY_TITLE, modeLabel, newTaskAddress, throwAwayQuestion, wordsPath, type SetupInProgress, type WordsMode } from "../words";
 
 export type WeekWord = {
   key: string;
@@ -44,6 +47,16 @@ export type WeekData = {
   type: string;
   version: string;
   file: string;
+  /** The mode this address sets up. */
+  mode: WordsMode;
+  /** The setup in progress, which may be in another mode, or null. */
+  setup: SetupInProgress | null;
+  /** The four directories the setup applies into, as paths from the data directory. */
+  directories: Record<string, string>;
+  /** The task's directories as the policy file has them. */
+  saved_directories: Record<string, string>;
+  /** False for a spelling task not written yet, set up from the New task page. Its Apply writes no policy file. */
+  written: boolean;
   targets: Record<string, string>;
   words: WeekWord[];
   needs: string[];
@@ -52,7 +65,8 @@ export type WeekData = {
   problems: string[];
 };
 
-type Intent = "save" | "apply" | "cancel";
+/** Cancel throws the setup away and opens the spelling page. Discard throws away a setup in another mode and stays. */
+type Intent = "save" | "apply" | "cancel" | "discard";
 type WeekResult = {
   intent: Intent | "record";
   ok: boolean;
@@ -68,18 +82,29 @@ type Row = { from: string; key: string; sentence: string };
 const TARGETS = ["current_required", "revision_required"];
 const POOL_NAMES: Record<Pool, string> = { current: "Current", revision: "Revision", attic: "Attic" };
 
+/** The setup's data address. Its page is at ``wordsPath``, one address for each mode. */
 function weekPath(task: TaskRef): string {
   return `${taskPath(task)}/week`;
 }
 
+/** The page asks for its mode, with any unsaved directories the spelling page sent in its query string. */
 export async function weekLoader({ request, params }: LoaderFunctionArgs): Promise<WeekData> {
-  return api<WeekData>(weekPath(routeTask(params)), { page: pageOf(request), signal: request.signal });
+  const asked = new URL(request.url).searchParams;
+  const query = new URLSearchParams(DIRECTORY_FIELDS.flatMap((field) => (asked.has(field) ? [[field, asked.get(field) ?? ""]] : [])));
+  query.set("mode", params.mode ?? "");
+  return api<WeekData>(`${weekPath(routeTask(params))}?${query}`, { page: pageOf(request), signal: request.signal });
+}
+
+/** The S023.4 address of the new week's words, which is Replace Current. */
+export function oldWeekLoader({ request, params }: LoaderFunctionArgs) {
+  return redirect(wordsPath(routeTask(params), "replace-current") + new URL(request.url).search);
 }
 
 /** Save the list, apply it, or throw the setup away. Sent from the page on show, so a refusal returns to it. */
 export async function weekAction({ request, params }: ActionFunctionArgs): Promise<WeekResult> {
   const { intent, ...body } = (await request.json()) as { intent: Intent } & Record<string, unknown>;
-  const path = weekPath(routeTask(params)) + (intent === "save" ? "" : `/${intent}`);
+  const suffixes: Record<Intent, string> = { save: "", apply: "/apply", cancel: "/cancel", discard: "/cancel" };
+  const path = weekPath(routeTask(params)) + suffixes[intent];
   try {
     const done = await api<{ message: string; warnings: string[] }>(path, { page: pageOf(request), method: "POST", body });
     return { intent, ok: true, ...done };
@@ -96,6 +121,16 @@ function savedRows(data: WeekData): Row[] {
 /** A sentence as the service keeps it, with its spaces tidied. */
 function tidy(text: string): string {
   return text.split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** Enter in a sentence box moves to the next row's sentence box, with its text selected. */
+function nextSentence(event: KeyEvent<HTMLInputElement>) {
+  if (event.key !== "Enter" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing) return;
+  event.preventDefault();
+  const boxes = [...(event.currentTarget.closest("tbody")?.querySelectorAll<HTMLInputElement>("input.week-sentence") ?? [])];
+  const next = boxes[boxes.indexOf(event.currentTarget) + 1];
+  next?.focus();
+  next?.select();
 }
 
 function unsaved(data: WeekData, rows: Row[], add: string): boolean {
@@ -133,11 +168,16 @@ function named(keys: string[]): string {
 
 export function Week() {
   const data = useLoaderData() as WeekData;
-  return <WeekEditor key={`${data.type}/${data.name}`} data={data} />;
+  return <WeekEditor key={`${data.type}/${data.name}/${data.mode}`} data={data} />;
 }
 
 function WeekEditor({ data }: { data: WeekData }) {
-  useTitle(`${data.name}: new week's words`);
+  const title = modeLabel(data.mode);
+  useTitle(`${data.name}: ${title}`);
+  const other = data.setup !== null && data.setup.mode !== data.mode ? data.setup : null;
+  const moved = changedDirectories(data.saved_directories, data.directories);
+  // The page the setup belongs to: the task's page, or the New task page with the name, type, and directories again.
+  const home = data.written ? taskPath(data) : newTaskAddress(data, moved);
   const navigate = useNavigate();
   const fetcher = useFetcher<WeekResult>();
   const revalidator = useRevalidator();
@@ -153,6 +193,8 @@ function WeekEditor({ data }: { data: WeekData }) {
   const leaving = useRef(false);
   const latestData = useRef(data);
   latestData.current = data;
+  const latestHome = useRef(home);
+  latestHome.current = home;
   const dirty = unsaved(data, rows, add);
   const busy = fetcher.state !== "idle";
   const blocker = useBlocker(
@@ -161,14 +203,14 @@ function WeekEditor({ data }: { data: WeekData }) {
 
   const save = useCallback(() => {
     if (fetcher.state !== "idle" || !dirty) return;
-    fetcher.submit({ intent: "save", rows, add }, { method: "post", encType: "application/json" });
-  }, [fetcher, rows, add, dirty]);
+    fetcher.submit({ intent: "save", mode: data.mode, directories: moved, rows, add }, { method: "post", encType: "application/json" });
+  }, [fetcher, rows, add, dirty, data.mode, moved]);
 
   const targetsChanged = TARGETS.some((key) => key in targets && targets[key].trim() !== (data.targets[key] ?? "").trim());
   const apply = () => {
     const settings = Object.fromEntries(TARGETS.map((key) => [key, targets[key] ?? data.targets[key] ?? ""]));
     fetcher.submit(
-      { intent: "apply", version: data.version, ...(targetsChanged ? { settings } : {}) },
+      { intent: "apply", mode: data.mode, version: data.version, ...(targetsChanged ? { settings } : {}) },
       { method: "post", encType: "application/json" },
     );
   };
@@ -177,10 +219,14 @@ function WeekEditor({ data }: { data: WeekData }) {
     const done = fetcher.data;
     if (fetcher.state !== "idle" || done === undefined || handled.current === done) return;
     handled.current = done;
+    if (done.ok && done.intent === "discard") {
+      void revalidator.revalidate();
+      return;
+    }
     if (done.ok && (done.intent === "apply" || done.intent === "cancel")) {
       leaving.current = true;
       const reported: Reported = { message: done.message ?? "", warnings: done.warnings ?? [] };
-      navigate(taskPath(latestData.current), { state: reported });
+      navigate(latestHome.current, { state: reported });
       return;
     }
     setResult(done);
@@ -190,7 +236,7 @@ function WeekEditor({ data }: { data: WeekData }) {
       setEditing(new Set());
     }
     if (done.intent === "apply") setOfferTargets(TARGETS.some((key) => done.errors?.some((problem) => problem.includes(key))));
-  }, [fetcher.state, fetcher.data, navigate]);
+  }, [fetcher.state, fetcher.data, navigate, revalidator]);
 
   const latestSave = useRef(save);
   latestSave.current = save;
@@ -225,19 +271,19 @@ function WeekEditor({ data }: { data: WeekData }) {
 
   function wordAddress(word: WeekWord): string | null {
     if (word.kept.word) return pending(word.kept.word);
-    return word.clip && word.pool ? audioAddress(data, word.pool, word.clip) : null;
+    return word.clip && word.pool ? audioAddress(data, word.pool, word.clip, moved) : null;
   }
 
   function sentenceAddress(word: WeekWord): string | null {
     if (word.kept.sentence) return pending(word.kept.sentence);
-    return word.sentence_clip && word.pool ? audioAddress(data, word.pool, word.sentence_clip) : null;
+    return word.sentence_clip && word.pool ? audioAddress(data, word.pool, word.sentence_clip, moved) : null;
   }
 
   async function keep(take: string, kept: Kept[]): Promise<string> {
     const done = await api<{ message: string }>(`${weekPath(data)}/recordings`, {
       page: null,
       method: "POST",
-      body: { take, clips: kept.map(({ item, clip }) => ({ word: item.key, kind: item.kind, clip })) },
+      body: { mode: data.mode, take, clips: kept.map(({ item, clip }) => ({ word: item.key, kind: item.kind, clip })) },
       signedOut: "refuse",
     });
     return done.message;
@@ -258,21 +304,44 @@ function WeekEditor({ data }: { data: WeekData }) {
   else if (data.needs.length > 0) blocked = `These words still need a word clip: ${data.needs.join(", ")}.`;
   const recordBlocked = data.words.length === 0 ? "Add the week's words and press Check first." : dirty ? "Save the list before recording." : null;
   const missing = recordMissingItems(data.words);
+  const crumbs = (
+    <nav className="crumbs" aria-label="Where you are">
+      <ol>
+        <li>Tasks</li>
+        <li>
+          <Link to={home}>{data.name}</Link>
+        </li>
+        <li>
+          <h1 className="bar-title">{title}</h1>
+        </li>
+      </ol>
+    </nav>
+  );
+
+  if (other !== null) {
+    return (
+      <>
+        <ContextBar>{crumbs}</ContextBar>
+        <StatusBar>{result && <Outcome result={result} />}</StatusBar>
+        <Dialog
+          title={THROW_AWAY_TITLE}
+          message={throwAwayQuestion(other, data.mode)}
+          confirm="Throw away"
+          cancel="Keep it"
+          onConfirm={() => fetcher.submit({ intent: "discard" }, { method: "post", encType: "application/json" })}
+          onCancel={() => {
+            leaving.current = true;
+            navigate(home);
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <>
       <ContextBar>
-        <nav className="crumbs" aria-label="Where you are">
-          <ol>
-            <li>Tasks</li>
-            <li>
-              <Link to={taskPath(data)}>{data.name}</Link>
-            </li>
-            <li>
-              <h1 className="bar-title">New week's words</h1>
-            </li>
-          </ol>
-        </nav>
+        {crumbs}
         <div className="bar-end bar-actions">
           {dirty && (
             <span className="unsaved">
@@ -307,29 +376,47 @@ function WeekEditor({ data }: { data: WeekData }) {
             Check
           </button>
         </fieldset>
+        {data.written && (
+          <fieldset>
+            <legend>Targets</legend>
+            <p className="week-hint">
+              The current pool has {data.current} word{data.current === 1 ? "" : "s"} now. A changed target is written to the policy file with Apply.
+            </p>
+            <div className="settings">
+              {TARGETS.map((key) => {
+                const shown = targets[key] ?? data.targets[key] ?? "";
+                return (
+                  <label key={key} className="setting">
+                    <span title={key}>{label(key)}</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={shown}
+                      data-changed={shown.trim() !== (data.targets[key] ?? "").trim() || undefined}
+                      onChange={(event) => setTargets((current) => ({ ...current, [key]: event.target.value }))}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            {offerTargets && <p className="problem">Change a target here, then press Apply again. The new target is saved in the same step.</p>}
+          </fieldset>
+        )}
         <fieldset>
-          <legend>Targets</legend>
-          <p className="week-hint">
-            The current pool has {data.current} word{data.current === 1 ? "" : "s"} now. A changed target is written to the policy file with Apply.
-          </p>
-          <div className="settings">
-            {TARGETS.map((key) => {
-              const shown = targets[key] ?? data.targets[key] ?? "";
-              return (
-                <label key={key} className="setting">
-                  <span title={key}>{label(key)}</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={shown}
-                    data-changed={shown.trim() !== (data.targets[key] ?? "").trim() || undefined}
-                    onChange={(event) => setTargets((current) => ({ ...current, [key]: event.target.value }))}
-                  />
-                </label>
-              );
-            })}
-          </div>
-          {offerTargets && <p className="problem">Change a target here, then press Apply again. The new target is saved in the same step.</p>}
+          <legend>Directories</legend>
+          <dl className="fields week-directories">
+            {DIRECTORY_FIELDS.map((field) => (
+              <div key={field}>
+                <dt title={field}>{label(field)}</dt>
+                <dd data-changed={field in moved || undefined}>{shownDirectory(data.directories[field])}</dd>
+              </div>
+            ))}
+          </dl>
+          {!data.written ? (
+            <p className="week-hint">The task is not written yet. Apply puts the words in these directories, then the New task page saves the task.</p>
+          ) : (
+            Object.keys(moved).length > 0 && <p className="week-hint">Apply also makes the task use these directories.</p>
+          )}
         </fieldset>
       </div>
 
@@ -456,6 +543,7 @@ function WeekEditor({ data }: { data: WeekData }) {
                       placeholder="A sentence using the word"
                       data-changed={tidy(row.sentence) !== word.sentence || undefined}
                       onChange={(event) => setRow(index, { sentence: event.target.value })}
+                      onKeyDown={nextSentence}
                     />
                   </td>
                   <td>

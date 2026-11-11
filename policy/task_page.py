@@ -127,11 +127,13 @@ def task_media(policy: Policy, store: AttemptStore, *, path: str, client_ip: str
     if found is None:
         return None
     key, file_name = found
-    task = configured_task(policy.tasks, key, classify_client(policy, client_ip))
+    client = classify_client(policy, client_ip)
+    task = configured_task(policy.tasks, key, client)
     quiz = None if task is None else _QUIZZES.get(task.type)
     if quiz is None or not hasattr(quiz, "media"):
         return None
-    return quiz.media(task, file_name)
+    attempt = store.in_progress(client, task.key)
+    return quiz.media(task, file_name, None if attempt is None else attempt.detail.get("settings"))
 
 
 def _pick(policy: Policy, store: AttemptStore, client: str, now: datetime) -> PageResponse:

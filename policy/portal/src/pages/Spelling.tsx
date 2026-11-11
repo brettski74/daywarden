@@ -1,20 +1,35 @@
-import { Archive, MessageSquareText, Mic, Volume2, WholeWord } from "lucide-react";
-import { useState } from "react";
-import { BASE, api } from "../api";
+import { Archive, Folder, FolderPlus, MessageSquareText, Mic, Volume2, WholeWord } from "lucide-react";
+import { createRef, useEffect, useMemo, useState, type RefObject } from "react";
+import { ApiError, BASE, api } from "../api";
 import { Dialog } from "../components/Dialog";
-import { RecordDialog, type Kept } from "../components/RecordDialog";
+import { NameDialog } from "../components/NameDialog";
+import { RecordDialog, sessionEnded, type Kept } from "../components/RecordDialog";
+import { SelectOne } from "../components/SelectOne";
+import { DIRECTORY_FIELDS, SPELLING_DIR, directoryChoices, directoryQuery } from "../directories";
 import { label } from "../labels";
 import type { Item, Kind } from "../review";
 import { NEW_TASK, taskPath, type TaskRef } from "../taskRef";
+import type { SetupInProgress } from "../words";
 
 export type Pool = "current" | "revision" | "attic";
 export type SpellingWord = { key: string; word: string; pool: Pool; clip: string; sentence: string | null };
 export type SpellingData = {
   settings: Record<string, string>;
+  /** Each directory field's path from the data directory, as the file sets it or by default. */
   directories: Record<string, string>;
+  /** Every directory under the spelling directory, relative to it, in name order. */
+  folders: string[];
   words: SpellingWord[];
   problems: string[];
+  /** The setup of words in progress, or null. A new task has none. */
+  setup?: SetupInProgress | null;
 };
+/** The words the list shows, or null while a directory change is unsaved and not yet refused. */
+export type Listing = { words: SpellingWord[]; problems: string[] } | null;
+
+export const SAVE_TO_SEE = "Save to see the words in the new directories.";
+export const SAVE_MOVES_FIRST = "Save the word moves first.";
+export const SAVE_DIRECTORIES_FIRST = "Save the directory change first.";
 
 /** The pool filter's values, labels, and the pools each one lists. The empty value is the default. */
 export const POOL_FILTERS: [string, string, Pool[]][] = [
@@ -48,9 +63,12 @@ export const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = 
   { kinds: ["sentence"], label: "Re-record sentence", icon: MessageSquareText },
 ];
 
-/** A recording in one of a task's pools. A task not written yet plays from the default pools. */
-export function audioAddress(task: TaskRef | null, pool: Pool, file: string): string {
-  return `${BASE}/api${task ? taskPath(task) : NEW_TASK}/audio/${pool}/${encodeURIComponent(file)}`;
+/**
+ * A recording in one of a task's pools. A task not written yet plays from the default pools.
+ * ``directories`` names directories in place of the task's, as a page with unsaved ones lists them.
+ */
+export function audioAddress(task: TaskRef | null, pool: Pool, file: string, directories: Record<string, string> = {}): string {
+  return `${BASE}/api${task ? taskPath(task) : NEW_TASK}/audio/${pool}/${encodeURIComponent(file)}${directoryQuery(directories)}`;
 }
 
 const NOT_WRITTEN = "Save the new task first.";
@@ -66,23 +84,38 @@ type Props = {
   filter: string;
   settings: Record<string, string>;
   moves: Record<string, Pool>;
+  /** Each directory field's path as chosen on the page. */
+  chosen: Record<string, string>;
+  /** The directory fields chosen on the page that differ from the file. */
+  unsaved: Record<string, string>;
+  /** The problem under each directory field, such as two on one directory. */
+  directoryProblems: Record<string, string>;
+  listing: Listing;
+  /** Why the directory pull-downs are disabled, or null. */
+  directoriesLocked: string | null;
   onSetting: (key: string, text: string) => void;
+  onDirectory: (field: string, path: string) => void;
   onMove: (key: string, pool: Pool) => void;
   onRetire: (key: string) => void;
   onPlayFailed: (message: string) => void;
   /** A recording was kept, or the dialog closed saying why nothing changed. */
   onRecorded: (message: string, changed: boolean) => void;
+  /** A new directory was made on the server. */
+  onMade: (message: string) => void;
 };
 
-/** A spelling task's own settings and its word list. */
-export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, onMove, onRetire, onPlayFailed, onRecorded }: Props) {
+/** A spelling task's own settings, its directories, and its word list. */
+export function SpellingAdmin(props: Props) {
+  const { task, data, filter, settings, moves, unsaved, listing, onSetting, onMove, onRetire, onPlayFailed, onRecorded } = props;
   const [retiring, setRetiring] = useState<SpellingWord | null>(null);
   const [recording, setRecording] = useState<{ key: string; kinds: Kind[] } | null>(null);
   const listed = listedPools(filter);
-  const words = data.words.filter((word) => listed.includes(word.pool));
+  const words = listing?.words.filter((word) => listed.includes(word.pool)) ?? [];
+  // Retire and recording act at once on the saved directories, so they wait for a directory change to be saved.
+  const actsBlocked = Object.keys(unsaved).length > 0 ? SAVE_DIRECTORIES_FIRST : null;
 
   function play(pool: Pool, file: string) {
-    new Audio(audioAddress(task, pool, file)).play().catch(() => onPlayFailed(`${file} could not be played.`));
+    new Audio(audioAddress(task, pool, file, unsaved)).play().catch(() => onPlayFailed(`${file} could not be played.`));
   }
 
   async function keep(take: string, kept: Kept[]): Promise<string> {
@@ -120,26 +153,18 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
             })}
           </div>
         </fieldset>
-        <fieldset>
-          <legend>Directories</legend>
-          <dl className="fields">
-            {Object.entries(data.directories).map(([key, directory]) => (
-              <div key={key}>
-                <dt title={key}>{label(key)}</dt>
-                <dd>{directory}</dd>
-              </div>
-            ))}
-          </dl>
-        </fieldset>
+        <Directories {...props} />
       </div>
 
-      {data.problems.map((problem) => (
+      {listing?.problems.map((problem) => (
         <p key={problem} className="problem">
           {problem}
         </p>
       ))}
 
-      {words.length === 0 ? (
+      {listing === null ? (
+        <p>{SAVE_TO_SEE}</p>
+      ) : words.length === 0 ? (
         <p>No words in this pool.</p>
       ) : (
         <table className="records words">
@@ -196,8 +221,8 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
                           type="button"
                           className="icon-button icon-button-quiet"
                           aria-label={`${what} for ${word.key}`}
-                          title={task ? `${what} for ${word.key}` : NOT_WRITTEN}
-                          disabled={task === null}
+                          title={!task ? NOT_WRITTEN : (actsBlocked ?? `${what} for ${word.key}`)}
+                          disabled={task === null || actsBlocked !== null}
                           onClick={() => setRecording({ key: word.key, kinds })}
                         >
                           <Icon aria-hidden="true" />
@@ -207,8 +232,8 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
                         <button
                           type="button"
                           className="button button-quiet"
-                          disabled={task === null}
-                          title={task ? undefined : NOT_WRITTEN}
+                          disabled={task === null || actsBlocked !== null}
+                          title={!task ? NOT_WRITTEN : (actsBlocked ?? undefined)}
                           onClick={() => setRetiring(word)}
                         >
                           <Archive aria-hidden="true" />
@@ -249,5 +274,70 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
         />
       )}
     </section>
+  );
+}
+
+type Made = { message: string; directory: string; folders: string[] };
+
+/** The four directory pull-downs, each ending with New directory…, which makes a directory at once. */
+function Directories({ task, data, chosen, directoryProblems, directoriesLocked, onDirectory, onMade }: Props) {
+  const [folders, setFolders] = useState(data.folders);
+  const [naming, setNaming] = useState<string | null>(null);
+  const buttons = useMemo(
+    () => Object.fromEntries(DIRECTORY_FIELDS.map((field) => [field, createRef<HTMLButtonElement>()])) as Record<string, RefObject<HTMLButtonElement | null>>,
+    [],
+  );
+  useEffect(() => setFolders(data.folders), [data.folders]);
+
+  async function make(field: string, name: string): Promise<string | null> {
+    try {
+      const done = await api<Made>(`${task ? taskPath(task) : NEW_TASK}/directories`, {
+        page: null,
+        method: "POST",
+        body: { name },
+        signedOut: "refuse",
+      });
+      setFolders(done.folders);
+      setNaming(null);
+      onDirectory(field, `${SPELLING_DIR}/${done.directory}`);
+      onMade(done.message);
+      return null;
+    } catch (error) {
+      if (error instanceof ApiError) return error.status === 401 ? sessionEnded("OK") : error.message;
+      return "The directory could not be made. Check the connection, then press OK.";
+    }
+  }
+
+  function cancel(field: string) {
+    setNaming(null);
+    buttons[field].current?.focus();
+  }
+
+  return (
+    <fieldset>
+      <legend>Directories</legend>
+      <div className="settings">
+        {DIRECTORY_FIELDS.map((field) => (
+          <SelectOne
+            key={field}
+            label={label(field)}
+            title={field}
+            icon={Folder}
+            options={directoryChoices(folders, [data.directories[field], chosen[field]])}
+            value={chosen[field]}
+            onChange={(path) => onDirectory(field, path)}
+            extra={{ label: "New directory…", icon: FolderPlus, onChoose: () => setNaming(field) }}
+            changed={chosen[field] !== data.directories[field]}
+            disabled={directoriesLocked !== null}
+            disabledTitle={directoriesLocked ?? undefined}
+            problem={directoryProblems[field]}
+            buttonRef={buttons[field]}
+          />
+        ))}
+      </div>
+      {naming !== null && (
+        <NameDialog title="New directory" label={`Name, under ${SPELLING_DIR}/`} onSubmit={(name) => make(naming, name)} onCancel={() => cancel(naming)} />
+      )}
+    </fieldset>
   );
 }

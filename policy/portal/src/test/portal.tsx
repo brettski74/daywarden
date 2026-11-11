@@ -77,6 +77,13 @@ const COMMON = {
   due_date: "",
 };
 
+export const DIRECTORIES = {
+  current_dir: "spelling/current",
+  revision_dir: "spelling/revision",
+  attic_dir: "spelling/attic",
+  alphabet_dir: "spelling/alphabet",
+};
+
 export const SPELLING = {
   name: "spelling",
   type: "spelling",
@@ -96,12 +103,9 @@ export const SPELLING = {
       letter_pause: "",
       word_pause: "",
     },
-    directories: {
-      current_dir: "spelling/current",
-      revision_dir: "spelling/revision",
-      attic_dir: "spelling/attic",
-      alphabet_dir: "spelling/alphabet",
-    },
+    directories: DIRECTORIES,
+    folders: ["alphabet", "attic", "current", "revision", "year-3", "year-3/current"],
+    setup: null as { mode: string; count: number } | null,
     words: [
       { key: "rope", word: "rope", pool: "current", clip: "rope.wav", sentence: "rope.sentence.wav" },
       { key: "cat", word: "cat", pool: "current", clip: "cat.wav", sentence: null },
@@ -121,6 +125,11 @@ export const WEEK = {
   type: "spelling",
   version: "v1",
   file: "/etc/daywarden/policy.yaml",
+  mode: "replace-current",
+  setup: { mode: "replace-current", count: 5 },
+  directories: DIRECTORIES,
+  saved_directories: DIRECTORIES,
+  written: true,
   targets: { current_required: "", revision_required: "1" },
   current: 2,
   needs: ["frog", "toad"],

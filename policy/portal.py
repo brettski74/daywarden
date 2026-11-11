@@ -10,9 +10,8 @@ recordings the task pages play. Those endpoints need a parent session from
 S007.1. With no session they answer 401, and with no parent account 403,
 with no data. They never redirect: only the portal's own code reacts to
 those answers. Sign-in, sign-out, the parent check, a task save, creating
-or renaming a task, Retire, cutting or keeping a recording, and each step of
-a new week's spelling words
-are JSON POSTs, and a POST whose body is not
+or renaming a task, making a spelling directory, Retire, cutting or keeping
+a recording, and each step of a setup of spelling words are JSON POSTs, and a POST whose body is not
 application/json is refused, so a form on another site cannot use the
 parent's cookie to act. The one exception is the upload of a recording,
 which is the raw audio, and must be audio/webm or audio/ogg. A form cannot
@@ -43,7 +42,7 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
-from policy import spelling
+from policy.spelling_directories import from_query
 from policy.task_admin import TaskAdmin, missing
 from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
@@ -253,6 +252,28 @@ def install_portal(
         if tasks is None:
             return _json(404, {"error": missing(TaskKey(kind, name))})
         answer = tasks.page(TaskKey(kind, name))
+        if answer.status == 200 and "spelling" in answer.body and weeks is not None:
+            answer.body["spelling"]["setup"] = weeks.progress(name)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/tasks/{kind}/{name}/directories")
+    async def task_directory(request: Request, kind: str, name: str) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = tasks.make_folder(TaskKey(kind, name), body)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/new-task/directories")
+    async def new_task_directory(request: Request) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if tasks is None:
+            return _json(404, {"error": "Tasks cannot be created here."})
+        answer = tasks.make_folder(None, body)
         return _json(answer.status, answer.body)
 
     @app.post("/parent/api/tasks/{kind}/{name}")
@@ -339,6 +360,8 @@ def install_portal(
         if changes is None:
             return _json(404, {"error": "Tasks cannot be created here."})
         answer = changes.lock(body)
+        if answer.status == 200 and "spelling" in answer.body and weeks is not None:
+            answer.body["spelling"]["setup"] = weeks.progress(answer.body["name"])
         return _json(answer.status, answer.body)
 
     @app.post("/parent/api/new-task")
@@ -356,7 +379,7 @@ def install_portal(
         _username, refused = guard(request)
         if refused is not None:
             return refused
-        found = None if tasks is None else tasks.pool_file(spelling.parse_settings({}), pool, file_name)
+        found = None if tasks is None else tasks.audio(None, pool, file_name, from_query(request.query_params))
         if found is None:
             return _json(404, {"error": "There is no such recording."})
         return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, no-store"})
@@ -368,7 +391,7 @@ def install_portal(
             return refused
         if weeks is None:
             return _json(404, {"error": missing(TaskKey(kind, name))})
-        answer = weeks.page(TaskKey(kind, name))
+        answer = weeks.page(TaskKey(kind, name), request.query_params)
         return _json(answer.status, answer.body)
 
     @app.post("/parent/api/tasks/{kind}/{name}/week")
@@ -484,7 +507,7 @@ def install_portal(
         _username, refused = guard(request)
         if refused is not None:
             return refused
-        found = None if tasks is None else tasks.audio(TaskKey(kind, name), pool, file_name)
+        found = None if tasks is None else tasks.audio(TaskKey(kind, name), pool, file_name, from_query(request.query_params))
         if found is None:
             return _json(404, {"error": "There is no such recording."})
         return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, no-store"})
