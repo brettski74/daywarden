@@ -33,7 +33,7 @@ import sqlite3
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from policy import clips, number_lists_admin, parts_of_speech_admin, spelling
@@ -104,6 +104,7 @@ class TaskAdmin:
         *,
         policy: Callable[[], Policy | None],
         now: Callable[[], datetime],
+        today: Callable[[], date],
         attempts: AttemptStore,
         reloads: Reloads,
         clients: Callable[[], Sequence[str]],
@@ -113,6 +114,7 @@ class TaskAdmin:
         self.policy_file = policy_file
         self.policy = policy
         self.now = now
+        self.today = today
         self.attempts = attempts
         self.reloads = reloads
         self.clients = clients
@@ -154,6 +156,7 @@ class TaskAdmin:
             "groups": list(written.groups),
             "clients": clients,
             "fields": fields,
+            "today": self.today().isoformat(),
         }
         if kind == spelling.SPELLING:
             body["spelling"] = self._spelling_page(written)

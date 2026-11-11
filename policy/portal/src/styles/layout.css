@@ -794,6 +794,150 @@ fieldset.lock-area,
   outline-offset: -0.12rem;
 }
 
+/* A date box with its calendar button. The calendar opens over what is below it, or above when there is no room. */
+
+.date-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.date-field input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.date-field > .icon-button:disabled {
+  cursor: not-allowed;
+  background: var(--input-disabled-bg);
+}
+
+.date-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: 0fr;
+  width: max-content;
+  min-width: 100%;
+  margin-top: 0.15rem;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--expand-duration) var(--expand-easing),
+    opacity var(--expand-duration) var(--expand-easing);
+}
+
+.date-field[data-above] .date-panel {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 0.15rem;
+}
+
+.date-field[data-end] .date-panel {
+  left: auto;
+  right: 0;
+}
+
+.date-field[data-open] .date-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+@keyframes date-panel-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.date-field[data-open][data-moving] .date-panel {
+  animation: date-panel-open var(--expand-duration) var(--expand-easing);
+}
+
+.date-calendar {
+  min-height: 0;
+  overflow: hidden;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--input-bg);
+  color: var(--input-text);
+  box-shadow: var(--shadow);
+}
+
+/* Opening above, the calendar unfolds from the box's edge, as it does below. */
+.date-field[data-above] .date-calendar {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.date-head,
+.date-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+}
+
+.date-month {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.date-grid {
+  margin: 0 0.4rem;
+  border-collapse: collapse;
+}
+
+.date-grid th {
+  padding: 0.15rem 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.date-grid td {
+  padding: 0.08rem;
+  text-align: center;
+}
+
+.date-grid button {
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.date-grid button:hover {
+  background: var(--row-hover);
+}
+
+.date-grid button[aria-current="date"] {
+  box-shadow: inset 0 0 0 0.12rem var(--calendar-today-mark);
+  font-weight: 600;
+}
+
+.date-grid td[aria-selected="true"] button {
+  background: var(--calendar-selected-bg);
+  color: var(--calendar-selected-text);
+  font-weight: 600;
+}
+
+.date-grid button:focus-visible {
+  outline: 0.15rem solid var(--focus-ring);
+  outline-offset: 0.05rem;
+}
+
 /* Each setting's name, then its box, lined up down the group. */
 .settings {
   display: grid;
@@ -922,10 +1066,11 @@ select[data-changed] {
   font-weight: 600;
 }
 
-/* A problem with a setting, under its box. */
+/* A problem with a setting, under its box. It wraps to the group's width rather than widening the label column. */
 .setting-problem {
   grid-column: 1 / -1;
   margin: 0;
+  contain: inline-size;
 }
 
 /* The parts of speech editor. Each sentence is a two-column table laid out like the child's. */

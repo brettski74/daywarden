@@ -1,6 +1,6 @@
 Ticket: S026
 Title: Arithmetic administration, subtraction, multiplication, and division
-Status: In Progress
+Status: Done
 Story Points: 8
 Last Updated: 2026-11-10 08:05:00
 ---

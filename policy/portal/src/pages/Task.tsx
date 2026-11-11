@@ -14,8 +14,10 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import { ApiError, api, pageOf } from "../api";
+import { DateField } from "../components/DateField";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
+import { dateProblem } from "../dates";
 import { label } from "../labels";
 import { arithmeticLists, problemsText, shownArithmetic, type ArithmeticData } from "../arithmetic";
 import type { NumberRow, ServiceRow } from "../numberTable";
@@ -46,6 +48,8 @@ export type TaskData = {
   groups: string[];
   clients: string[];
   fields: Record<string, string>;
+  /** The household's today, `yyyy-mm-dd`. */
+  today: string;
   spelling?: SpellingData;
   parts_of_speech?: PosData;
   skip_counting?: SkipData;
@@ -67,7 +71,7 @@ export type Result = {
 };
 
 /** What the new task page has before its name and type are locked in. */
-type Blank = { types: string[]; clients: string[]; fields: Record<string, string> };
+type Blank = { types: string[]; clients: string[]; fields: Record<string, string>; today: string };
 
 type Edits = {
   fields: Record<string, string>;
@@ -82,11 +86,13 @@ type Edits = {
 
 const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null, lists: {} };
 
+const DATES = ["available_from", "due_date"];
+
 const GROUPS: { legend: string; keys: string[] }[] = [
   { legend: "Cooldowns and limits", keys: ["pass_cooldown", "failure_cooldown", "max_skips", "max_passes"] },
-  { legend: "Dates", keys: ["available_from", "due_date"] },
+  { legend: "Dates", keys: DATES },
 ];
-const PLACEHOLDERS: Record<string, string> = { pass_cooldown: "1", available_from: "yyyy-mm-dd", due_date: "yyyy-mm-dd" };
+const PLACEHOLDERS: Record<string, string> = { pass_cooldown: "1" };
 const NEW_TITLE = "New task";
 const CHOOSE_TYPE = "Choose the task's type.";
 const SAVE_FIRST = "Save the changes on this page first.";
@@ -150,7 +156,7 @@ export function Task() {
 export function NewTask() {
   const blank = useLoaderData() as Blank;
   const data = useMemo<TaskData>(
-    () => ({ name: "", type: "", file: "", version: "", groups: [], clients: blank.clients, fields: blank.fields }),
+    () => ({ name: "", type: "", file: "", version: "", groups: [], clients: blank.clients, fields: blank.fields, today: blank.today }),
     [blank],
   );
   return <TaskEditor data={data} types={blank.types} />;
@@ -213,10 +219,14 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
   const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
   const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
   const sums = data.arithmetic ? shownArithmetic(data.arithmetic, edits.settings, edits.lists) : null;
+  const undated = DATES.some((key) => key in data.fields && dateProblem(edits.fields[key] ?? data.fields[key]) !== null);
   const held = frozen
     ? problem !== null || (naming && draft.type === "")
-    : (pos !== undefined && blocked(blocks)) || (difference !== null && skipBlocked(difference, differenceTrouble)) || (sums !== null && sums.count > 0);
-  const fixFirst = frozen ? (problem ?? CHOOSE_TYPE) : pos ? FIX_FIRST : FIX_ON_PAGE;
+    : undated ||
+      (pos !== undefined && blocked(blocks)) ||
+      (difference !== null && skipBlocked(difference, differenceTrouble)) ||
+      (sums !== null && sums.count > 0);
+  const fixFirst = frozen ? (problem ?? CHOOSE_TYPE) : pos && !undated ? FIX_FIRST : FIX_ON_PAGE;
 
   const save = useCallback(
     (confirmed = false) => {
@@ -473,19 +483,32 @@ function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }
             <fieldset key={legend} disabled={frozen}>
               <legend>{legend}</legend>
               <div className="settings">
-                {shown.map((key) => (
-                  <label key={key} className="setting">
-                    <span title={key}>{label(key)}</span>
-                    <input
-                      type="text"
-                      inputMode={key.endsWith("_from") || key.endsWith("_date") ? undefined : "numeric"}
+                {shown.map((key) => {
+                  const changed = value(key).trim() !== (data.fields[key] ?? "").trim();
+                  return DATES.includes(key) ? (
+                    <DateField
+                      key={key}
+                      name={key}
+                      label={label(key)}
                       value={value(key)}
-                      placeholder={PLACEHOLDERS[key]}
-                      data-changed={value(key).trim() !== (data.fields[key] ?? "").trim() || undefined}
-                      onChange={(event) => setField(key, event.target.value)}
+                      today={data.today}
+                      changed={changed}
+                      onChange={(text) => setField(key, text)}
                     />
-                  </label>
-                ))}
+                  ) : (
+                    <label key={key} className="setting">
+                      <span title={key}>{label(key)}</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={value(key)}
+                        placeholder={PLACEHOLDERS[key]}
+                        data-changed={changed || undefined}
+                        onChange={(event) => setField(key, event.target.value)}
+                      />
+                    </label>
+                  );
+                })}
               </div>
             </fieldset>
           );

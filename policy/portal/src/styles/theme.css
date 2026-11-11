@@ -68,6 +68,9 @@
   --divider: var(--palette-lavender);
   --option-selected-bg: var(--palette-teal);
   --option-selected-text: var(--palette-navy);
+  --calendar-selected-bg: var(--palette-teal);
+  --calendar-selected-text: var(--palette-navy);
+  --calendar-today-mark: var(--palette-lavender);
   --unsaved-bg: var(--palette-gold);
   --unsaved-text: var(--palette-navy);
   --dialog-bg: var(--palette-white);

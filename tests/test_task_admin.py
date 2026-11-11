@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -208,6 +208,33 @@ def test_a_task_page_shows_the_file_and_the_words_in_each_pool(house):
 def test_a_parent_check_page_has_no_date_skip_or_pass_fields(house):
     assert house.page("parent_check/check")["fields"] == {"pass_cooldown": "0", "failure_cooldown": ""}
     assert "spelling" not in house.page("parent_check/check")
+
+
+class _Instant(datetime):
+    """A datetime whose now is always ``moment``, for the household clock."""
+
+    moment = datetime(2026, 11, 10, 10, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.moment.astimezone(tz)
+
+
+@pytest.mark.parametrize(
+    ("utc", "today"),
+    [
+        # 04:59 and 05:00 in Toronto, a day behind Kiritimati from 10:00 UTC.
+        (datetime(2026, 11, 10, 9, 59, tzinfo=timezone.utc), "2026-11-10"),
+        (datetime(2026, 11, 10, 10, 0, tzinfo=timezone.utc), "2026-11-11"),
+    ],
+)
+def test_task_pages_carry_the_households_today_in_the_policys_timezone(tmp_path, monkeypatch, utc, today):
+    monkeypatch.setattr("policy.clock.datetime", _Instant)
+    monkeypatch.setattr(_Instant, "moment", utc)
+    house = House(tmp_path, monkeypatch, text=HOUSE.replace("timezone: America/Toronto", "timezone: Pacific/Kiritimati"))
+    assert house.page()["today"] == today
+    assert house.page("parent_check/check")["today"] == today
+    assert house.get("/parent/api/new-task")[1]["today"] == today
 
 
 def test_an_unknown_task_is_not_found(house):

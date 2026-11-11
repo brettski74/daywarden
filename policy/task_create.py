@@ -64,7 +64,12 @@ class TaskChanges:
 
     def blank(self) -> dict:
         """Return what a new task's page needs before its name and type are locked in."""
-        return {"types": list(NEW_TYPES), "clients": list(self.tasks.clients()), "fields": dict.fromkeys(COMMON_FIELDS, "")}
+        return {
+            "types": list(NEW_TYPES),
+            "clients": list(self.tasks.clients()),
+            "fields": dict.fromkeys(COMMON_FIELDS, ""),
+            "today": self.tasks.today().isoformat(),
+        }
 
     def lock(self, request: Mapping) -> Answer:
         """Check a new task's name and type, and return its page with an empty body. Nothing is written."""

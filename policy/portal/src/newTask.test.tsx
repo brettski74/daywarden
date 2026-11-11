@@ -7,6 +7,7 @@ const BLANK = {
   types: ["arithmetic", "parts_of_speech", "skip_counting", "spelling"],
   clients: ["younger", "older", "default"],
   fields: { pass_cooldown: "", failure_cooldown: "", max_skips: "", max_passes: "", available_from: "", due_date: "" },
+  today: "2026-11-10",
 };
 
 const LOCKED = {
@@ -17,6 +18,7 @@ const LOCKED = {
   groups: [],
   clients: BLANK.clients,
   fields: BLANK.fields,
+  today: BLANK.today,
   arithmetic: {
     settings: { operation: "", max_timeout: "", min_timeout: "", correct_answers_required: "" },
     operations: [{ name: "addition", label: "Addition" }],
@@ -90,6 +92,8 @@ describe("Create New Task", () => {
     expect(type).toHaveValue("");
     expect(screen.getByRole("textbox", { name: "Pass Cooldown" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Client Groups/ })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Due Date" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Choose Due Date" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Rename" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
