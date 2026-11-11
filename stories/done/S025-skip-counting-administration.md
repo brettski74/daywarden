@@ -1,6 +1,6 @@
 Ticket: S025
 Title: Skip counting administration and the weighted number table
-Status: In Progress
+Status: Done
 Story Points: 13
 Last Updated: 2026-11-10 08:05:00
 ---

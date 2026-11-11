@@ -65,6 +65,9 @@ export const TASKS = {
   ],
 };
 
+/** The household's today, a Tuesday. */
+export const TODAY = "2026-11-10";
+
 const COMMON = {
   pass_cooldown: "1",
   failure_cooldown: "",
@@ -82,6 +85,7 @@ export const SPELLING = {
   groups: ["younger"],
   clients: ["younger", "older", "default"],
   fields: COMMON,
+  today: TODAY,
   spelling: {
     settings: {
       timeout: "30s",
@@ -139,6 +143,7 @@ export const CHECK = {
   groups: ["younger"],
   clients: ["younger", "older", "default"],
   fields: { pass_cooldown: "0", failure_cooldown: "" },
+  today: TODAY,
 };
 
 export const SUMS = { ...CHECK, name: "sums", type: "worksheet", fields: COMMON };

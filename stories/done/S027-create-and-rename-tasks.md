@@ -1,6 +1,6 @@
 Ticket: S027
 Title: Create and rename tasks
-Status: In Progress
+Status: Done
 Story Points: 21
 Last Updated: 2026-11-10 21:05:00
 ---

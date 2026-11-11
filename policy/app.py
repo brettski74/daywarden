@@ -257,6 +257,7 @@ def create_app() -> FastAPI:
         policy_file,
         policy=lambda: holder.loaded.policy,
         now=lambda: holder.loaded.clock.local(),
+        today=lambda: holder.loaded.clock.today(),
         attempts=attempts,
         reloads=Reloads(apply_reload, others),
         clients=lambda: client_names(holder.loaded.policy),
