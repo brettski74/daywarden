@@ -1,8 +1,8 @@
 Ticket: S028
 Title: Make spelling directories configurable
-Status: Refined
+Status: Done
 Story Points: 21
-Last Updated: 2026-11-10 20:00:00
+Last Updated: 2026-11-10 23:40:00
 ---
 
 # User Voice
@@ -65,7 +65,9 @@ in the Directories group of a spelling task's page. The spelling directory is `s
   - No part before the last is an existing file, so `notes.txt/words` is refused too.
 - [ ] A valid name makes the directory at once, with any missing parent directories, owned by the host user. With no
       `year-3` there, `year-3/current` makes both. The dialog closes, the field is set to the new directory as an
-      unsaved edit, and every directory pull-down on the page lists it.
+      unsaved edit, and every directory pull-down on the page lists it. *Changed in implementation:* the status bar
+      says "Made spelling/year-3/current. It is empty until words are added.", and a part that already exists in
+      another case is used as the disk has it, so `Year-3/revision` beside `year-3` makes `year-3/revision`.
 - [ ] Making a directory is not part of Save and makes no commit in the config history. Leaving the page without
       saving keeps the new directory on the server, empty, and the field as the file has it.
 - [ ] With the parent's session ended, OK keeps the dialog open with the name, and says to sign in again in another
@@ -137,6 +139,12 @@ a check here says otherwise. A task still has one setup in progress at a time.
       directories with `revision_required: 10` is refused until Required Correct (Revision Pool) is lowered to 0 in
       the Targets box.
 - [ ] Cancel throws away the setup and leaves the task's directories as the file has them.
+- [ ] *Added in review:* On the New task page, once a spelling task's name and type are locked in, the Words menu works
+      as on a saved task's page, with the name, type, and unsaved directories in its links. Its setup page has no
+      Targets box. Its Apply moves the words into the setup's directories and writes no policy file, saying such as
+      "Added 6 words to current. Save the new task to use them." Apply, Cancel, and Keep it go back to the New task
+      page with the name and type locked in and the directories chosen again, so a second setup can fill the other
+      pool, and Save then writes the task. Its other unsaved fields are not kept.
 
 ## Everywhere
 
@@ -154,7 +162,8 @@ addresses here follow its `/parent/tasks/<type>/<name>` form.
 
 S027's New task page shows a new spelling task's section from an empty body, so with this story it shows these
 pull-downs with the defaults chosen. Whichever of S027 and this story is built second makes sure the pull-downs and
-New directory… are disabled whenever the rest of that section is. A task that has never been saved has no Words menu.
+New directory… are disabled whenever the rest of that section is. A new task pointed at new directories cannot be saved
+until its pools have words, so its Words menu works before it is written.
 
 Design hints:
 
@@ -187,3 +196,128 @@ two add modes are about 8, since they are new Apply rules and addresses on S023.
 directories into a setup and applying them with the words is about 5. It stays one story because the three parts
 share the save path in `policy/task_admin.py`, the setup in `policy/week.py`, and their tests, and because new
 directories cannot be accepted until a setup can fill them.
+
+# Implementation
+
+## Files Added
+
+- `policy/spelling_directories.py`: the directories under `spelling/` in name order, the new directory name check and
+  making it, a task's saved directories, the chosen directories with the same-directory check, and how a path is
+  written to YAML.
+- `policy/portal/src/components/SelectOne.tsx`: the single-choice pull-down, with an icon on each option and an
+  optional last entry under a divider.
+- `policy/portal/src/components/NameDialog.tsx`: the dialog that asks for a name, with OK and Cancel.
+- `policy/portal/src/components/MenuLinks.tsx`: the context bar button with a menu of links.
+- `policy/portal/src/directories.ts`: showing a directory relative to `spelling/`, the pull-down's options with their
+  missing and outside notes, the same-directory problems, and the query string of unsaved directories.
+- `policy/portal/src/words.ts`: the three Words modes, their labels and addresses, and the throw-away question.
+- `tests/test_spelling_directories.py`: listing and making directories, saving them, the refused save's word list,
+  audio from unsaved directories, the add modes, the setup in progress, and setups in new directories.
+- `policy/portal/src/directories.test.tsx`: the pull-downs, New directory…, saving and the refused list, the Words menu
+  and its question, and the setup page's mode, directories, and question.
+
+## Files Changed
+
+- `policy/task_admin.py`: the spelling page data carries `folders` and the saved directories as paths from the data
+  directory. A save takes `directories`, works out word moves against them, and adds the words in them to a 400
+  refusal. `make_folder` makes a directory. The audio address takes directory overrides in its query string.
+- `policy/task_create.py`: a new task's save takes `directories` the same way.
+- `policy/week.py`: setups have a mode and their own directories in `state.json`. Add to Current and Add to Revision
+  apply rules and messages, the setup in another mode, `progress` for the spelling page, and Apply writing the
+  directories with the targets. A spelling task not written yet has a setup whose Apply only moves the words.
+- `policy/portal.py`: `POST .../directories` for a task and for the new task page, the setup in progress in the spelling
+  page data and in a new task's locked-in page, the setup page's query string, and directory overrides on the audio addresses.
+- `policy/spelling_page.py`, `policy/task_page.py`: a word's audio is looked for in the open attempt's run directories
+  first.
+- `policy/portal/src/pages/Spelling.tsx`: the Directories group is four `SelectOne` pull-downs with New directory…. The
+  word list shows what the page passes, with Retire and recording held while directories are unsaved.
+- `policy/portal/src/pages/Task.tsx`: directory edits, the same-directory problem, the refused list, held pull-downs,
+  the Words menu with its throw-away question, and the leave prompt letting a Words link take unsaved directories.
+  The New task page has the Words menu once locked in, and locks in the name and type and chooses the directories
+  again from its query string.
+- `policy/portal/src/pages/Week.tsx`, `policy/portal/src/routes.tsx`: the setup page is at `words/<mode>`, sends its
+  mode and directories, shows its directories, and asks before throwing away a setup in another mode. `/week`
+  redirects to `words/replace-current`.
+- `policy/portal/src/styles/layout.css`: the single-choice pull-down, the menu of links, the name dialog, and the
+  setup's directories.
+- `policy/portal/src/test/portal.tsx`, `policy/portal/src/week.test.tsx`, `policy/portal/src/newTask.test.tsx`: the
+  fixtures and the setup page's address, heading, and requests. A new task's New directory and the pull-downs during a
+  rename.
+- `policy/portal/src/test/setup.ts`: Testing Library waits up to 5 seconds, since `make test` runs the portal tests in
+  parallel beside Docker.
+- `tests/test_spelling.py`: a run keeps playing its words after the directories change, and the next run asks the new
+  ones.
+- `tests/test_week.py`: the reworded Apply failure.
+- `docs/hierarchical-policy.md`, `docs/parent-portal.md`, `README.md`: choosing and making directories, the Words
+  modes, the single-choice pull-down with its new-entry dialog, and the context bar menu of links.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The service checks every directory name, so the page has no copy of the rules. A name's parts are walked case
+insensitively, and parts that already exist are kept as the disk spells them. `make_directory` from `policy/owned.py`
+makes the rest, owned like the directory each is made in. A directory path is written bare when YAML reads it back
+unchanged, such as `spelling/year-3/revision`, and quoted otherwise, such as `"spelling/year 3"`. The save also refuses
+two fields on one directory, naming the fields, in case a request skips the page.
+
+A refused save that chose other directories carries the words in them, so the page lists them without asking again. It
+shows them while the chosen directories match those of the refused save. Moves are sent only for words whose pool
+changed in the list on show, so a move left over from an earlier list never reaches the service.
+
+The setup page's data stays at `/parent/api/tasks/<type>/<name>/week`, with the mode in its query string or body. A
+setup's mode and all four directories are written to `state.json` on its first Check. A setup kept before this story
+has neither, and is Replace Current against the task's directories. The page's audio for existing words carries the
+setup's directories in its query string, as the spelling page does for unsaved ones.
+
+The menu of links calls its click handler only for a plain left click, so Ctrl-click, middle click, and opening in a
+new tab go straight to the setup page, which asks the throw-away question itself.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S028
+
+1. **A new term's directories.** Rebuild the decisions image and restart the stack. Open the spelling task's page, check
+   each pull-down's closed text, open one and read the list, then run `mkdir -p ~/daywarden/spelling/.trash
+   ~/daywarden/spelling/by-hand`, reload, and check only `by-hand` is listed. Make `year-4/current` and `year-4/revision` from New directory…, choose them,
+   and save. Read the refusal, the empty list, and the status bar. Open Words › Add to Current, check the address, the
+   context bar, and the marked directories, type words, record them, lower Required Correct (Revision Pool) to 0, and
+   Apply. Read the status bar, the policy file, `git log` in the config directory, and the files in
+   `spelling/year-4/current`. Covers the scenario, the pull-down list, the new directory checks for a valid name,
+   saving, and Setting up words in new directories.
+2. **Names refused.** In the New directory dialog try an empty name, `/year-3`, `year-3//current`, `cur*ent`,
+   `.hidden`, `year 3 /x`, a 256-character part, `Current`, and `notes.txt` and `notes.txt/words` after
+   `touch ~/daywarden/spelling/notes.txt`. Check each message, that the dialog keeps the name, and that nothing is
+   made. Press Cancel and Escape and check the field and the focus. Sign out in another tab, then press OK. Covers the
+   rest of A new directory.
+3. **Pull-down behaviour.** Use the mouse and the keys on one pull-down: Escape, Tab, a click elsewhere, the arrows,
+   Enter, and Space. Choose another directory, check the change mark, Unsaved changes, and the leave prompt, then
+   choose the saved one again. Set the Attic Directory to `current` and read the problem under it and Save's title.
+   Change a word's pool and hover a pull-down. Set `attic_dir: spelling/old-words` and `current_dir: words/year-3` by
+   hand and check the "(missing)" and "(outside spelling)" marks. Covers the pull-down, missing, outside, and editing
+   checks, and the same-directory and held pull-down checks.
+4. **Refused save and its list.** With `revision_required: 2`, point Current at a directory with two words and
+   Revision at one with one word, and save. Check the list, the status bar, that Retire and the recording buttons are
+   disabled with their title, and that the words play. Move a word to revision and save, and check the files and the
+   policy file. Covers the refused-save checks.
+5. **Words menu and setups.** Open the Words menu with the keys and the mouse, read the three addresses, and open
+   `.../week` directly. Start Replace Current with six words and Check, go back, and choose Add to Revision: check the
+   question, Keep it with an unsaved field, then Throw away. Open `.../words/replace-current` in a new tab while an
+   Add to Revision setup is in progress, and use Keep it and Throw away there. Apply Add to Current and Add to Revision
+   with listed revision, attic, and current words, and read the status bar and the pools each time. Covers The Words
+   menu.
+6. **A run across a directory change.** On the child's computer start the spelling task and answer one word. Change the
+   task's directories on the portal and save. Check the next word plays, then let the attempt sit for an hour, or give
+   it up and start the task the next day, and check it asks the new directories' words. Covers the run check.
+7. **A new task with new directories.** On Create New Task, lock in a spelling task named `More Spelling`, make
+   `more/current`, `more/revision`, and `more/attic`, choose them, and save. Read the refusal and the status bar. Open
+   Words › Add to Current, check there is no Targets box, add and record words, and Apply. Check the New task page
+   comes back with the name locked in and the directories chosen, then do the same with Add to Revision, and save.
+   Read the new file in `tasks.d` and the files in `spelling/more/`. Covers the *Added in review* check.
+8. **New task page, signed out, and docs.** On Create New Task, check the pull-downs and New directory… are disabled
+   until the name and type are locked in. Start a rename on a saved task and check the pull-downs are disabled.
+   Sign out and open a `words/add-current` address, sign in, and check it comes back. Request
+   `POST /parent/api/tasks/spelling/<name>/directories` with no cookie and check 401 with no redirect. Read
+   `docs/hierarchical-policy.md` and `docs/parent-portal.md`. Covers Everywhere and the S027 note.

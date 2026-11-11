@@ -52,8 +52,12 @@ function service(answer?: (call: Call) => Reply | undefined) {
 }
 
 async function openNew(answer?: (call: Call) => Reply | undefined) {
+  return openNewAt("/parent/new-task", answer);
+}
+
+async function openNewAt(address: string, answer?: (call: Call) => Reply | undefined) {
   const calls = service(answer);
-  const view = renderPortal("/parent/new-task");
+  const view = renderPortal(address);
   await screen.findByRole("heading", { name: "New task" });
   return { calls, ...view };
 }
@@ -78,8 +82,9 @@ describe("Create New Task", () => {
     expect(within(nav.querySelector("#task-list") as HTMLElement).getAllByRole("link")[0]).toBe(link);
   });
 
-  it("starts with a name and a type to choose, every other field disabled, and nothing under the divider", async () => {
+  it("starts with the name box focused, a type to choose, every other field disabled, and nothing under the divider", async () => {
     await openNew();
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
     expect(screen.getByRole("navigation", { name: "Where you are" })).toHaveTextContent("TasksNew task");
     const type = screen.getByRole("combobox", { name: "Type" });
     expect(within(type).getAllByRole("option").map((option) => option.textContent)).toEqual([
@@ -198,7 +203,51 @@ describe("Create New Task", () => {
     await screen.findByRole("region", { name: "Spelling" });
     expect(screen.getAllByRole("button", { name: "Retire" })[0]).toBeDisabled();
     expect(screen.getByRole("button", { name: "Re-record word for rope" })).toHaveAttribute("title", "Save the new task first.");
-    expect(screen.queryByRole("link", { name: "New week's words" })).not.toBeInTheDocument();
+  });
+
+  it("offers the Words menu once the name and type are locked in, carrying the name, type, and new directories", async () => {
+    await openNew((call) =>
+      call.path === "/parent/api/new-task/check" ? { body: { ...SPELLING, name: "More Spelling", version: "", groups: [] } } : undefined,
+    );
+    expect(screen.queryByRole("button", { name: "Words" })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "More Spelling");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Type" }), "spelling");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Current Pool Directory / }));
+    await userEvent.click(screen.getByRole("option", { name: "year-3/current" }));
+    await userEvent.click(screen.getByRole("button", { name: "Words" }));
+    expect(screen.getByRole("menuitem", { name: "Add to Current" })).toHaveAttribute(
+      "href",
+      "/parent/tasks/spelling/More%20Spelling/words/add-current?current_dir=spelling%2Fyear-3%2Fcurrent",
+    );
+  });
+
+  it("locks in the name and type again, and chooses the directories again, from its address", async () => {
+    const { calls } = await openNewAt("/parent/new-task?name=More+Spelling&type=spelling&current_dir=spelling%2Fyear-3", (call) =>
+      call.path === "/parent/api/new-task/check" ? { body: { ...SPELLING, name: "More Spelling", version: "", groups: [] } } : undefined,
+    );
+    expect(posts(calls)[0]).toMatchObject({ path: "/parent/api/new-task/check", body: { name: "More Spelling", type: "spelling" } });
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("More Spelling");
+    const current = screen.getByRole("button", { name: /^Current Pool Directory / });
+    expect(current).toHaveTextContent("year-3");
+    expect(current).toHaveAttribute("data-changed");
+    expect(screen.getByRole("button", { name: "Words" })).toBeInTheDocument();
+  });
+
+  it("makes a new spelling task's new directory at the new task's own address", async () => {
+    const { calls } = await openNew((call) => {
+      if (call.path === "/parent/api/new-task/check") return { body: { ...SPELLING, name: "words", version: "", groups: [] } };
+      if (call.path === "/parent/api/new-task/directories") return { body: { message: "Made spelling/year-4.", directory: "year-4", folders: ["year-4"] } };
+      return undefined;
+    });
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "words");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Type" }), "spelling");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Current Pool Directory / }));
+    await userEvent.click(screen.getByRole("option", { name: "New directory…" }));
+    await userEvent.keyboard("year-4{Enter}");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Current Pool Directory / })).toHaveTextContent("year-4"));
+    expect(posts(calls).map((call) => call.path)).toContain("/parent/api/new-task/directories");
   });
 });
 
@@ -231,6 +280,7 @@ describe("Rename", () => {
     expect(screen.getByRole("textbox", { name: "Timeout" })).toBeDisabled();
     expect(screen.getAllByRole("button", { name: "Retire" })[0]).toBeDisabled();
     expect(screen.getByRole("button", { name: "Re-record word for rope" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Current Pool Directory / })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
     await userEvent.keyboard("words");

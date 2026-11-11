@@ -200,12 +200,26 @@ def respond_api(
     )
 
 
-def media(task: Task, name: str) -> Path | None:
-    """Return the audio file an ``audio/<token>...`` or ``audio/alphabet.<file>`` URL of this task names, or None."""
-    try:
-        settings = parse_settings(task.document())
-    except ValueError:
-        return None
+def media(task: Task, name: str, run: Mapping | None = None) -> Path | None:
+    """Return the audio file an ``audio/<token>...`` or ``audio/alphabet.<file>`` URL of this task names, or None.
+
+    ``run`` is the body the open attempt's run started with. Its directories
+    are searched before the task's, so a run carries on playing its words
+    after the parent points the task at other directories.
+    """
+    found = None
+    for body in (run, task.document()):
+        if body is None:
+            continue
+        try:
+            settings = parse_settings(body)
+        except ValueError:
+            continue
+        found = found or _media_file(settings, name)
+    return found
+
+
+def _media_file(settings, name: str) -> Path | None:
     if name.startswith(ALPHABET_MEDIA):
         return find_alphabet_clip(settings, name)
     found = read_media_name(name)

@@ -21,7 +21,7 @@ from conftest import merge_task_types, write_alphabet, write_wav  # noqa: E402
 from policy import spelling  # noqa: E402
 from policy.child_page import PRACTICE_LINE  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
-from policy.quiz import NETWORK_ALLOWANCE_MS  # noqa: E402
+from policy.quiz import EXPIRY, NETWORK_ALLOWANCE_MS  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
 from policy.spelling import (  # noqa: E402
@@ -1106,6 +1106,23 @@ def test_a_word_moved_or_retired_during_a_run_still_plays_for_the_rest_of_it(tmp
     for url in (question["word_url"], question["sentence_url"]):
         found = task_media(quiz.policy, quiz.store, path=url, client_ip=YOUNGER, now=START)
         assert found is not None and found.parent == data / "spelling" / pool
+
+
+def test_a_run_keeps_playing_its_words_after_the_task_points_at_other_directories_and_the_next_run_asks_the_new_ones(tmp_path, data):
+    _words(data, "spelling/current", "rope", sentences={"rope"})
+    _words(data, "spelling/year-3/current", "frog")
+    quiz = Quiz(tmp_path)
+    quiz.open(START)
+    question = quiz.ask(START)
+    quiz.policy = _policy(tmp_path / "moved", {"current_dir": "spelling/year-3/current"})
+    for url in (question["word_url"], question["sentence_url"]):
+        found = task_media(quiz.policy, quiz.store, path=url, client_ip=YOUNGER, now=START)
+        assert found is not None and found.parent == data / "spelling/current"
+    later = START + EXPIRY + timedelta(minutes=1)
+    quiz.open(later)
+    assert len(quiz.detail()["runs"]) == 2
+    quiz.ask(later)
+    assert quiz.expected() == "frog"
 
 
 def test_the_service_serves_word_audio_by_token_only(tmp_path, data, monkeypatch):

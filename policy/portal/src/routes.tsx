@@ -6,7 +6,7 @@ import { Login, loginLoader } from "./pages/Login";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Usage, usageLoader } from "./pages/Usage";
-import { Week, weekAction, weekLoader } from "./pages/Week";
+import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 
 export const BASENAME = "/parent";
 
@@ -36,7 +36,8 @@ export const routes: RouteObject[] = [
             action: taskAction,
             shouldRevalidate: taskShouldRevalidate,
           },
-          { path: "tasks/:type/:name/week", element: <Week />, loader: weekLoader, action: weekAction },
+          { path: "tasks/:type/:name/words/:mode", element: <Week />, loader: weekLoader, action: weekAction },
+          { path: "tasks/:type/:name/week", loader: oldWeekLoader },
           { path: "new-task", element: <NewTask />, loader: newTaskLoader, action: newTaskAction },
           { path: "*", element: <NotFound /> },
         ],

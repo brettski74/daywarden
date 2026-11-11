@@ -1,0 +1,9 @@
+tasks:
+  spelling:
+    More Spelling:
+      groups: [younger, default]
+      body:
+        current_dir: spelling/more/current
+        revision_dir: spelling/more/revision
+        attic_dir: spelling/more/attic
+        revision_required: 6
