@@ -1,4 +1,4 @@
-import { CalendarPlus, PencilLine, Save } from "lucide-react";
+import { CalendarPlus, PencilLine, Save, TextCursorInput, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
@@ -6,6 +6,7 @@ import {
   useFetcher,
   useLoaderData,
   useLocation,
+  useNavigate,
   useRevalidator,
   useSearchParams,
   type ActionFunctionArgs,
@@ -35,7 +36,7 @@ import { PartsOfSpeechAdmin } from "./PartsOfSpeech";
 import { ArithmeticAdmin } from "./Arithmetic";
 import { SkipCountingAdmin } from "./SkipCounting";
 import { POOL_FILTERS, SpellingAdmin, listedPools, type Pool, type SpellingData } from "./Spelling";
-import { routeTask, taskPath } from "../taskRef";
+import { NEW_TASK, nameProblem, routeTask, taskPath, type TaskRef } from "../taskRef";
 
 export type TaskData = {
   name: string;
@@ -52,14 +53,21 @@ export type TaskData = {
 };
 
 export type Result = {
-  intent: "save" | "retire" | "record";
+  intent: "save" | "retire" | "record" | "lock" | "rename";
   ok: boolean;
   message?: string;
   warnings?: string[];
   error?: string;
   errors?: string[];
   confirm?: string;
+  /** A new task's page, once its name and type are locked in. */
+  page?: TaskData;
+  /** The task a create or a rename wrote, whose page opens next. */
+  task?: TaskRef;
 };
+
+/** What the new task page has before its name and type are locked in. */
+type Blank = { types: string[]; clients: string[]; fields: Record<string, string> };
 
 type Edits = {
   fields: Record<string, string>;
@@ -79,6 +87,9 @@ const GROUPS: { legend: string; keys: string[] }[] = [
   { legend: "Dates", keys: ["available_from", "due_date"] },
 ];
 const PLACEHOLDERS: Record<string, string> = { pass_cooldown: "1", available_from: "yyyy-mm-dd", due_date: "yyyy-mm-dd" };
+const NEW_TITLE = "New task";
+const CHOOSE_TYPE = "Choose the task's type.";
+const SAVE_FIRST = "Save the changes on this page first.";
 
 /** What another page, such as the new week's words, reports on the task page it opens. */
 export type Reported = { message: string; warnings: string[] };
@@ -96,16 +107,34 @@ export async function taskLoader({ request, params }: LoaderFunctionArgs): Promi
  */
 export function taskShouldRevalidate({ currentUrl, nextUrl, formMethod, actionResult, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
   if (!formMethod && currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search) return false;
-  if ((actionResult as Result | undefined)?.ok === false) return false;
+  const result = actionResult as Result | undefined;
+  if (result?.ok === false) return false;
+  // A renamed task's old address has no task. Its page opens at the new address instead.
+  if (result?.intent === "rename" && result.task) return false;
   return defaultShouldRevalidate;
 }
 
-/** Save the page, or retire one word. Sent from the page on show, so a refusal returns to it. */
+/** Save the page, retire one word, or rename the task. Sent from the page on show, so a refusal returns to it. */
 export async function taskAction({ request, params }: ActionFunctionArgs): Promise<Result> {
-  const { intent, ...body } = (await request.json()) as { intent: "save" | "retire" } & Record<string, unknown>;
-  const path = taskPath(routeTask(params)) + (intent === "retire" ? "/retire" : "");
+  const { intent, ...body } = (await request.json()) as { intent: Result["intent"] } & Record<string, unknown>;
+  const suffix = intent === "retire" ? "/retire" : intent === "rename" ? "/rename" : "";
+  return send(intent, taskPath(routeTask(params)) + suffix, request, body);
+}
+
+export async function newTaskLoader({ request }: LoaderFunctionArgs): Promise<Blank> {
+  return api<Blank>(NEW_TASK, { page: pageOf(request), signal: request.signal });
+}
+
+/** Lock in a new task's name and type, which writes nothing, or write the new task. */
+export async function newTaskAction({ request }: ActionFunctionArgs): Promise<Result> {
+  const { intent, ...body } = (await request.json()) as { intent: Result["intent"] } & Record<string, unknown>;
+  return send(intent, intent === "lock" ? `${NEW_TASK}/check` : NEW_TASK, request, body);
+}
+
+async function send(intent: Result["intent"], path: string, request: Request, body: unknown): Promise<Result> {
   try {
-    const done = await api<{ message: string; warnings: string[] }>(path, { page: pageOf(request), method: "POST", body });
+    const done = await api<Omit<Result, "intent" | "ok">>(path, { page: pageOf(request), method: "POST", body });
+    if (intent === "lock") return { intent, ok: true, page: done as unknown as TaskData };
     return { intent, ok: true, ...done };
   } catch (error) {
     if (error instanceof ApiError) return { intent, ok: false, ...(error.data as Partial<Result>), error: error.message };
@@ -116,6 +145,15 @@ export async function taskAction({ request, params }: ActionFunctionArgs): Promi
 export function Task() {
   const data = useLoaderData() as TaskData;
   return <TaskEditor key={`${data.type}/${data.name}`} data={data} />;
+}
+
+export function NewTask() {
+  const blank = useLoaderData() as Blank;
+  const data = useMemo<TaskData>(
+    () => ({ name: "", type: "", file: "", version: "", groups: [], clients: blank.clients, fields: blank.fields }),
+    [blank],
+  );
+  return <TaskEditor data={data} types={blank.types} />;
 }
 
 function changed(data: TaskData, edits: Edits): boolean {
@@ -131,8 +169,19 @@ function changed(data: TaskData, edits: Edits): boolean {
   return Object.entries(edits.moves).some(([key, pool]) => pools.has(key) && pools.get(key) !== pool);
 }
 
-function TaskEditor({ data }: { data: TaskData }) {
+/**
+ * A task's page. With ``types``, it is the new task page: Save first locks in
+ * the name and type, then the type's own section opens, and the next Save
+ * writes the task. A written task's page can be renamed.
+ */
+function TaskEditor({ data: given, types }: { data: TaskData; types?: string[] }) {
   const reported = useLocation().state as Reported | null;
+  const navigate = useNavigate();
+  const creating = types !== undefined;
+  const [locked, setLocked] = useState<TaskData | null>(null);
+  const data = locked ?? given;
+  const [draft, setDraft] = useState({ name: "", type: "" });
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [edits, setEdits] = useState<Edits>(NO_EDITS);
   const [result, setResult] = useState<Result | null>(reported?.message ? { intent: "record", ok: true, ...reported } : null);
   const [asking, setAsking] = useState<string | null>(null);
@@ -140,9 +189,23 @@ function TaskEditor({ data }: { data: TaskData }) {
   const fetcher = useFetcher<Result>();
   const revalidator = useRevalidator();
   const handled = useRef<Result | undefined>(undefined);
-  useTitle(data.name);
-  const dirty = changed(data, edits);
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname);
+  // Set when a create or a rename opens the task's page, which loses nothing.
+  const opening = useRef(false);
+  const nameBox = useRef<HTMLInputElement>(null);
+  useTitle(creating ? NEW_TITLE : data.name);
+  const naming = creating && locked === null;
+  const name = naming ? draft.name : (renaming ?? data.name);
+  const problem = naming || renaming !== null ? nameProblem(name) : null;
+  // The name's problem is shown as it stood when the box last lost focus, not while it is typed.
+  const [checked, setChecked] = useState<string | null>(null);
+  const shownProblem = (naming || renaming !== null) && checked !== null ? nameProblem(checked) : null;
+  const frozen = naming || renaming !== null;
+  const dirty = naming
+    ? draft.name !== "" || draft.type !== ""
+    : creating || (renaming !== null ? renaming !== data.name : changed(data, edits));
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) => dirty && !opening.current && currentLocation.pathname !== nextLocation.pathname,
+  );
   const pos = data.parts_of_speech;
   const shownBlocks = useMemo(() => (pos ? loaded(pos) : []), [pos]);
   const blocks = edits.blocks ?? shownBlocks;
@@ -150,15 +213,26 @@ function TaskEditor({ data }: { data: TaskData }) {
   const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
   const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
   const sums = data.arithmetic ? shownArithmetic(data.arithmetic, edits.settings, edits.lists) : null;
-  const held =
-    (pos !== undefined && blocked(blocks)) || (difference !== null && skipBlocked(difference, differenceTrouble)) || (sums !== null && sums.count > 0);
-  const fixFirst = pos ? FIX_FIRST : FIX_ON_PAGE;
+  const held = frozen
+    ? problem !== null || (naming && draft.type === "")
+    : (pos !== undefined && blocked(blocks)) || (difference !== null && skipBlocked(difference, differenceTrouble)) || (sums !== null && sums.count > 0);
+  const fixFirst = frozen ? (problem ?? CHOOSE_TYPE) : pos ? FIX_FIRST : FIX_ON_PAGE;
 
   const save = useCallback(
     (confirmed = false) => {
       if (fetcher.state !== "idle" || !dirty) return;
+      if (frozen) setChecked(name);
       if (held) {
         setResult({ intent: "save", ok: false, error: fixFirst });
+        return;
+      }
+      const post = { method: "post", encType: "application/json" } as const;
+      if (naming) {
+        fetcher.submit({ intent: "lock", ...draft }, post);
+        return;
+      }
+      if (renaming !== null) {
+        fetcher.submit({ intent: "rename", name: renaming, version: data.version }, post);
         return;
       }
       const lists: Record<string, ServiceRow[] | "default"> = {};
@@ -169,7 +243,7 @@ function TaskEditor({ data }: { data: TaskData }) {
       fetcher.submit(
         {
           intent: "save",
-          version: data.version,
+          ...(creating ? { type: data.type, name: data.name } : { version: data.version }),
           fields: { ...data.fields, ...edits.fields },
           groups,
           ...(data.spelling ? { settings: { ...data.spelling.settings, ...edits.settings }, moves: edits.moves } : {}),
@@ -178,10 +252,10 @@ function TaskEditor({ data }: { data: TaskData }) {
           ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
           confirmed,
         },
-        { method: "post", encType: "application/json" },
+        post,
       );
     },
-    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums],
+    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums, naming, draft, renaming, creating, frozen, name],
   );
 
   const changeBlocks = useCallback(
@@ -211,9 +285,36 @@ function TaskEditor({ data }: { data: TaskData }) {
       setAsking(done.confirm);
       return;
     }
+    if (done.intent === "lock" && done.ok && done.page) {
+      setLocked(done.page);
+      setResult(null);
+      return;
+    }
+    if (done.ok && done.task && (done.intent === "rename" || creating)) {
+      opening.current = true;
+      navigate(taskPath(done.task), { replace: true, state: { message: done.message ?? "", warnings: done.warnings ?? [] } satisfies Reported });
+      return;
+    }
     setResult(done);
     if (done.intent === "save" && done.ok) setEdits(NO_EDITS);
-  }, [fetcher.state, fetcher.data]);
+  }, [fetcher.state, fetcher.data, creating, navigate]);
+
+  const isRenaming = renaming !== null;
+  useEffect(() => {
+    if (!isRenaming) return;
+    nameBox.current?.focus();
+    nameBox.current?.select();
+  }, [isRenaming]);
+
+  const startRename = () => {
+    setResult(null);
+    setChecked(null);
+    setRenaming(data.name);
+  };
+  const cancelRename = () => {
+    setChecked(null);
+    setRenaming(null);
+  };
 
   const latestSave = useRef(save);
   latestSave.current = save;
@@ -257,14 +358,18 @@ function TaskEditor({ data }: { data: TaskData }) {
           <ol>
             <li>Tasks</li>
             <li>
-              <h1 className="bar-title">{data.name}</h1>
+              <h1 className="bar-title">{creating ? NEW_TITLE : data.name}</h1>
             </li>
           </ol>
         </nav>
         {data.spelling && (
           <label className="bar-field">
             Pool
-            <select value={pool} onChange={(event) => setSearchParams(event.target.value ? { pool: event.target.value } : {})}>
+            <select
+              value={pool}
+              disabled={frozen}
+              onChange={(event) => setSearchParams(event.target.value ? { pool: event.target.value } : {})}
+            >
               {POOL_FILTERS.map(([option, label]) => (
                 <option key={option} value={option}>
                   {label}
@@ -273,7 +378,7 @@ function TaskEditor({ data }: { data: TaskData }) {
             </select>
           </label>
         )}
-        {data.spelling && (
+        {data.spelling && !creating && (
           <Link className="button button-quiet" to={`${taskPath(data)}/week`}>
             <CalendarPlus aria-hidden="true" />
             New week's words
@@ -285,6 +390,18 @@ function TaskEditor({ data }: { data: TaskData }) {
               <PencilLine aria-hidden="true" />
               Unsaved changes
             </span>
+          )}
+          {!creating && (
+            <button
+              type="button"
+              className="button button-quiet"
+              onClick={renaming === null ? startRename : cancelRename}
+              disabled={fetcher.state !== "idle" || (renaming === null && dirty)}
+              title={renaming !== null ? "Put the old name back" : dirty ? SAVE_FIRST : "Rename this task"}
+            >
+              {renaming === null ? <TextCursorInput aria-hidden="true" /> : <X aria-hidden="true" />}
+              {renaming === null ? "Rename" : "Cancel rename"}
+            </button>
           )}
           <button
             type="button"
@@ -302,29 +419,58 @@ function TaskEditor({ data }: { data: TaskData }) {
       <div className="task-common">
         <fieldset>
           <legend>Task</legend>
-          <dl className="fields">
-            <div>
-              <dt>{label("name")}</dt>
-              <dd>{data.name}</dd>
-            </div>
-            <div>
-              <dt>{label("type")}</dt>
-              <dd>{data.type}</dd>
-            </div>
-          </dl>
-          <MultiSelect
-            label="Client Groups"
-            options={data.clients}
-            selected={groups}
-            onToggle={toggleGroup}
-            changed={groups.join("\n") !== data.groups.join("\n")}
-          />
+          <div className="settings">
+            <label className="setting">
+              <span title="name">{label("name")}</span>
+              <input
+                ref={nameBox}
+                type="text"
+                value={name}
+                readOnly={!frozen}
+                aria-invalid={shownProblem !== null || undefined}
+                data-changed={(renaming !== null && renaming !== data.name) || undefined}
+                onChange={(event) => (naming ? setDraft({ ...draft, name: event.target.value }) : setRenaming(event.target.value))}
+                onBlur={() => frozen && setChecked(name)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && renaming !== null) cancelRename();
+                }}
+              />
+            </label>
+            {shownProblem && <p className="note note-problem setting-problem">{shownProblem}</p>}
+            {creating ? (
+              <label className="setting">
+                <span title="type">{label("type")}</span>
+                <select value={data.type || draft.type} disabled={!naming} onChange={(event) => setDraft({ ...draft, type: event.target.value })}>
+                  <option value="">Choose…</option>
+                  {types.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <>
+                <span title="type">{label("type")}</span>
+                <span>{data.type}</span>
+              </>
+            )}
+          </div>
+          <fieldset className="lock-area" disabled={frozen}>
+            <MultiSelect
+              label="Client Groups"
+              options={data.clients}
+              selected={groups}
+              onToggle={toggleGroup}
+              changed={groups.join("\n") !== data.groups.join("\n")}
+            />
+          </fieldset>
         </fieldset>
         {GROUPS.map(({ legend, keys }) => {
           const shown = keys.filter((key) => key in data.fields);
           if (shown.length === 0) return null;
           return (
-            <fieldset key={legend}>
+            <fieldset key={legend} disabled={frozen}>
               <legend>{legend}</legend>
               <div className="settings">
                 {shown.map((key) => (
@@ -348,50 +494,54 @@ function TaskEditor({ data }: { data: TaskData }) {
 
       <hr className="task-divider" />
 
-      {data.spelling ? (
-        <SpellingAdmin
-          task={data}
-          data={data.spelling}
-          filter={pool}
-          settings={edits.settings}
-          moves={edits.moves}
-          onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
-          onMove={(key, to) => setEdits((current) => ({ ...current, moves: { ...current.moves, [key]: to } }))}
-          onRetire={retire}
-          onPlayFailed={(message) => setResult({ intent: "retire", ok: false, error: message })}
-          onRecorded={(message, written) => {
-            setResult({ intent: "record", ok: true, message, warnings: [] });
-            if (written) void revalidator.revalidate();
-          }}
-        />
-      ) : pos ? (
-        <PartsOfSpeechAdmin
-          data={pos}
-          blocks={blocks}
-          settings={edits.settings}
-          onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
-          onBlocks={changeBlocks}
-        />
-      ) : skip && difference ? (
-        <SkipCountingAdmin
-          data={skip}
-          settings={edits.settings}
-          shown={difference}
-          problems={differenceTrouble}
-          onSetting={setSetting}
-          onRows={(change) => changeList("difference", difference.rows, change)}
-          onDefault={() => setList("difference", "default")}
-        />
-      ) : data.arithmetic && sums ? (
-        <ArithmeticAdmin
-          data={data.arithmetic}
-          settings={edits.settings}
-          shown={sums}
-          onSetting={setSetting}
-          onRows={(field, change) => changeList(field, sums[field].rows, change)}
-        />
-      ) : (
-        <p>Task-specific administration for {data.type} tasks is not built yet.</p>
+      {!naming && (
+        <fieldset className="lock-area" disabled={frozen} inert={frozen}>
+          {data.spelling ? (
+            <SpellingAdmin
+              task={creating ? null : data}
+              data={data.spelling}
+              filter={pool}
+              settings={edits.settings}
+              moves={edits.moves}
+              onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
+              onMove={(key, to) => setEdits((current) => ({ ...current, moves: { ...current.moves, [key]: to } }))}
+              onRetire={retire}
+              onPlayFailed={(message) => setResult({ intent: "retire", ok: false, error: message })}
+              onRecorded={(message, written) => {
+                setResult({ intent: "record", ok: true, message, warnings: [] });
+                if (written) void revalidator.revalidate();
+              }}
+            />
+          ) : pos ? (
+            <PartsOfSpeechAdmin
+              data={pos}
+              blocks={blocks}
+              settings={edits.settings}
+              onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
+              onBlocks={changeBlocks}
+            />
+          ) : skip && difference ? (
+            <SkipCountingAdmin
+              data={skip}
+              settings={edits.settings}
+              shown={difference}
+              problems={differenceTrouble}
+              onSetting={setSetting}
+              onRows={(change) => changeList("difference", difference.rows, change)}
+              onDefault={() => setList("difference", "default")}
+            />
+          ) : data.arithmetic && sums ? (
+            <ArithmeticAdmin
+              data={data.arithmetic}
+              settings={edits.settings}
+              shown={sums}
+              onSetting={setSetting}
+              onRows={(field, change) => changeList(field, sums[field].rows, change)}
+            />
+          ) : (
+            <p>Task-specific administration for {data.type} tasks is not built yet.</p>
+          )}
+        </fieldset>
       )}
 
       <StatusBar>

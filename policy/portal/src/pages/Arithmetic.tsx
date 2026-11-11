@@ -29,6 +29,7 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
               <span title="operation">{label("operation")}</span>
               <select
                 value={value("operation")}
+                aria-invalid={shown.settingProblems.operation !== undefined || undefined}
                 data-changed={value("operation") !== written("operation") || undefined}
                 onChange={(event) => onSetting("operation", event.target.value)}
               >
@@ -39,6 +40,7 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
                 ))}
               </select>
             </label>
+            {shown.settingProblems.operation && <p className="note note-problem setting-problem">{shown.settingProblems.operation}</p>}
             {SETTINGS.map((key) => (
               <Setting key={key} name={key} value={value(key)} written={written(key)} problem={shown.settingProblems[key]} onSetting={onSetting} />
             ))}

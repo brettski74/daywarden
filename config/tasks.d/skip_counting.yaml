@@ -1,5 +1,5 @@
 tasks:
   skip_counting:
-    skip_counting:
+    Skip Counting:
       group: younger
       pass_cooldown: 1

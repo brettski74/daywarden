@@ -28,6 +28,7 @@ describe("Task Administration in the sidebar", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     const links = within(nav.querySelector("#task-list") as HTMLElement).getAllByRole("link");
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Create New Task", "/parent/new-task"],
       ["check", "/parent/tasks/parent_check/check"],
       ["spelling", "/parent/tasks/spelling/spelling"],
       ["sums", "/parent/tasks/worksheet/sums"],
@@ -51,6 +52,7 @@ describe("Task Administration in the sidebar", () => {
     renderPortal("/parent/attempts");
     const links = within((await screen.findByRole("navigation", { name: "Portal pages" })).querySelector("#task-list") as HTMLElement);
     expect((await links.findAllByRole("link")).map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Create New Task", "/parent/new-task"],
       ["week-1 (arithmetic)", "/parent/tasks/arithmetic/week-1"],
       ["week-1 (spelling)", "/parent/tasks/spelling/week-1"],
       ["sums", "/parent/tasks/worksheet/sums"],

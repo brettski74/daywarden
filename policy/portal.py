@@ -9,8 +9,9 @@ Household data comes only from JSON under /parent/api/, and the spelling
 recordings the task pages play. Those endpoints need a parent session from
 S007.1. With no session they answer 401, and with no parent account 403,
 with no data. They never redirect: only the portal's own code reacts to
-those answers. Sign-in, sign-out, the parent check, a task save, Retire,
-cutting or keeping a recording, and each step of a new week's spelling words
+those answers. Sign-in, sign-out, the parent check, a task save, creating
+or renaming a task, Retire, cutting or keeping a recording, and each step of
+a new week's spelling words
 are JSON POSTs, and a POST whose body is not
 application/json is refused, so a form on another site cannot use the
 parent's cookie to act. The one exception is the upload of a recording,
@@ -42,7 +43,9 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
+from policy import spelling
 from policy.task_admin import TaskAdmin, missing
+from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
 from policy.week import Weeks
@@ -122,6 +125,7 @@ def install_portal(
     root = portal_dir.resolve()
     recordings = tasks.recordings if tasks is not None else Recordings()
     weeks = Weeks(tasks) if tasks is not None else None
+    changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
 
     def guard(request: Request) -> tuple[str | None, Response | None]:
         """Return the signed-in username, or the refusal to send instead."""
@@ -307,6 +311,55 @@ def install_portal(
         if refused is not None:
             return {}, "", refused
         return body, username or "", None
+
+    @app.post("/parent/api/tasks/{kind}/{name}/rename")
+    async def task_rename(request: Request, kind: str, name: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if changes is None:
+            return _json(404, {"error": missing(TaskKey(kind, name))})
+        answer = changes.rename(TaskKey(kind, name), body, username)
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/new-task")
+    async def new_task_page(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if changes is None:
+            return _json(404, {"error": "Tasks cannot be created here."})
+        return _json(200, changes.blank())
+
+    @app.post("/parent/api/new-task/check")
+    async def new_task_check(request: Request) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if changes is None:
+            return _json(404, {"error": "Tasks cannot be created here."})
+        answer = changes.lock(body)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/new-task")
+    async def new_task_create(request: Request) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if changes is None:
+            return _json(404, {"error": "Tasks cannot be created here."})
+        answer = changes.create(body, username)
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/new-task/audio/{pool}/{file_name}")
+    async def new_task_audio(request: Request, pool: str, file_name: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        found = None if tasks is None else tasks.pool_file(spelling.parse_settings({}), pool, file_name)
+        if found is None:
+            return _json(404, {"error": "There is no such recording."})
+        return FileResponse(found, media_type=media_type(found.name), headers={"cache-control": "private, no-store"})
 
     @app.get("/parent/api/tasks/{kind}/{name}/week")
     async def week_page(request: Request, kind: str, name: str) -> Response:

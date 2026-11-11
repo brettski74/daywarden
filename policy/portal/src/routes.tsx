@@ -4,7 +4,7 @@ import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Login, loginLoader } from "./pages/Login";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
-import { Task, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
+import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Usage, usageLoader } from "./pages/Usage";
 import { Week, weekAction, weekLoader } from "./pages/Week";
 
@@ -37,6 +37,7 @@ export const routes: RouteObject[] = [
             shouldRevalidate: taskShouldRevalidate,
           },
           { path: "tasks/:type/:name/week", element: <Week />, loader: weekLoader, action: weekAction },
+          { path: "new-task", element: <NewTask />, loader: newTaskLoader, action: newTaskAction },
           { path: "*", element: <NotFound /> },
         ],
       },

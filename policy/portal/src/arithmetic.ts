@@ -52,7 +52,9 @@ export function shownArithmetic(data: ArithmeticData, settings: Record<string, s
   const operation = value("operation").trim();
   const first = table(data.first, "f", lists.first);
   const operands = table(data.operands, "o", lists.operands);
-  const settingProblems = Object.fromEntries(SETTINGS.filter((key) => value(key).trim() === "").map((key) => [key, `${label(key)} is required.`]));
+  const settingProblems = Object.fromEntries(
+    ["operation", ...SETTINGS].filter((key) => value(key).trim() === "").map((key) => [key, `${label(key)} is required.`]),
+  );
   // Division draws the number it divides by from First, or from Operands when First is empty.
   const divides = operation === "division";
   const firstDrawn = hasNumbers(first.rows);

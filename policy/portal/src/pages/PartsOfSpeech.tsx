@@ -161,6 +161,7 @@ export function PartsOfSpeechAdmin({ data, blocks, settings, onSetting, onBlocks
     function key(event: globalThis.KeyboardEvent) {
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (event.code !== "KeyN" && event.key.toLowerCase() !== "n") return;
+      if (root.current?.closest("[inert]")) return;
       event.preventDefault();
       latestAdd.current();
     }

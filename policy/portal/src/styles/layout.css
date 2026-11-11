@@ -122,6 +122,19 @@ input {
   color: var(--input-text);
 }
 
+select:disabled,
+input:disabled,
+input[readonly],
+.multi-select-button:disabled {
+  background: var(--input-disabled-bg);
+}
+
+select:disabled,
+input:disabled,
+.multi-select-button:disabled {
+  cursor: not-allowed;
+}
+
 /* The portal frame */
 
 .portal {
@@ -634,6 +647,15 @@ input {
   padding: 0.5rem 0.9rem 0.9rem;
   border: 0.06rem solid var(--border);
   border-radius: 0.4rem;
+}
+
+/* Holds fields that are disabled together, such as while a task is renamed. It draws nothing itself. */
+fieldset.lock-area,
+.task-common fieldset.lock-area {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .task-common legend {
@@ -1478,6 +1500,7 @@ kbd {
   font-weight: 600;
 }
 
-input[aria-invalid] {
+input[aria-invalid],
+select[aria-invalid] {
   border-color: var(--failure-text);
 }

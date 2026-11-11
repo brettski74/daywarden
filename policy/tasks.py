@@ -542,6 +542,21 @@ class AttemptStore:
                 removed += self.connection.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,)).rowcount
         return removed
 
+    def names(self, task_type: str) -> set[str]:
+        """Return every task name stored with this type, in any client group."""
+        rows = self.connection.execute("SELECT DISTINCT task_name FROM attempts WHERE task_type = ?", (task_type,))
+        return {row[0] for row in rows}
+
+    def rename(self, old: TaskKey, new: TaskKey) -> int:
+        """Move every attempt of one task to another name of the same type, in one step. Return how many moved."""
+        old, new = _key(old), _key(new)
+        if old.type != new.type:
+            raise ValueError("a task keeps its type when it is renamed")
+        with self.connection:
+            return self.connection.execute(
+                f"UPDATE attempts SET task_name = ? WHERE {_TASK_IS}", (new.name, *old)
+            ).rowcount
+
     def in_progress(self, client_group: str, task: TaskKey) -> Attempt | None:
         """Return the open attempt for this group and task, if there is one."""
         _label(client_group, "a client group")

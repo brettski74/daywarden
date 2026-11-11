@@ -5,7 +5,7 @@ import { Dialog } from "../components/Dialog";
 import { RecordDialog, type Kept } from "../components/RecordDialog";
 import { label } from "../labels";
 import type { Item, Kind } from "../review";
-import { taskPath, type TaskRef } from "../taskRef";
+import { NEW_TASK, taskPath, type TaskRef } from "../taskRef";
 
 export type Pool = "current" | "revision" | "attic";
 export type SpellingWord = { key: string; word: string; pool: Pool; clip: string; sentence: string | null };
@@ -48,16 +48,20 @@ export const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = 
   { kinds: ["sentence"], label: "Re-record sentence", icon: MessageSquareText },
 ];
 
-export function audioAddress(task: TaskRef, pool: Pool, file: string): string {
-  return `${BASE}/api${taskPath(task)}/audio/${pool}/${encodeURIComponent(file)}`;
+/** A recording in one of a task's pools. A task not written yet plays from the default pools. */
+export function audioAddress(task: TaskRef | null, pool: Pool, file: string): string {
+  return `${BASE}/api${task ? taskPath(task) : NEW_TASK}/audio/${pool}/${encodeURIComponent(file)}`;
 }
+
+const NOT_WRITTEN = "Save the new task first.";
 
 function recordingItems(key: string, kinds: Kind[]): Item[] {
   return kinds.map((kind) => ({ key, kind, line: kind === "word" ? key : `Sentence for ${key}` }));
 }
 
 type Props = {
-  task: TaskRef;
+  /** The task, or null for a new task not written yet, which cannot retire or record. */
+  task: TaskRef | null;
   data: SpellingData;
   filter: string;
   settings: Record<string, string>;
@@ -82,6 +86,7 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
   }
 
   async function keep(take: string, kept: Kept[]): Promise<string> {
+    if (task === null) throw new Error(NOT_WRITTEN);
     const clips = Object.fromEntries(kept.map(({ item, clip }) => [item.kind, clip]));
     const done = await api<{ message: string }>(`${taskPath(task)}/recordings`, {
       page: null,
@@ -191,14 +196,21 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
                           type="button"
                           className="icon-button icon-button-quiet"
                           aria-label={`${what} for ${word.key}`}
-                          title={`${what} for ${word.key}`}
+                          title={task ? `${what} for ${word.key}` : NOT_WRITTEN}
+                          disabled={task === null}
                           onClick={() => setRecording({ key: word.key, kinds })}
                         >
                           <Icon aria-hidden="true" />
                         </button>
                       ))}
                       {word.pool !== "attic" && (
-                        <button type="button" className="button button-quiet" onClick={() => setRetiring(word)}>
+                        <button
+                          type="button"
+                          className="button button-quiet"
+                          disabled={task === null}
+                          title={task ? undefined : NOT_WRITTEN}
+                          onClick={() => setRetiring(word)}
+                        >
                           <Archive aria-hidden="true" />
                           Retire
                         </button>

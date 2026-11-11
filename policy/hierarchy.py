@@ -431,7 +431,9 @@ def load(
     does not mount that directory loads this way.
 
     ``overrides`` maps a file's canonical path to text read in its place, so
-    an edit can be checked before it is written.
+    an edit can be checked before it is written. A file not written yet, in
+    an included directory, is read as though it were there, even when the
+    directory is not there either.
     """
     root = require_yaml(path)
     if not root.is_file():
@@ -498,11 +500,14 @@ def _load_included(raw: str, where: str, base: Path, seen: set[Path], build: _Bu
         return
     if canonical in seen:
         return
-    if canonical.is_dir():
+    unwritten = [
+        path for path in build.overrides if path.parent == canonical and path.suffix in _YAML_SUFFIXES and not path.exists()
+    ]
+    if canonical.is_dir() or unwritten:
         seen.add(canonical)
-        children = [
+        children = unwritten + [
             child
-            for child in canonical.iterdir()
+            for child in (canonical.iterdir() if canonical.is_dir() else ())
             if child.is_file() and child.suffix in _YAML_SUFFIXES
         ]
         for child in sorted(children, key=lambda item: item.name):

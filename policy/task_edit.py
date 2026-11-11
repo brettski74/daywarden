@@ -148,6 +148,55 @@ def rewrite_task(text: str, source: Path, key: TaskKey, changes: Mapping[str, ob
     return _apply(text, _edit_mapping(text, node, changes, step))
 
 
+def rename_task(text: str, source: Path, key: TaskKey, name: str) -> str:
+    """Return ``text`` with only the task's own key changed to ``name``."""
+    name_node, _node = _task_node(text, source, key)
+    return text[: name_node.start_mark.index] + _key(name) + text[name_node.end_mark.index :]
+
+
+def new_task_text(key: TaskKey, changes: Mapping[str, object]) -> str:
+    """Return a file that holds only ``tasks:`` and one task, written from ``changes`` as ``rewrite_task`` takes them."""
+    if not _sets_anything(changes):
+        return f"tasks:\n  {_key(key.type)}:\n    {_key(key.name)}: {{}}\n"
+    return "tasks:\n" + _block_entry(_key(key.type), {_key(key.name): changes}, "  ", 2)
+
+
+def included(text: str, source: Path) -> list[str]:
+    """Return each path a file's ``include`` list names, as written."""
+    root = _root(text, source)
+    found = None if root is None else dict((key, value) for key, _key_node, value in _entries(root)).get("include")
+    if not isinstance(found, yaml.SequenceNode):
+        return []
+    return [item.value for item in found.value if isinstance(item, yaml.ScalarNode)]
+
+
+def add_include(text: str, source: Path, entry: str) -> str:
+    """Return ``text`` with ``entry`` added to the end of its ``include`` list, or with an ``include`` list holding it."""
+    root = _root(text, source)
+    if root is None:
+        return text + ("" if not text or text.endswith("\n") else "\n") + f"include:\n  - {_value(entry)}\n"
+    found = dict((key, value) for key, _key_node, value in _entries(root)).get("include")
+    items: tuple[ListItem, ...] = ()
+    if isinstance(found, yaml.SequenceNode):
+        try:
+            items = tuple(ListItem(index, node_data(item, "include"), False) for index, item in enumerate(found.value))
+        except ConfigError as error:
+            raise EditError(str(error)) from error
+    elif found is not None:
+        raise EditError(f"{source}: include must be a list")
+    return _apply(text, _edit_mapping(text, root, {"include": ListEdit((*items, ListItem(None, entry, True)))}, 2))
+
+
+def _root(text: str, source: Path) -> yaml.MappingNode | None:
+    try:
+        root = compose(text, source)
+    except ConfigError as error:
+        raise EditError(str(error)) from error
+    if root is not None and not isinstance(root, yaml.MappingNode):
+        raise EditError(f"{source}: the file must be a mapping")
+    return root
+
+
 def _task_node(text: str, source: Path, key: TaskKey) -> tuple[yaml.Node, yaml.Node]:
     """Return the node of the task's name and the node of the task itself."""
     try:
