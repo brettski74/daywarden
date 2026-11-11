@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 # make dist
 dist/
+*.har
+*@*
 # The parent portal's npm packages and its build, made by make test and the image build.
 node_modules/
 policy/portal/dist/
