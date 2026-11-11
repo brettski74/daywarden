@@ -6,6 +6,7 @@ import { ContextBar, StatusBar, useTitle } from "../slots";
 type AttemptReport = {
   id: number;
   task: string;
+  type: string;
   client: string;
   times: string;
   summary: { label: string; value: string }[];

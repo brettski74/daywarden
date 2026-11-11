@@ -44,12 +44,13 @@ from policy import control
 from policy.portal import PORTAL_DIR, client_names, install_portal
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE
+from policy.selection import task_media_path, task_page_path
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.recordings import Recordings
 from policy.store import PolicyStore
 from policy.task_admin import Reloads, TaskAdmin
 from policy.task_page import respond_task, task_media
-from policy.tasks import AttemptStore
+from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
 
 LOOPBACK = frozenset({"127.0.0.1", "::1"})
@@ -179,21 +180,18 @@ def create_app() -> FastAPI:
         # The revision page does not use the parent session.
         return Response(QUIZ_PAGE, media_type="text/html; charset=utf-8")
 
-    @app.get("/tasks/work/{task_name}/audio/{file_name}")
-    async def task_work_audio(request: Request, task_name: str, file_name: str) -> Response:
-        return _task_audio(request, "/tasks/work/" + quote(task_name, safe="") + "/audio/" + file_name)
+    @app.get("/tasks/{task_type}/{task_name}/audio/{file_name}")
+    async def task_audio(request: Request, task_type: str, task_name: str, file_name: str) -> Response:
+        return _task_audio(request, task_media_path(TaskKey(task_type, task_name)) + file_name)
 
-    @app.get("/tasks/{task_name}/audio/{file_name}")
-    async def task_audio(request: Request, task_name: str, file_name: str) -> Response:
-        return _task_audio(request, "/tasks/" + quote(task_name, safe="") + "/audio/" + file_name)
+    @app.api_route("/tasks/{task_type}/{task_name}", methods=["GET", "POST"])
+    async def task_page(request: Request, task_type: str, task_name: str) -> Response:
+        return await _task_page(request, task_page_path(TaskKey(task_type, task_name)))
 
-    @app.api_route("/tasks/work/{task_name}", methods=["GET", "POST"])
-    async def task_work_page(request: Request, task_name: str) -> Response:
-        return await _task_page(request, "/tasks/work/" + quote(task_name, safe=""))
-
-    @app.api_route("/tasks/{task_name}", methods=["GET", "POST"])
-    async def task_page(request: Request, task_name: str) -> Response:
-        return await _task_page(request, "/tasks/" + quote(task_name, safe=""))
+    # The picker, the selector, and any other one-part address, which goes to the picker.
+    @app.api_route("/tasks/{page}", methods=["GET", "POST"])
+    async def task_site_page(request: Request, page: str) -> Response:
+        return await _task_page(request, "/tasks/" + quote(page, safe=""))
 
     @app.get(SOUND_PATH + "{outcome}/{name}")
     def sound_file(outcome: str, name: str) -> Response:

@@ -1,7 +1,10 @@
 """Task catalogue, cooldowns, and attempt history.
 
 A task is named configuration: a type, an opaque body, the client groups it
-is assigned to, and the day rules from S003.1. Attempts are rows. Eligibility,
+is assigned to, and the day rules from S003.1. A task is identified by its
+type and its name together, its ``TaskKey``. Each attempt is stored with
+both, and a task's history is the attempts with the same client group, type,
+and name. Attempts are rows. Eligibility,
 skip days, and the pass cap are read from those rows each time, so a restart
 does not forget them and a later edit of ``max_skips`` still sees the days
 already stored.
@@ -37,6 +40,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 PARENT_CHECK = "parent_check"
 IN_PROGRESS = "in_progress"
@@ -56,6 +60,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS attempts (
     id INTEGER PRIMARY KEY,
     client_group TEXT NOT NULL,
+    task_type TEXT NOT NULL,
     task_name TEXT NOT NULL,
     started_at TEXT NOT NULL,
     finished_at TEXT,
@@ -73,32 +78,30 @@ CREATE TABLE IF NOT EXISTS attempts (
     )
 );
 CREATE INDEX IF NOT EXISTS attempts_by_group
-    ON attempts (client_group, task_name, id);
+    ON attempts (client_group, task_type, task_name, id);
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_one_in_progress
-    ON attempts (client_group, task_name)
+    ON attempts (client_group, task_type, task_name)
     WHERE outcome = 'in_progress';
 """
 
-# Attempts stored before task sets existed keep their rows and become required.
-_UPGRADE = (
-    SCHEMA.replace("CREATE TABLE IF NOT EXISTS attempts (", "CREATE TABLE attempts_upgraded (", 1).split(
-        "CREATE INDEX", 1
-    )[0],
-    "INSERT INTO attempts_upgraded "
-    "(id, client_group, task_name, started_at, finished_at, outcome, detail, task_set, reopened) "
-    "SELECT id, client_group, task_name, started_at, finished_at, outcome, detail, 'required', '[]' "
-    "FROM attempts",
-    "DROP TABLE attempts",
-    "ALTER TABLE attempts_upgraded RENAME TO attempts",
-)
-
 _COLUMNS = (
-    "id, client_group, task_name, started_at, finished_at, outcome, detail, task_set, reopened"
+    "id, client_group, task_type, task_name, started_at, finished_at, outcome, detail, task_set, reopened"
 )
 # The same row without the quiz detail, for reading a whole history quickly.
 _HISTORY = (
-    "id, client_group, task_name, started_at, finished_at, outcome, '{}', task_set, reopened"
+    "id, client_group, task_type, task_name, started_at, finished_at, outcome, '{}', task_set, reopened"
 )
+_TASK_IS = "task_type = ? AND task_name = ?"
+
+
+class TaskKey(NamedTuple):
+    """What identifies a task: its type and its name. Written ``type/name``."""
+
+    type: str
+    name: str
+
+    def __str__(self) -> str:
+        return f"{self.type}/{self.name}"
 
 
 def household_day(moment: datetime) -> date:
@@ -114,31 +117,12 @@ def household_day(moment: datetime) -> date:
 
 
 def ensure_attempts(connection: sqlite3.Connection) -> None:
-    """Create the attempt table on this connection, or upgrade one stored before task sets."""
-    if _needs_upgrade(connection):
-        _upgrade(connection)
+    """Create the attempt table on this connection.
+
+    A database made before attempts stored their task's type is not
+    supported. The household starts again with a fresh one.
+    """
     connection.executescript(SCHEMA)
-
-
-def _needs_upgrade(connection: sqlite3.Connection) -> bool:
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(attempts)")}
-    return bool(columns) and "task_set" not in columns
-
-
-def _upgrade(connection: sqlite3.Connection) -> None:
-    # The decisions and observations services share the file, so the check is
-    # repeated once the write lock is held.
-    if connection.in_transaction:
-        connection.commit()
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        if _needs_upgrade(connection):
-            for statement in _UPGRADE:
-                connection.execute(statement)
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
 
 
 def pass_count(
@@ -200,6 +184,10 @@ class Task:
         if not isinstance(loaded, dict):
             raise ValueError("a task body is a JSON object")
 
+    @property
+    def key(self) -> TaskKey:
+        return TaskKey(self.type, self.name)
+
     def document(self) -> dict:
         """Return a copy of the type-specific body."""
         loaded = json.loads(self.body)
@@ -217,11 +205,12 @@ class Attempt:
     An in-progress or unfinished attempt has no finish time. ``task_set`` is
     the set the task was in when the attempt started. ``reopened`` holds a
     ``gave_up`` and a ``came_back`` time for each time a given-up attempt
-    was carried on.
+    was carried on. ``task`` is the task's name and ``task_type`` its type.
     """
 
     id: int
     client_group: str
+    task_type: str
     task: str
     started_at: datetime
     finished_at: datetime | None
@@ -229,6 +218,10 @@ class Attempt:
     detail: Mapping
     task_set: str = REQUIRED
     reopened: tuple[Mapping, ...] = ()
+
+    @property
+    def key(self) -> TaskKey:
+        return TaskKey(self.task_type, self.task)
 
     @property
     def counted(self) -> bool:
@@ -260,11 +253,11 @@ class TaskSets:
     def available(self) -> tuple[Task, ...]:
         return self.required or self.potential
 
-    def set_of(self, name: str) -> str:
+    def set_of(self, key: TaskKey) -> str:
         """Return the set an attempt of this task would start in now."""
-        if any(task.name == name for task in self.required):
+        if any(task.key == key for task in self.required):
             return REQUIRED
-        if any(task.name == name for task in self.potential):
+        if any(task.key == key for task in self.potential):
             return POTENTIAL
         return PRACTICE
 
@@ -273,13 +266,13 @@ class TaskSets:
 class Score:
     """Today's score, and what the parent page shows about it.
 
-    ``waiting`` names the potential passes that score nothing until no
+    ``waiting`` is the tasks whose potential passes score nothing until no
     task is required.
     """
 
     points: int
     sets: TaskSets
-    waiting: tuple[str, ...] = field(default=())
+    waiting: tuple[TaskKey, ...] = field(default=())
 
 
 def task_sets(
@@ -323,19 +316,19 @@ def day_score(
         and household_day(attempt.finished_at) == day
     ]
     points = sum(1 for attempt in passes if attempt.task_set == PARENT_CHECK)
-    scored: set[str] = set()
+    scored: set[TaskKey] = set()
     for attempt in passes:
-        if attempt.task_set == REQUIRED and attempt.task not in scored:
-            scored.add(attempt.task)
+        if attempt.task_set == REQUIRED and attempt.key not in scored:
+            scored.add(attempt.key)
             points += 1
-    waiting: list[str] = []
+    waiting: list[TaskKey] = []
     for attempt in passes:
-        if attempt.task_set != POTENTIAL or attempt.task in scored or attempt.task in waiting:
+        if attempt.task_set != POTENTIAL or attempt.key in scored or attempt.key in waiting:
             continue
         if sets.required:
-            waiting.append(attempt.task)
+            waiting.append(attempt.key)
         else:
-            scored.add(attempt.task)
+            scored.add(attempt.key)
             points += 1
     return Score(points, sets, tuple(waiting))
 
@@ -360,9 +353,9 @@ def is_eligible(
     if task.type != PARENT_CHECK:
         if task.available_from is not None and today < task.available_from:
             return False
-        if task.max_passes is not None and stored_passes(task.name, client_group, attempts) >= task.max_passes:
+        if task.max_passes is not None and stored_passes(task.key, client_group, attempts) >= task.max_passes:
             return False
-        last = _last_pass(task.name, client_group, attempts)
+        last = _last_pass(task.key, client_group, attempts)
         if last is not None and last.finished_at is not None and household_day(last.finished_at) == today:
             return False
     return _cooldown_elapsed(task, client_group, today, attempts)
@@ -388,19 +381,20 @@ def is_required(
     if not is_eligible(task, client_group, today, attempts):
         return False
     if task.due_date is not None and today >= task.due_date:
-        if stored_passes(task.name, client_group, attempts) == 0:
+        if stored_passes(task.key, client_group, attempts) == 0:
             return True
-    if task.max_skips is not None and len(skip_days(task.name, client_group, attempts, before=today)) >= task.max_skips:
+    if task.max_skips is not None and len(skip_days(task.key, client_group, attempts, before=today)) >= task.max_skips:
         return True
     return False
 
 
-def stored_passes(task_name: str, client_group: str, attempts: Sequence[Attempt]) -> int:
+def stored_passes(task: TaskKey, client_group: str, attempts: Sequence[Attempt]) -> int:
     """Return how many counted pass rows this client group has stored for this task."""
+    task = _key(task)
     return sum(
         1
         for attempt in attempts
-        if attempt.task == task_name
+        if attempt.key == task
         and attempt.client_group == client_group
         and attempt.outcome == PASS
         and attempt.counted
@@ -408,7 +402,7 @@ def stored_passes(task_name: str, client_group: str, attempts: Sequence[Attempt]
 
 
 def skip_days(
-    task_name: str,
+    task: TaskKey,
     client_group: str,
     attempts: Sequence[Attempt],
     *,
@@ -422,13 +416,14 @@ def skip_days(
     has ended. ``before`` leaves out that day and every later one, which is
     how "skip days before today" is read. Practice attempts are not skips.
     """
+    task = _key(task)
     if before is not None:
         before = _as_date(before)
-    last_pass = _last_pass(task_name, client_group, attempts)
+    last_pass = _last_pass(task, client_group, attempts)
     ended = None if last_pass is None else last_pass.finished_at
     found: set[date] = set()
     for attempt in attempts:
-        if attempt.task != task_name or attempt.client_group != client_group or not attempt.counted:
+        if attempt.key != task or attempt.client_group != client_group or not attempt.counted:
             continue
         if attempt.outcome in SKIPPED and attempt.finished_at is not None:
             moment = attempt.finished_at
@@ -508,10 +503,10 @@ class AttemptStore:
         ).fetchall()
         return tuple(_attempt(row) for row in rows)
 
-    def attempts(self, client_group: str, task: str | None = None) -> tuple[Attempt, ...]:
+    def attempts(self, client_group: str, task: TaskKey | None = None) -> tuple[Attempt, ...]:
         """Return this group's attempts, oldest id first.
 
-        Pass a task name to keep the other tasks out. Another client group's
+        Pass a task's key to keep the other tasks out. Another client group's
         rows are never included.
         """
         _label(client_group, "a client group")
@@ -521,10 +516,9 @@ class AttemptStore:
                 (client_group,),
             ).fetchall()
         else:
-            _label(task, "a task name")
             rows = self.connection.execute(
-                f"SELECT {_COLUMNS} FROM attempts WHERE client_group = ? AND task_name = ? ORDER BY id",
-                (client_group, task),
+                f"SELECT {_COLUMNS} FROM attempts WHERE client_group = ? AND {_TASK_IS} ORDER BY id",
+                (client_group, *_key(task)),
             ).fetchall()
         return tuple(_attempt(row) for row in rows)
 
@@ -548,14 +542,13 @@ class AttemptStore:
                 removed += self.connection.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,)).rowcount
         return removed
 
-    def in_progress(self, client_group: str, task: str) -> Attempt | None:
+    def in_progress(self, client_group: str, task: TaskKey) -> Attempt | None:
         """Return the open attempt for this group and task, if there is one."""
         _label(client_group, "a client group")
-        _label(task, "a task name")
         row = self.connection.execute(
             f"SELECT {_COLUMNS} FROM attempts "
-            "WHERE client_group = ? AND task_name = ? AND outcome = ?",
-            (client_group, task, IN_PROGRESS),
+            f"WHERE client_group = ? AND {_TASK_IS} AND outcome = ?",
+            (client_group, *_key(task), IN_PROGRESS),
         ).fetchone()
         return None if row is None else _attempt(row)
 
@@ -574,7 +567,7 @@ class AttemptStore:
     def begin(
         self,
         client_group: str,
-        task: str,
+        task: TaskKey,
         started_at: datetime,
         *,
         detail: Mapping | None = None,
@@ -583,10 +576,11 @@ class AttemptStore:
         """Start an attempt, or return the one already in progress.
 
         Coming back does not open a second parallel attempt for the same
-        client group and task. Another group, and another task, are separate.
+        client group and task. Another group, and another task, including
+        one with the same name and another type, are separate.
         """
         _label(client_group, "a client group")
-        _label(task, "a task name")
+        task = _key(task)
         _task_set(task_set)
         existing = self.in_progress(client_group, task)
         if existing is not None:
@@ -597,9 +591,9 @@ class AttemptStore:
             try:
                 cursor = self.connection.execute(
                     "INSERT INTO attempts "
-                    "(client_group, task_name, started_at, finished_at, outcome, detail, task_set) "
-                    "VALUES (?, ?, ?, NULL, ?, ?, ?)",
-                    (client_group, task, stamp, IN_PROGRESS, payload, task_set),
+                    "(client_group, task_type, task_name, started_at, finished_at, outcome, detail, task_set) "
+                    "VALUES (?, ?, ?, ?, NULL, ?, ?, ?)",
+                    (client_group, *task, stamp, IN_PROGRESS, payload, task_set),
                 )
             except sqlite3.IntegrityError:
                 raced = self.in_progress(client_group, task)
@@ -611,7 +605,7 @@ class AttemptStore:
     def open(
         self,
         client_group: str,
-        task: str,
+        task: TaskKey,
         now: datetime,
         *,
         task_set: str,
@@ -645,11 +639,11 @@ class AttemptStore:
                     return reopened
         return self.begin(client_group, task, now, task_set=task_set)
 
-    def _newest(self, client_group: str, task: str) -> Attempt | None:
+    def _newest(self, client_group: str, task: TaskKey) -> Attempt | None:
         row = self.connection.execute(
-            f"SELECT {_COLUMNS} FROM attempts WHERE client_group = ? AND task_name = ? "
+            f"SELECT {_COLUMNS} FROM attempts WHERE client_group = ? AND {_TASK_IS} "
             "ORDER BY started_at DESC, id DESC LIMIT 1",
-            (client_group, task),
+            (client_group, *_key(task)),
         ).fetchone()
         return None if row is None else _attempt(row)
 
@@ -664,9 +658,9 @@ class AttemptStore:
                     (IN_PROGRESS, json.dumps(events, separators=(",", ":")), attempt.id, ABANDONED),
                 )
         except sqlite3.IntegrityError:
-            return self.in_progress(attempt.client_group, attempt.task)
+            return self.in_progress(attempt.client_group, attempt.key)
         if cursor.rowcount != 1:
-            return self.in_progress(attempt.client_group, attempt.task)
+            return self.in_progress(attempt.client_group, attempt.key)
         return self._by_id(attempt.id)
 
     def _close_unfinished(self, attempt_id: int) -> None:
@@ -724,7 +718,7 @@ class AttemptStore:
     def record(
         self,
         client_group: str,
-        task: str,
+        task: TaskKey,
         outcome: str,
         finished_at: datetime,
         *,
@@ -742,7 +736,7 @@ class AttemptStore:
         if outcome not in FINISHED:
             raise ValueError("a finished attempt is a pass, a failure, or abandoned")
         _label(client_group, "a client group")
-        _label(task, "a task name")
+        task = _key(task)
         _task_set(task_set)
         finished = _stamp(finished_at)
         started = finished if started_at is None else _stamp(started_at)
@@ -750,17 +744,17 @@ class AttemptStore:
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO attempts "
-                "(client_group, task_name, started_at, finished_at, outcome, detail, task_set) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (client_group, task, started, finished, outcome, payload, task_set),
+                "(client_group, task_type, task_name, started_at, finished_at, outcome, detail, task_set) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (client_group, *task, started, finished, outcome, payload, task_set),
             )
         return self._by_id(int(cursor.lastrowid))
 
     def is_eligible(self, task: Task, client_group: str, today: date) -> bool:
-        return is_eligible(task, client_group, today, self.attempts(client_group, task.name))
+        return is_eligible(task, client_group, today, self.attempts(client_group, task.key))
 
     def is_required(self, task: Task, client_group: str, today: date) -> bool:
-        return is_required(task, client_group, today, self.attempts(client_group, task.name))
+        return is_required(task, client_group, today, self.attempts(client_group, task.key))
 
     def task_sets(self, tasks: Sequence[Task], client_group: str, today: date) -> TaskSets:
         return task_sets(tasks, client_group, today, self.history(client_group))
@@ -788,7 +782,7 @@ def _cooldown_elapsed(
     today: date,
     attempts: Sequence[Attempt],
 ) -> bool:
-    last = _last_finished(task.name, client_group, attempts)
+    last = _last_finished(task.key, client_group, attempts)
     if last is None or last.finished_at is None or last.outcome == ABANDONED:
         return True
     if last.outcome == PASS:
@@ -800,11 +794,11 @@ def _cooldown_elapsed(
     return (today - household_day(last.finished_at)).days >= wait
 
 
-def _last_finished(task_name: str, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
+def _last_finished(task: TaskKey, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
     finished = [
         attempt
         for attempt in attempts
-        if attempt.task == task_name
+        if attempt.key == task
         and attempt.client_group == client_group
         and attempt.counted
         and attempt.outcome in FINISHED
@@ -815,16 +809,16 @@ def _last_finished(task_name: str, client_group: str, attempts: Sequence[Attempt
     return max(finished, key=lambda attempt: (attempt.finished_at, attempt.id))
 
 
-def last_pass(task_name: str, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
+def last_pass(task: TaskKey, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
     """Return this group's latest counted pass of this task, or None."""
-    return _last_pass(task_name, client_group, attempts)
+    return _last_pass(_key(task), client_group, attempts)
 
 
-def _last_pass(task_name: str, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
+def _last_pass(task: TaskKey, client_group: str, attempts: Sequence[Attempt]) -> Attempt | None:
     passes = [
         attempt
         for attempt in attempts
-        if attempt.task == task_name
+        if attempt.key == task
         and attempt.client_group == client_group
         and attempt.counted
         and attempt.outcome == PASS
@@ -836,7 +830,7 @@ def _last_pass(task_name: str, client_group: str, attempts: Sequence[Attempt]) -
 
 
 def _attempt(row: tuple) -> Attempt:
-    attempt_id, client_group, task_name, started_at, finished_at, outcome, detail, task_set, reopened = row
+    attempt_id, client_group, task_type, task_name, started_at, finished_at, outcome, detail, task_set, reopened = row
     loaded = json.loads(detail)
     if not isinstance(loaded, dict):
         raise ValueError("attempt detail is a JSON object")
@@ -844,6 +838,7 @@ def _attempt(row: tuple) -> Attempt:
     return Attempt(
         int(attempt_id),
         client_group,
+        task_type,
         task_name,
         datetime.fromisoformat(started_at),
         None if finished_at is None else datetime.fromisoformat(finished_at),
@@ -881,6 +876,12 @@ def _as_date(value: object) -> date:
     if type(value) is not date:
         raise ValueError("a household day is a date")
     return value
+
+
+def _key(value: object) -> TaskKey:
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise ValueError("a task is named by its type and its name")
+    return TaskKey(_label(value[0], "a task type"), _label(value[1], "a task name"))
 
 
 def _label(value: object, name: str) -> str:

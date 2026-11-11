@@ -5,7 +5,7 @@ The picker and the selector both use the available set from
 waiting on required ones, as After These, and every other task he could
 practise, as Extra Practice. Inside a set, a task that has never been passed
 comes before one that has, and the oldest pass comes next. Equal candidates
-are ordered by name and then rotated, so the order of requests does not
+are ordered by name, then type, and then rotated, so the order of requests does not
 leave one of them at the back forever. Only the picker moves the rotation.
 
 Giving up a required attempt is refused while its task is the only
@@ -29,6 +29,7 @@ from policy.tasks import (
     Attempt,
     AttemptStore,
     Task,
+    TaskKey,
     TaskSets,
     last_pass,
     task_sets,
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS task_turns (
 
 PICKER_PATH = "/tasks/next"
 CHOOSER_PATH = "/tasks/choose"
-_RESERVED = (PICKER_PATH, CHOOSER_PATH)
+_TASKS = "/tasks/"
 MEDIA_SEGMENT = "/audio/"
 # The Compose defaults: PORT_BASE 8080, and the policy pages and the
 # auto-configuration file 4 and 8 above it.
@@ -161,38 +162,34 @@ def chooser_url(policy: Policy) -> str:
     return task_origin(policy) + CHOOSER_PATH
 
 
-def task_page_path(name: str) -> str:
-    """Return the path of one task on the policy server.
+def task_page_path(task: TaskKey) -> str:
+    """Return the path of one task on the policy server, ``/tasks/<type>/<name>``.
 
-    ``/tasks/next`` is the picker and ``/tasks/choose`` the selector. A task
-    with either name is served under ``/tasks/work/``.
+    The picker, ``/tasks/next``, and the selector, ``/tasks/choose``, have one
+    part after ``/tasks/``, so no task can clash with them.
     """
-    path = "/tasks/" + quote(name, safe="")
-    if path in _RESERVED:
-        return "/tasks/work/" + quote(name, safe="")
-    return path
+    return _TASKS + quote(task.type, safe="") + "/" + quote(task.name, safe="")
 
 
-def task_page_url(policy: Policy, name: str) -> str:
+def task_page_url(policy: Policy, task: TaskKey) -> str:
     """Return the absolute URL of one task on the policy server."""
-    return task_origin(policy) + task_page_path(name)
+    return task_origin(policy) + task_page_path(task)
 
 
-def task_media_path(name: str) -> str:
+def task_media_path(task: TaskKey) -> str:
     """Return the path a task's own audio files are served under, ending in ``/``."""
-    return task_page_path(name) + MEDIA_SEGMENT
+    return task_page_path(task) + MEDIA_SEGMENT
 
 
-def task_media_from_path(path: str) -> tuple[str, str] | None:
-    """Return the task name and file name in a ``/tasks/<name>/audio/<file>`` path, or None."""
-    for prefix in ("/tasks/work/", "/tasks/"):
-        if not path.startswith(prefix):
-            continue
-        name, found, file_name = path[len(prefix) :].partition(MEDIA_SEGMENT)
-        name = unquote(name)
-        if found and name and "/" not in name and file_name and "/" not in file_name:
-            return name, file_name
-    return None
+def task_media_from_path(path: str) -> tuple[TaskKey, str] | None:
+    """Return the task and file name in a ``/tasks/<type>/<name>/audio/<file>`` path, or None."""
+    if not path.startswith(_TASKS):
+        return None
+    page, found, file_name = path[len(_TASKS) :].partition(MEDIA_SEGMENT)
+    task = _task_in(page)
+    if not found or task is None or not file_name or "/" in file_name:
+        return None
+    return task, file_name
 
 
 def same_task_site(url: str, policy: Policy) -> bool:
@@ -211,22 +208,24 @@ def _port_matches(url_port: int | None, configured: int) -> bool:
     return url_port == configured
 
 
-def task_name_from_path(path: str) -> str | None:
-    """Return the task name in a task-site path, or None for the picker, the selector, or another path."""
-    if path in _RESERVED:
+def task_key_from_path(path: str) -> TaskKey | None:
+    """Return the task in a ``/tasks/<type>/<name>`` path, or None for the picker, the selector, or another path."""
+    if not path.startswith(_TASKS):
         return None
-    for prefix in ("/tasks/work/", "/tasks/"):
-        if path.startswith(prefix):
-            name = unquote(path[len(prefix) :])
-            if name and "/" not in name:
-                return name
-            return None
-    return None
+    return _task_in(path[len(_TASKS) :])
 
 
-def configured_task(tasks: Sequence[Task], name: str, client_group: str) -> Task | None:
-    """Return the task of this name when it is assigned to this group and is not ``parent_check``."""
-    task = next((item for item in tasks if item.name == name), None)
+def _task_in(page: str) -> TaskKey | None:
+    kind, slash, name = page.partition("/")
+    kind, name = unquote(kind), unquote(name)
+    if not slash or not kind or not name or "/" in kind or "/" in name:
+        return None
+    return TaskKey(kind, name)
+
+
+def configured_task(tasks: Sequence[Task], key: TaskKey, client_group: str) -> Task | None:
+    """Return the task with this type and name when it is assigned to this group and is not ``parent_check``."""
+    task = next((item for item in tasks if item.key == key), None)
     if task is None or task.type == PARENT_CHECK or client_group not in task.groups:
         return None
     return task
@@ -244,9 +243,9 @@ def may_abandon(attempt: Attempt, task: Task, sets: TaskSets) -> bool:
         return False
     if attempt.task_set != REQUIRED:
         return True
-    if all(other.name != task.name for other in sets.required):
+    if all(other.key != task.key for other in sets.required):
         return True
-    return any(other.name != task.name for other in sets.required)
+    return any(other.key != task.key for other in sets.required)
 
 
 def ordered_tasks(
@@ -258,7 +257,7 @@ def ordered_tasks(
 ) -> tuple[tuple[Task, ...], int]:
     """Return the available tasks in the order the picker tries them, and how many tie for first.
 
-    Each run of equal candidates is in name order, rotated by ``turn``.
+    Each run of equal candidates is in order of name, then type, rotated by ``turn``.
     """
     return _in_picker_order(sets.available, client_group, attempts, turn)
 
@@ -266,7 +265,7 @@ def ordered_tasks(
 def _in_picker_order(
     tasks: Sequence[Task], client_group: str, attempts: Sequence[Attempt], turn: int
 ) -> tuple[tuple[Task, ...], int]:
-    ranked = sorted(tasks, key=lambda task: (_rank(task, client_group, attempts), task.name))
+    ranked = sorted(tasks, key=lambda task: (_rank(task, client_group, attempts), task.name, task.type))
     groups: list[list[Task]] = []
     for task in ranked:
         if groups and _rank(groups[-1][0], client_group, attempts) == _rank(task, client_group, attempts):
@@ -316,7 +315,7 @@ def picked_task_url(policy: Policy, client_group: str, today: date, store: Attem
         return None
     if ties > 1:
         advance_turn(store, client_group)
-    return task_page_url(policy, task.name)
+    return task_page_url(policy, task.key)
 
 
 @dataclass(frozen=True)
@@ -326,7 +325,7 @@ class Sections:
     ``main`` is the available tasks in picker order. ``after`` is the
     potential tasks while any task is required, in picker order.
     ``practice`` is every other configured task whose ``available_from``
-    has arrived, in name order.
+    has arrived, in order of name, then type.
     """
 
     main: tuple[Task, ...]
@@ -345,7 +344,7 @@ def extra_practice(sets: TaskSets, today: date) -> tuple[Task, ...]:
                 and task not in sets.potential
                 and (task.available_from is None or task.available_from <= today)
             ),
-            key=lambda task: task.name,
+            key=lambda task: (task.name, task.type),
         )
     )
 
@@ -390,7 +389,7 @@ def advance_turn(store: AttemptStore, client_group: str) -> None:
 
 def _rank(task: Task, client_group: str, attempts: Sequence[Attempt]) -> tuple[int, str]:
     """Sort never-passed tasks first, then the oldest pass."""
-    found = last_pass(task.name, client_group, attempts)
+    found = last_pass(task.key, client_group, attempts)
     if found is None or found.finished_at is None:
         return (0, "")
     return (1, found.finished_at.isoformat())

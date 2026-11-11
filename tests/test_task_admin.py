@@ -20,7 +20,7 @@ from policy import control  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
 from policy.observations import listen  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
-from policy.tasks import AttemptStore  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
 PASSWORD = "s3cret-pass"
@@ -41,26 +41,26 @@ rule_sets:
     - condition: always
       when_true: { action: allow }   # spacing kept
 tasks:
-  # Words for this week.
   spelling:
-    type: spelling
-    group: younger
-    pass_cooldown: 1   # once a day
-    max_skips: 3
-    body:
-      timeout: 30s
-      revision_required: 1
-  check:
-    type: parent_check
-    group: younger
-    pass_cooldown: 0
+    # Words for this week.
+    spelling:
+      group: younger
+      pass_cooldown: 1   # once a day
+      max_skips: 3
+      body:
+        timeout: 30s
+        revision_required: 1
+  parent_check:
+    check:
+      group: younger
+      pass_cooldown: 0
 """
 EXTRA = """\
 tasks:
-  sums:
-    type: worksheet
-    groups: [younger]
-    pass_cooldown: 2
+  worksheet:
+    sums:
+      groups: [younger]
+      pass_cooldown: 2
 """
 
 
@@ -118,24 +118,25 @@ class House:
         status, body, _headers = call(self.app, "GET", path, cookie=self.cookie if cookie == "" else cookie)
         return status, json.loads(body)
 
-    def page(self, name: str = "spelling") -> dict:
-        status, body = self.get(f"/parent/api/tasks/{name}")
+    def page(self, task: str = "spelling/spelling") -> dict:
+        """Return a task's page. ``task`` is its type and name, as in ``spelling/spelling``."""
+        status, body = self.get(f"/parent/api/tasks/{task}")
         assert status == 200, body
         return body
 
-    def save(self, name: str = "spelling", **changes) -> tuple[int, dict]:
-        changes.setdefault("version", self.page(name)["version"])
-        status, body, _headers = call(self.app, "POST", f"/parent/api/tasks/{name}", json_body=changes, cookie=self.cookie)
+    def save(self, task: str = "spelling/spelling", **changes) -> tuple[int, dict]:
+        changes.setdefault("version", self.page(task)["version"])
+        status, body, _headers = call(self.app, "POST", f"/parent/api/tasks/{task}", json_body=changes, cookie=self.cookie)
         return status, json.loads(body)
 
-    def retire(self, word: str, name: str = "spelling") -> tuple[int, dict]:
+    def retire(self, word: str, task: str = "spelling/spelling") -> tuple[int, dict]:
         status, body, _headers = call(
-            self.app, "POST", f"/parent/api/tasks/{name}/retire", json_body={"word": word}, cookie=self.cookie
+            self.app, "POST", f"/parent/api/tasks/{task}/retire", json_body={"word": word}, cookie=self.cookie
         )
         return status, json.loads(body)
 
-    def task(self, name: str = "spelling"):
-        return self.app.state.holder.loaded.policy.task(name)
+    def task(self, task: str = "spelling/spelling"):
+        return self.app.state.holder.loaded.policy.task(TaskKey(*task.split("/")))
 
     def files(self, pool: str) -> list[str]:
         directory = self.data / "spelling" / pool
@@ -160,7 +161,16 @@ def kept(tmp_path, monkeypatch):
 
 
 def test_the_task_list_names_every_task_in_every_file_in_name_order(house):
-    assert house.get("/parent/api/tasks") == (200, {"tasks": ["check", "spelling", "sums"]})
+    assert house.get("/parent/api/tasks") == (
+        200,
+        {
+            "tasks": [
+                {"type": "parent_check", "name": "check"},
+                {"type": "spelling", "name": "spelling"},
+                {"type": "worksheet", "name": "sums"},
+            ]
+        },
+    )
 
 
 def test_a_task_page_shows_the_file_and_the_words_in_each_pool(house):
@@ -196,48 +206,48 @@ def test_a_task_page_shows_the_file_and_the_words_in_each_pool(house):
 
 
 def test_a_parent_check_page_has_no_date_skip_or_pass_fields(house):
-    assert house.page("check")["fields"] == {"pass_cooldown": "0", "failure_cooldown": ""}
-    assert "spelling" not in house.page("check")
+    assert house.page("parent_check/check")["fields"] == {"pass_cooldown": "0", "failure_cooldown": ""}
+    assert "spelling" not in house.page("parent_check/check")
 
 
 def test_an_unknown_task_is_not_found(house):
-    assert house.get("/parent/api/tasks/nope") == (404, {"error": "There is no task named nope."})
+    assert house.get("/parent/api/tasks/worksheet/nope") == (404, {"error": "There is no worksheet task named nope."})
 
 
 def test_without_a_session_the_task_data_and_audio_answer_401_and_never_redirect(house):
     for path in (
         "/parent/api/tasks",
-        "/parent/api/tasks/spelling",
-        "/parent/api/tasks/spelling/audio/current/rope.wav",
+        "/parent/api/tasks/spelling/spelling",
+        "/parent/api/tasks/spelling/spelling/audio/current/rope.wav",
     ):
         status, body, headers = call(house.app, "GET", path)
         assert status == 401, path
         assert "location" not in headers
         assert "rope" not in body
-    status, _body, _headers = call(house.app, "POST", "/parent/api/tasks/spelling", json_body={"version": "x"})
+    status, _body, _headers = call(house.app, "POST", "/parent/api/tasks/spelling/spelling", json_body={"version": "x"})
     assert status == 401
-    status, _body, _headers = call(house.app, "POST", "/parent/api/tasks/spelling/retire", json_body={"word": "rope"})
+    status, _body, _headers = call(house.app, "POST", "/parent/api/tasks/spelling/spelling/retire", json_body={"word": "rope"})
     assert status == 401
     assert house.files("current") == ["cat.wav", "dog.wav", "rope.sentence.wav", "rope.wav"]
 
 
 def test_a_save_must_be_a_json_post(house):
     status, _body, _headers = call(
-        house.app, "POST", "/parent/api/tasks/spelling", body=b"pass_cooldown=4", content_type="application/x-www-form-urlencoded", cookie=house.cookie
+        house.app, "POST", "/parent/api/tasks/spelling/spelling", body=b"pass_cooldown=4", content_type="application/x-www-form-urlencoded", cookie=house.cookie
     )
     assert status == 415
 
 
 def test_the_recordings_play_from_their_pool_and_nothing_else_is_served(house):
-    status, body, headers = call(house.app, "GET", "/parent/api/tasks/spelling/audio/current/rope.sentence.wav", cookie=house.cookie)
+    status, body, headers = call(house.app, "GET", "/parent/api/tasks/spelling/spelling/audio/current/rope.sentence.wav", cookie=house.cookie)
     assert status == 200
     assert headers["content-type"][0].startswith("audio/wav")
     assert body.startswith("RIFF")
     for path in (
-        "/parent/api/tasks/spelling/audio/revision/rope.wav",
-        "/parent/api/tasks/spelling/audio/alphabet/a.wav",
-        "/parent/api/tasks/spelling/audio/current/..%2F..%2F..%2Fconfig%2Fpolicy.yaml",
-        "/parent/api/tasks/sums/audio/current/rope.wav",
+        "/parent/api/tasks/spelling/spelling/audio/revision/rope.wav",
+        "/parent/api/tasks/spelling/spelling/audio/alphabet/a.wav",
+        "/parent/api/tasks/spelling/spelling/audio/current/..%2F..%2F..%2Fconfig%2Fpolicy.yaml",
+        "/parent/api/tasks/worksheet/sums/audio/current/rope.wav",
     ):
         assert call(house.app, "GET", path, cookie=house.cookie)[0] == 404, path
 
@@ -254,11 +264,11 @@ def test_a_save_changes_only_that_field_and_the_next_decision_uses_it(house):
 
 
 def test_a_task_in_an_included_file_is_saved_in_that_file(house):
-    status, body = house.save("sums", fields={"max_passes": "5"})
+    status, body = house.save("worksheet/sums", fields={"max_passes": "5"})
     assert status == 200, body
     assert house.policy.read_text(encoding="utf-8") == HOUSE
-    assert (house.config / "extra.yaml").read_text(encoding="utf-8") == EXTRA + "    max_passes: 5\n"
-    assert house.task("sums").max_passes == 5
+    assert (house.config / "extra.yaml").read_text(encoding="utf-8") == EXTRA + "      max_passes: 5\n"
+    assert house.task("worksheet/sums").max_passes == 5
 
 
 def test_clearing_a_field_removes_it_and_the_rule_is_off(house):
@@ -276,7 +286,7 @@ def test_new_fields_and_groups_are_written_inside_the_task(house):
     assert status == 200, body
     task = house.task()
     assert (task.groups, str(task.due_date), task.failure_cooldown) == (("younger", "older"), "2026-11-30", 1)
-    assert house.task("check").groups == ("younger",)
+    assert house.task("parent_check/check").groups == ("younger",)
 
 
 @pytest.mark.parametrize(
@@ -297,7 +307,7 @@ def test_a_value_the_policy_refuses_is_named_and_nothing_is_written(house, field
 
 
 def test_a_parent_check_cannot_be_given_a_due_date(house):
-    status, body = house.save("check", fields={"due_date": "2026-11-30"})
+    status, body = house.save("parent_check/check", fields={"due_date": "2026-11-30"})
     assert (status, body) == (400, {"error": "due_date cannot be changed from the parent pages"})
 
 
@@ -314,7 +324,7 @@ def test_a_file_edited_since_the_page_opened_is_not_saved_over(house):
 def test_a_task_with_a_due_date_that_a_group_has_passed_asks_first(house):
     house.policy.write_text(HOUSE.replace("max_skips: 3", "due_date: 2026-11-09"), encoding="utf-8")
     with PolicyStore(house.database) as store:
-        AttemptStore(connection=store.connection).record("younger", "spelling", "pass", datetime(2026, 11, 2, 16, tzinfo=ZONE))
+        AttemptStore(connection=store.connection).record("younger", TaskKey("spelling", "spelling"), "pass", datetime(2026, 11, 2, 16, tzinfo=ZONE))
     status, body = house.save(fields={"pass_cooldown": "4"})
     assert status == 409
     assert body["groups"] == ["younger"]
@@ -327,7 +337,7 @@ def test_a_task_with_a_due_date_that_a_group_has_passed_asks_first(house):
 
 def test_a_task_with_no_due_date_saves_without_asking(house):
     with PolicyStore(house.database) as store:
-        AttemptStore(connection=store.connection).record("younger", "spelling", "pass", datetime(2026, 11, 2, 16, tzinfo=ZONE))
+        AttemptStore(connection=store.connection).record("younger", TaskKey("spelling", "spelling"), "pass", datetime(2026, 11, 2, 16, tzinfo=ZONE))
     assert house.save(fields={"pass_cooldown": "4"})[0] == 200
 
 
@@ -380,7 +390,7 @@ def test_a_save_cannot_put_a_word_in_the_attic_only_retire_can(house):
 
 
 def test_a_move_that_leaves_too_few_current_words_is_refused_until_the_target_is_lowered(house):
-    house.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n      current_required: 3"), encoding="utf-8")
+    house.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n        current_required: 3"), encoding="utf-8")
     status, body = house.save(moves={"cat": "revision"})
     assert status == 400
     assert any("current_required" in problem and "only 2" in problem for problem in body["errors"])
@@ -400,7 +410,7 @@ def test_retire_moves_the_recordings_to_the_attic_at_once(house):
 
 
 def test_retire_makes_the_attic_the_task_names(house):
-    house.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n      attic_dir: spelling/old-words"), encoding="utf-8")
+    house.policy.write_text(HOUSE.replace("timeout: 30s", "timeout: 30s\n        attic_dir: spelling/old-words"), encoding="utf-8")
     assert house.retire("cat")[0] == 200
     assert sorted(child.name for child in (house.data / "spelling/old-words").iterdir()) == ["cat.wav"]
 
@@ -438,31 +448,31 @@ def test_a_save_is_committed_as_the_parent_with_only_that_change(kept):
     log = kept.log()
     assert len(log) == 2
     assert log[0].startswith("ada <ada@daywarden.invalid> 2026-") or log[0].startswith("ada <ada@daywarden.invalid> 20")
-    assert log[0].endswith(" ada: saved task spelling")
+    assert log[0].endswith(" ada: saved task spelling/spelling")
     shown = _git(kept.config, "show", "--format=", "HEAD")
     assert [line for line in shown.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---")] == [
-        "-    pass_cooldown: 1   # once a day",
-        "+    pass_cooldown: 4   # once a day",
+        "-      pass_cooldown: 1   # once a day",
+        "+      pass_cooldown: 4   # once a day",
     ]
     assert _git(kept.config, "status", "--porcelain") == ""
 
 
 def test_good_hand_edits_are_committed_first_then_the_save(kept):
     kept.policy.write_text(HOUSE.replace("max_skips: 3", "max_skips: 5"), encoding="utf-8")
-    status, body = kept.save("sums", fields={"max_passes": "2"})
+    status, body = kept.save("worksheet/sums", fields={"max_passes": "2"})
     assert status == 200, body
     log = kept.log()
-    assert log[0].endswith(" ada: saved task sums")
+    assert log[0].endswith(" ada: saved task worksheet/sums")
     assert log[1].endswith(" hand edits found before a portal save")
     assert "max_skips: 5" in _git(kept.config, "show", "HEAD~1")
     assert kept.task().max_skips == 5
-    assert kept.task("sums").max_passes == 2
+    assert kept.task("worksheet/sums").max_passes == 2
 
 
 def test_broken_hand_edits_refuse_the_save_and_nothing_is_written_or_committed(kept):
-    broken = HOUSE.replace("    group: younger\n    pass_cooldown: 0", "    group: nobody\n    pass_cooldown: 0")
+    broken = HOUSE.replace("      group: younger\n      pass_cooldown: 0", "      group: nobody\n      pass_cooldown: 0")
     kept.policy.write_text(broken, encoding="utf-8")
-    status, body = kept.save("sums", fields={"max_passes": "2"})
+    status, body = kept.save("worksheet/sums", fields={"max_passes": "2"})
     assert status == 400
     assert body["error"].startswith("The hand edits on the server do not pass dw check")
     assert any("unknown client group 'nobody'" in problem for problem in body["errors"])

@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from conftest import merge_task_types
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -17,10 +19,10 @@ from policy.accounts import Accounts  # noqa: E402
 from policy.engine import decide  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
 from policy.review import attempt_report, attempts_report, record_parent_check  # noqa: E402
-from policy.selection import read_turn  # noqa: E402
+from policy.selection import read_turn, task_page_path  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.task_page import MUST_FINISH, NOTHING, respond_task  # noqa: E402
-from policy.tasks import AttemptStore, skip_days  # noqa: E402
+from policy.tasks import AttemptStore, TaskKey, skip_days  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
 ZONE = ZoneInfo("America/Toronto")
@@ -69,7 +71,7 @@ site_groups:
     priority: 30
     patterns: ["*.youtube.com"]
 tasks:
-{tasks}
+{merge_task_types(tasks)}
 rule_sets:
 {rules}
 """
@@ -99,13 +101,26 @@ def _tasks_then_allow(required: int) -> str:
 
 
 def _sheet(name: str, extra: str = "", *, cooldown: int = 0, group: str = "younger") -> str:
-    lines = f"  {name}:\n    type: worksheet\n    group: {group}\n    pass_cooldown: {cooldown}\n"
-    return lines + "".join(f"    {line}\n" for line in extra.splitlines() if line.strip())
+    lines = f"  worksheet:\n    {name}:\n      group: {group}\n      pass_cooldown: {cooldown}\n"
+    return lines + "".join(f"      {line}\n" for line in extra.splitlines() if line.strip())
 
 
 def _sums(name: str = "sums", extra: str = "", *, cooldown: int = 0) -> str:
-    lines = f"  {name}:\n    type: arithmetic\n    group: younger\n    pass_cooldown: {cooldown}\n    body: {json.dumps(SUMS)}\n"
-    return lines + "".join(f"    {line}\n" for line in extra.splitlines() if line.strip())
+    lines = f"  arithmetic:\n    {name}:\n      group: younger\n      pass_cooldown: {cooldown}\n      body: {json.dumps(SUMS)}\n"
+    return lines + "".join(f"      {line}\n" for line in extra.splitlines() if line.strip())
+
+
+CREDIT = "  parent_check:\n    credit:\n      group: younger\n      pass_cooldown: 0\n"
+
+
+def _key(policy, name: str) -> TaskKey:
+    """Return the key of the one task in the policy with this name."""
+    [key] = [task.key for task in policy.tasks if task.name == name]
+    return key
+
+
+def _path(policy, name: str) -> str:
+    return task_page_path(_key(policy, name))
 
 
 def _open(now, path, policy, store, *, method="GET", ip=YOUNGER, query=None, body=b""):
@@ -129,21 +144,21 @@ def _listed(page) -> list[str]:
     return [line.split('">', 1)[1].split("<", 1)[0] for line in page.body.splitlines() if 'class="big" href=' in line]
 
 
-def _finish(store, name, outcome, now, ip_group="younger"):
-    attempt = store.in_progress(ip_group, name)
+def _finish(store, key, outcome, now, ip_group="younger"):
+    attempt = store.in_progress(ip_group, key)
     assert attempt is not None
     return store.finish(attempt.id, outcome, now)
 
 
 def _pass_by_page(now, name, policy, store):
     """Open a worksheet's page and pass the attempt it opened."""
-    page = _open(now, f"/tasks/{name}", policy, store)
+    page = _open(now, _path(policy, name), policy, store)
     assert page.status == 200, page.body
-    return _finish(store, name, "pass", now)
+    return _finish(store, _key(policy, name), "pass", now)
 
 
 def _quiz(now, name, policy, store, action, payload=None):
-    page = _open(now, f"/tasks/{name}", policy, store, method="POST", query={"do": action}, body=json.dumps(payload or {}).encode())
+    page = _open(now, _path(policy, name), policy, store, method="POST", query={"do": action}, body=json.dumps(payload or {}).encode())
     return page.status, json.loads(page.body)
 
 
@@ -154,7 +169,7 @@ def _answer_one(now, name, policy, store) -> dict:
 
 
 def _pass_quiz(now, name, policy, store) -> dict:
-    page = _open(now, f"/tasks/{name}", policy, store)
+    page = _open(now, _path(policy, name), policy, store)
     assert page.status == 200
     _quiz(now, name, policy, store, "visit")
     for _ in range(SUMS["correct_answers_required"]):
@@ -177,11 +192,11 @@ def _youtube(store, policy, now) -> dict:
 def test_the_picker_prefers_a_task_never_passed_then_the_oldest_pass(tmp_path):
     policy = _policy(_sheet("zeta") + _sheet("alpha") + _sheet("beta"), tmp_path)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "alpha", "pass", _at(10, 20))
-        store.record("younger", "beta", "pass", _at(10, 24))
-        assert _picked(_at(10, 31), policy, store) == SITE + "/tasks/zeta"
-        store.record("younger", "zeta", "pass", _at(10, 30))
-        assert _picked(_at(10, 31), policy, store) == SITE + "/tasks/alpha"
+        store.record("younger", _key(policy, "alpha"), "pass", _at(10, 20))
+        store.record("younger", _key(policy, "beta"), "pass", _at(10, 24))
+        assert _picked(_at(10, 31), policy, store) == SITE + _path(policy, "zeta")
+        store.record("younger", _key(policy, "zeta"), "pass", _at(10, 30))
+        assert _picked(_at(10, 31), policy, store) == SITE + _path(policy, "alpha")
 
 
 def test_equal_candidates_rotate_in_name_order_and_the_selector_does_not_move_the_turn(tmp_path):
@@ -193,7 +208,7 @@ def test_equal_candidates_rotate_in_name_order_and_the_selector_does_not_move_th
             assert _listed(_open(now, "/tasks/choose", policy, store)) == ["beta", "alpha"]
         assert read_turn(store, "younger") == 1
         picks = [first, _picked(now, policy, store), _picked(now, policy, store)]
-    assert picks == [SITE + "/tasks/alpha", SITE + "/tasks/beta", SITE + "/tasks/alpha"]
+    assert picks == [SITE + _path(policy, "alpha"), SITE + _path(policy, "beta"), SITE + _path(policy, "alpha")]
 
 
 def test_a_redirect_to_revision_goes_through_the_picker_to_a_required_task(tmp_path):
@@ -202,7 +217,7 @@ def test_a_redirect_to_revision_goes_through_the_picker_to_a_required_task(tmp_p
     with AttemptStore(":memory:") as store:
         assert decide(policy, client_ip=YOUNGER, url=YOUTUBE, at=now).decision["location"] == PICKER
         for _ in range(3):
-            assert _picked(now, policy, store) == SITE + "/tasks/due"
+            assert _picked(now, policy, store) == SITE + _path(policy, "due")
         assert _listed(_open(now, "/tasks/choose", policy, store)) == ["due"]
 
 
@@ -213,7 +228,7 @@ def test_a_task_with_no_pass_cooldown_is_not_offered_again_the_day_it_was_passed
         _pass_by_page(now, "words", policy, store)
         assert _picked(now, policy, store) is None
         assert NOTHING in _open(now, "/tasks/choose", policy, store).body
-        assert _picked(_at(11, 1), policy, store) == SITE + "/tasks/words"
+        assert _picked(_at(11, 1), policy, store) == SITE + _path(policy, "words")
 
 
 def test_a_due_task_never_passed_is_required_and_one_passed_before_its_due_date_is_not(tmp_path):
@@ -222,7 +237,7 @@ def test_a_due_task_never_passed_is_required_and_one_passed_before_its_due_date_
         tmp_path,
     )
     with AttemptStore(":memory:") as store:
-        store.record("younger", "early", "pass", _at(10, 20))
+        store.record("younger", _key(policy, "early"), "pass", _at(10, 20))
         sets = store.task_sets(policy.tasks, "younger", _at(10, 31).date())
         assert [task.name for task in sets.required] == ["due"]
         assert [task.name for task in sets.available] == ["due"]
@@ -232,10 +247,10 @@ def test_a_due_task_never_passed_is_required_and_one_passed_before_its_due_date_
 def test_skip_days_reaching_max_skips_make_a_task_required_until_it_is_passed(tmp_path):
     policy = _policy(_sheet("words", "max_skips: 2") + _sheet("free"), tmp_path)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "words", "failure", _at(10, 29))
-        store.record("younger", "words", "abandoned", _at(10, 30))
+        store.record("younger", _key(policy, "words"), "failure", _at(10, 29))
+        store.record("younger", _key(policy, "words"), "abandoned", _at(10, 30))
         now = _at(10, 31)
-        assert _picked(now, policy, store) == SITE + "/tasks/words"
+        assert _picked(now, policy, store) == SITE + _path(policy, "words")
         _pass_by_page(now, "words", policy, store)
         assert store.task_sets(policy.tasks, "younger", _at(11, 1).date()).required == ()
 
@@ -253,7 +268,7 @@ def test_a_task_that_would_be_required_but_is_held_back_is_neither_required_nor_
     policy = _policy(_sheet("held", "due_date: 2026-09-01\nmax_skips: 0\n" + extra) + _sheet("free"), tmp_path)
     with AttemptStore(":memory:") as store:
         for outcome, when in history:
-            store.record("younger", "held", outcome, _at(*when))
+            store.record("younger", _key(policy, "held"), outcome, _at(*when))
         sets = store.task_sets(policy.tasks, "younger", _at(10, 31).date())
         assert sets.required == ()
         assert [task.name for task in sets.available] == ["free"]
@@ -267,20 +282,20 @@ def test_a_task_not_available_yet_is_never_offered_and_nothing_left_says_so(tmp_
         chooser = _open(now, "/tasks/choose", policy, store)
         assert picker.status == chooser.status == 200
         assert NOTHING in picker.body and NOTHING in chooser.body
-        assert _picked(_at(11, 1), policy, store) == SITE + "/tasks/later"
+        assert _picked(_at(11, 1), policy, store) == SITE + _path(policy, "later")
 
 
 def test_the_picker_never_returns_a_parent_check_and_its_url_opens_nothing(tmp_path):
-    credit = "  credit:\n    type: parent_check\n    group: younger\n    pass_cooldown: 0\n"
+    credit = CREDIT
     policy = _policy(credit, tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
         assert _picked(now, policy, store) is None
-        page = _open(now, "/tasks/credit", policy, store)
+        page = _open(now, _path(policy, "credit"), policy, store)
         assert _location(page) == PICKER
         status, _payload = _quiz(now, "credit", policy, store, "answer", {"id": 0})
         assert status == 409
-        assert _open(now, "/tasks/credit", policy, store, method="POST").status == 302
+        assert _open(now, _path(policy, "credit"), policy, store, method="POST").status == 302
         assert store.attempts("younger") == ()
 
 
@@ -309,15 +324,15 @@ def test_every_configured_task_opens_from_a_bookmark_and_starts_in_the_set_it_is
     policy = _policy(tasks, tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "done_today", "pass", _at(10, 31, 9))
-        store.record("younger", "cooling", "failure", _at(10, 30))
-        store.record("younger", "capped", "pass", _at(9, 1))
+        store.record("younger", _key(policy, "done_today"), "pass", _at(10, 31, 9))
+        store.record("younger", _key(policy, "cooling"), "failure", _at(10, 30))
+        store.record("younger", _key(policy, "capped"), "pass", _at(9, 1))
         sets = {}
         for name in ("due", "optional", "done_today", "cooling", "capped", "later"):
-            page = _open(now, f"/tasks/{name}", policy, store)
+            page = _open(now, _path(policy, name), policy, store)
             assert page.status == 200, name
             assert "Try a different task" in page.body
-            sets[name] = store.in_progress("younger", name).task_set
+            sets[name] = store.in_progress("younger", _key(policy, name)).task_set
     assert sets == {
         "due": "required",
         "optional": "potential",
@@ -328,25 +343,26 @@ def test_every_configured_task_opens_from_a_bookmark_and_starts_in_the_set_it_is
     }
 
 
-def test_a_task_named_next_or_choose_is_served_under_work(tmp_path):
+def test_a_task_named_next_or_choose_is_served_under_its_type(tmp_path):
     policy = _policy(_sheet("next") + _sheet("choose"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        assert _picked(now, policy, store) in {SITE + "/tasks/work/next", SITE + "/tasks/work/choose"}
-        assert _open(now, "/tasks/work/choose", policy, store).status == 200
-        assert store.in_progress("younger", "choose") is not None
+        assert _picked(now, policy, store) in {SITE + "/tasks/worksheet/next", SITE + "/tasks/worksheet/choose"}
+        assert _open(now, "/tasks/worksheet/choose", policy, store).status == 200
+        assert store.in_progress("younger", TaskKey("worksheet", "choose")) is not None
         listed = _open(now, "/tasks/choose", policy, store).body
-        assert 'href="https://tasks.example/tasks/work/choose"' in listed
-        assert 'href="https://tasks.example/tasks/work/next"' in listed
+        assert 'href="https://tasks.example/tasks/worksheet/choose"' in listed
+        assert 'href="https://tasks.example/tasks/worksheet/next"' in listed
+        assert _location(_open(now, "/tasks/work/choose", policy, store)) == PICKER
 
 
 def test_an_older_child_does_not_resume_the_younger_attempt(tmp_path):
     policy = _policy(_sheet("shared").replace("group: younger", "groups: [younger, older]"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/shared", policy, store)
-        _open(now, "/tasks/shared", policy, store, ip=OLDER)
-        assert store.in_progress("younger", "shared").id != store.in_progress("older", "shared").id
+        _open(now, _path(policy, "shared"), policy, store)
+        _open(now, _path(policy, "shared"), policy, store, ip=OLDER)
+        assert store.in_progress("younger", _key(policy, "shared")).id != store.in_progress("older", _key(policy, "shared")).id
 
 
 # Practice
@@ -356,12 +372,12 @@ def test_a_practice_pass_says_well_done_and_counts_for_nothing(tmp_path):
     policy = _policy(_sums("sums", "max_passes: 2\ndue_date: 2026-10-31", cooldown=2), tmp_path, _tasks_then_allow(2))
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "sums", "failure", _at(10, 29))
-        store.record("younger", "sums", "pass", _at(10, 30))
+        store.record("younger", _key(policy, "sums"), "failure", _at(10, 29))
+        store.record("younger", _key(policy, "sums"), "pass", _at(10, 30))
         assert store.task_sets(policy.tasks, "younger", now.date()).available == ()
         judged = _pass_quiz(now, "sums", policy, store)
         assert judged["next"] is None
-        practice = store.attempts("younger", "sums")[-1]
+        practice = store.attempts("younger", _key(policy, "sums"))[-1]
         assert (practice.outcome, practice.task_set) == ("pass", "practice")
         assert _score(store, policy, now) == 0
         tomorrow = _at(11, 1)
@@ -371,13 +387,13 @@ def test_a_practice_pass_says_well_done_and_counts_for_nothing(tmp_path):
 def test_a_practice_pass_does_not_clear_a_due_date_or_reset_skip_days(tmp_path):
     policy = _policy(_sheet("due", "due_date: 2026-10-31\nfailure_cooldown: 1") + _sheet("skips", "max_skips: 1\nfailure_cooldown: 1"), tmp_path)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "due", "failure", _at(10, 31, 9))
-        store.record("younger", "skips", "failure", _at(10, 30, 9))
-        store.record("younger", "skips", "failure", _at(10, 31, 9))
+        store.record("younger", _key(policy, "due"), "failure", _at(10, 31, 9))
+        store.record("younger", _key(policy, "skips"), "failure", _at(10, 30, 9))
+        store.record("younger", _key(policy, "skips"), "failure", _at(10, 31, 9))
         now = _at(10, 31)
         for name in ("due", "skips"):
             _pass_by_page(now, name, policy, store)
-            assert store.attempts("younger", name)[-1].task_set == "practice"
+            assert store.attempts("younger", _key(policy, name))[-1].task_set == "practice"
         required = store.task_sets(policy.tasks, "younger", _at(11, 1).date()).required
         assert [task.name for task in required] == ["due", "skips"]
 
@@ -387,11 +403,11 @@ def test_a_practice_failure_starts_no_cooldown_and_a_practice_give_up_is_no_skip
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
         _pass_by_page(now, "words", policy, store)
-        _open(now, "/tasks/words", policy, store)
-        _finish(store, "words", "failure", now + timedelta(minutes=5))
-        _open(now + timedelta(minutes=6), "/tasks/words", policy, store)
-        assert _location(_open(now + timedelta(minutes=7), "/tasks/words", policy, store, method="POST")) == CHOOSER
-        assert [row.task_set for row in store.attempts("younger", "words")] == ["potential", "practice", "practice"]
+        _open(now, _path(policy, "words"), policy, store)
+        _finish(store, _key(policy, "words"), "failure", now + timedelta(minutes=5))
+        _open(now + timedelta(minutes=6), _path(policy, "words"), policy, store)
+        assert _location(_open(now + timedelta(minutes=7), _path(policy, "words"), policy, store, method="POST")) == CHOOSER
+        assert [row.task_set for row in store.attempts("younger", _key(policy, "words"))] == ["potential", "practice", "practice"]
         sets = store.task_sets(policy.tasks, "younger", _at(11, 1).date())
         assert [task.name for task in sets.potential] == ["words"]
         assert sets.required == ()
@@ -401,10 +417,10 @@ def test_an_attempt_keeps_the_set_it_started_in_through_a_reload(tmp_path):
     policy = _policy(_sheet("words"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/words", policy, store)
+        _open(now, _path(policy, "words"), policy, store)
         reloaded = _policy(_sheet("words", "due_date: 2026-10-01"), tmp_path)
-        _open(now + timedelta(minutes=1), "/tasks/words", reloaded, store)
-        attempt = _finish(store, "words", "pass", now + timedelta(minutes=2))
+        _open(now + timedelta(minutes=1), _path(policy, "words"), reloaded, store)
+        attempt = _finish(store, _key(policy, "words"), "pass", now + timedelta(minutes=2))
         assert attempt.task_set == "potential"
 
 
@@ -427,8 +443,8 @@ def test_uc3_easier_tasks_first_wait_until_the_hard_one_has_been_tried(tmp_path)
             _pass_by_page(now, name, policy, store)
         assert _score(store, policy, now) == 0
         assert _youtube(store, policy, now)["location"] == PICKER
-        _open(now, "/tasks/parts_of_speech", policy, store)
-        _finish(store, "parts_of_speech", "failure", now + timedelta(minutes=5))
+        _open(now, _path(policy, "parts_of_speech"), policy, store)
+        _finish(store, _key(policy, "parts_of_speech"), "failure", now + timedelta(minutes=5))
         assert _score(store, policy, now) == 2
         assert _youtube(store, policy, now) == {"action": "allow"}
 
@@ -445,8 +461,8 @@ def test_uc3_passing_the_hard_task_instead_scores_three(tmp_path):
 
 
 def test_uc3_without_a_failure_cooldown_only_parent_checks_make_up_the_count(tmp_path):
-    tasks = UC3.replace("    failure_cooldown: 1\n", "")
-    credit = "  credit:\n    type: parent_check\n    group: younger\n    pass_cooldown: 0\n"
+    tasks = UC3.replace("      failure_cooldown: 1\n", "")
+    credit = CREDIT
     policy = _policy(tasks + credit, tmp_path, _tasks_then_allow(2))
     now = _at(10, 31)
     with PolicyStore(":memory:") as saved:
@@ -455,26 +471,26 @@ def test_uc3_without_a_failure_cooldown_only_parent_checks_make_up_the_count(tmp
         accounts.set_password("ada", PASSWORD)
         for name in ("spelling", "addition"):
             _pass_by_page(now, name, policy, store)
-        _open(now, "/tasks/parts_of_speech", policy, store)
-        _finish(store, "parts_of_speech", "failure", now)
+        _open(now, _path(policy, "parts_of_speech"), policy, store)
+        _finish(store, _key(policy, "parts_of_speech"), "failure", now)
         assert _score(store, policy, now) == 0
         assert _youtube(store, policy, now)["location"] == PICKER
         for expected in (1, 2):
             assert record_parent_check(accounts, store, "younger", now=now, tasks=policy.tasks) is None
             assert _score(store, policy, now) == expected
         assert _youtube(store, policy, now) == {"action": "allow"}
-        assert [row.task_set for row in store.attempts("younger", "credit")] == ["parent_check", "parent_check"]
+        assert [row.task_set for row in store.attempts("younger", _key(policy, "credit"))] == ["parent_check", "parent_check"]
 
 
 def test_no_task_scores_twice_in_a_day_whatever_its_mix_of_passes(tmp_path):
     policy = _policy(_sheet("words") + _sheet("sums"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "words", "pass", _at(10, 31, 9), task_set="required")
-        store.record("younger", "words", "pass", _at(10, 31, 10), task_set="potential")
-        store.record("younger", "words", "pass", _at(10, 31, 11), task_set="practice")
-        store.record("younger", "sums", "pass", _at(10, 31, 9), task_set="potential")
-        store.record("younger", "sums", "pass", _at(10, 31, 10), task_set="potential")
+        store.record("younger", _key(policy, "words"), "pass", _at(10, 31, 9), task_set="required")
+        store.record("younger", _key(policy, "words"), "pass", _at(10, 31, 10), task_set="potential")
+        store.record("younger", _key(policy, "words"), "pass", _at(10, 31, 11), task_set="practice")
+        store.record("younger", _key(policy, "sums"), "pass", _at(10, 31, 9), task_set="potential")
+        store.record("younger", _key(policy, "sums"), "pass", _at(10, 31, 10), task_set="potential")
         assert _score(store, policy, now) == 2
 
 
@@ -486,52 +502,10 @@ def test_a_reload_that_makes_a_task_due_stops_the_waiting_points_until_it_is_cle
         assert _score(store, policy, now) == 1
         reloaded = _policy(_sheet("words", "due_date: 2026-10-31") + _sheet("sums", "due_date: 2026-10-31"), tmp_path, _tasks_then_allow(1))
         assert _score(store, reloaded, now) == 0
-        assert store.attempts("younger", "words")[-1].task_set == "potential"
+        assert store.attempts("younger", _key(policy, "words"))[-1].task_set == "potential"
         assert _youtube(store, reloaded, now)["location"] == PICKER
         _pass_by_page(now, "sums", reloaded, store)
         assert _score(store, reloaded, now) == 2
-
-
-def test_attempts_stored_before_task_sets_are_kept_and_count_as_required(tmp_path):
-    database = tmp_path / "policy.sqlite3"
-    with sqlite3.connect(database) as connection:
-        connection.executescript(OLD_SCHEMA)
-        rows = [
-            ("younger", "words", "2026-10-30T16:00:00-04:00", "2026-10-30T16:05:00-04:00", "pass"),
-            ("younger", "sums", "2026-10-31T09:00:00-04:00", "2026-10-31T09:05:00-04:00", "pass"),
-            ("younger", "sums", "2026-10-31T10:00:00-04:00", "2026-10-31T10:05:00-04:00", "pass"),
-            ("younger", "late", "2026-10-31T11:00:00-04:00", None, "in_progress"),
-        ]
-        connection.executemany(
-            "INSERT INTO attempts (client_group, task_name, started_at, finished_at, outcome, detail) VALUES (?, ?, ?, ?, ?, '{}')",
-            rows,
-        )
-    policy = _policy(_sheet("words", cooldown=2) + _sheet("sums") + _sheet("late"), tmp_path)
-    now = _at(10, 31)
-    with AttemptStore(database) as store:
-        stored = store.attempts("younger")
-        assert [row.task_set for row in stored] == ["required"] * 4
-        assert store.in_progress("younger", "late").id == 4
-        assert _score(store, policy, now) == 1
-        assert [task.name for task in store.task_sets(policy.tasks, "younger", now.date()).available] == ["late"]
-    with AttemptStore(database) as again:
-        assert len(again.attempts("younger")) == 4
-
-
-OLD_SCHEMA = """
-CREATE TABLE attempts (
-    id INTEGER PRIMARY KEY,
-    client_group TEXT NOT NULL,
-    task_name TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    outcome TEXT NOT NULL CHECK (outcome IN ('in_progress', 'pass', 'failure', 'abandoned')),
-    detail TEXT NOT NULL,
-    CHECK ((outcome = 'in_progress' AND finished_at IS NULL) OR (outcome != 'in_progress' AND finished_at IS NOT NULL))
-);
-CREATE INDEX attempts_by_group ON attempts (client_group, task_name, id);
-CREATE UNIQUE INDEX attempts_one_in_progress ON attempts (client_group, task_name) WHERE outcome = 'in_progress';
-"""
 
 
 # Try a different task
@@ -541,44 +515,44 @@ def test_giving_up_goes_to_the_selector_which_lists_every_available_task_includi
     policy = _policy(_sheet("alpha") + _sheet("beta") + _sheet("gamma"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/alpha", policy, store)
-        assert _location(_open(now, "/tasks/alpha", policy, store, method="POST")) == CHOOSER
-        _open(now, "/tasks/beta", policy, store)
-        _open(now, "/tasks/beta", policy, store, method="POST")
+        _open(now, _path(policy, "alpha"), policy, store)
+        assert _location(_open(now, _path(policy, "alpha"), policy, store, method="POST")) == CHOOSER
+        _open(now, _path(policy, "beta"), policy, store)
+        _open(now, _path(policy, "beta"), policy, store, method="POST")
         assert [row.outcome for row in store.attempts("younger")] == ["abandoned", "abandoned"]
         chooser = _open(now, "/tasks/choose", policy, store)
         assert chooser.status == 200
         assert _listed(chooser) == ["alpha", "beta", "gamma"]
-        assert 'href="https://tasks.example/tasks/beta"' in chooser.body
+        assert f'href="https://tasks.example{_path(policy, "beta")}"' in chooser.body
 
 
 def test_giving_up_the_only_available_task_comes_straight_back_to_it(tmp_path):
     policy = _policy(_sheet("only"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/only", policy, store)
-        _open(now, "/tasks/only", policy, store, method="POST")
-        assert _location(_open(now, "/tasks/choose", policy, store)) == SITE + "/tasks/only"
+        _open(now, _path(policy, "only"), policy, store)
+        _open(now, _path(policy, "only"), policy, store, method="POST")
+        assert _location(_open(now, "/tasks/choose", policy, store)) == SITE + _path(policy, "only")
 
 
 def test_the_only_required_task_cannot_be_given_up(tmp_path):
     policy = _policy(_sheet("due", "due_date: 2026-10-31") + _sheet("optional"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/due", policy, store)
-        attempt = store.in_progress("younger", "due")
-        refused = _open(now, "/tasks/due", policy, store, method="POST")
+        _open(now, _path(policy, "due"), policy, store)
+        attempt = store.in_progress("younger", _key(policy, "due"))
+        refused = _open(now, _path(policy, "due"), policy, store, method="POST")
         assert refused.status == 200
         assert MUST_FINISH in refused.body
-        assert store.in_progress("younger", "due").id == attempt.id
+        assert store.in_progress("younger", _key(policy, "due")).id == attempt.id
 
 
 def test_one_of_two_required_tasks_can_be_given_up_and_the_selector_lists_the_required_ones(tmp_path):
     policy = _policy(_sheet("first", "due_date: 2026-10-31") + _sheet("second", "due_date: 2026-10-31") + _sheet("optional"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/first", policy, store)
-        assert _location(_open(now, "/tasks/first", policy, store, method="POST")) == CHOOSER
+        _open(now, _path(policy, "first"), policy, store)
+        assert _location(_open(now, _path(policy, "first"), policy, store, method="POST")) == CHOOSER
         assert _listed(_open(now, "/tasks/choose", policy, store)) == ["first", "second"]
 
 
@@ -587,10 +561,10 @@ def test_a_potential_or_practice_attempt_can_always_be_given_up(tmp_path, name):
     policy = _policy(_sheet("due", "due_date: 2026-10-31") + _sheet("optional") + _sheet("done"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "done", "pass", _at(10, 31, 9))
-        _open(now, f"/tasks/{name}", policy, store)
-        assert _location(_open(now, f"/tasks/{name}", policy, store, method="POST")) == CHOOSER
-        assert store.attempts("younger", name)[-1].outcome == "abandoned"
+        store.record("younger", _key(policy, "done"), "pass", _at(10, 31, 9))
+        _open(now, _path(policy, name), policy, store)
+        assert _location(_open(now, _path(policy, name), policy, store, method="POST")) == CHOOSER
+        assert store.attempts("younger", _key(policy, name))[-1].outcome == "abandoned"
         assert _listed(_open(now, "/tasks/choose", policy, store)) == ["due"]
 
 
@@ -601,23 +575,23 @@ def test_coming_back_within_the_hour_carries_on_the_attempt_he_gave_up(tmp_path)
     policy = _policy(_sums() + _sheet("other"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/sums", policy, store)
+        _open(now, _path(policy, "sums"), policy, store)
         _quiz(now, "sums", policy, store, "visit")
         _answer_one(now, "sums", policy, store)
         _quiz(now, "sums", policy, store, "question")
         given_up = now + timedelta(minutes=1)
-        _open(given_up, "/tasks/sums", policy, store, method="POST")
-        before = store.attempts("younger", "sums")[-1]
+        _open(given_up, _path(policy, "sums"), policy, store, method="POST")
+        before = store.attempts("younger", _key(policy, "sums"))[-1]
         assert before.outcome == "abandoned"
         back = given_up + timedelta(minutes=59)
-        page = _open(back, "/tasks/sums", policy, store)
+        page = _open(back, _path(policy, "sums"), policy, store)
         assert "1 / 3 correct" in page.body
-        again = store.in_progress("younger", "sums")
+        again = store.in_progress("younger", _key(policy, "sums"))
         assert again.id == before.id
         assert again.detail["questions"] == before.detail["questions"]
         assert [item["outcome"] for item in again.detail["questions"]] == ["correct", "timeout"]
-        assert len(store.attempts("younger", "sums")) == 1
-        assert skip_days("sums", "younger", store.attempts("younger")) == frozenset()
+        assert len(store.attempts("younger", _key(policy, "sums"))) == 1
+        assert skip_days(_key(policy, "sums"), "younger", store.attempts("younger")) == frozenset()
         assert again.task_set == "potential"
 
 
@@ -626,35 +600,35 @@ def test_the_picker_and_selector_lead_back_to_the_same_given_up_attempt(tmp_path
     policy = _policy(_sheet("only"), tmp_path)
     now = _at(10, 31)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/only", policy, store)
-        _open(now, "/tasks/only", policy, store, method="POST")
-        first = store.attempts("younger", "only")[-1]
-        assert _location(_open(now, route, policy, store)) == SITE + "/tasks/only"
-        _open(now + timedelta(minutes=5), "/tasks/only", policy, store)
-        assert store.in_progress("younger", "only").id == first.id
+        _open(now, _path(policy, "only"), policy, store)
+        _open(now, _path(policy, "only"), policy, store, method="POST")
+        first = store.attempts("younger", _key(policy, "only"))[-1]
+        assert _location(_open(now, route, policy, store)) == SITE + _path(policy, "only")
+        _open(now + timedelta(minutes=5), _path(policy, "only"), policy, store)
+        assert store.in_progress("younger", _key(policy, "only")).id == first.id
 
 
 def test_after_the_hour_or_on_a_later_day_a_new_attempt_starts(tmp_path):
     policy = _policy(_sheet("words"), tmp_path)
     now = _at(10, 31, 20)
     with AttemptStore(":memory:") as store:
-        _open(now, "/tasks/words", policy, store)
-        _open(now, "/tasks/words", policy, store, method="POST")
-        _open(now + timedelta(minutes=61), "/tasks/words", policy, store)
-        assert [row.outcome for row in store.attempts("younger", "words")] == ["abandoned", "in_progress"]
+        _open(now, _path(policy, "words"), policy, store)
+        _open(now, _path(policy, "words"), policy, store, method="POST")
+        _open(now + timedelta(minutes=61), _path(policy, "words"), policy, store)
+        assert [row.outcome for row in store.attempts("younger", _key(policy, "words"))] == ["abandoned", "in_progress"]
         late = _at(10, 31, 23, 50)
-        _open(late, "/tasks/words", policy, store, method="POST")
-        _open(late + timedelta(minutes=20), "/tasks/words", policy, store)
-        assert [row.outcome for row in store.attempts("younger", "words")] == ["abandoned", "abandoned", "in_progress"]
+        _open(late, _path(policy, "words"), policy, store, method="POST")
+        _open(late + timedelta(minutes=20), _path(policy, "words"), policy, store)
+        assert [row.outcome for row in store.attempts("younger", _key(policy, "words"))] == ["abandoned", "abandoned", "in_progress"]
 
 
 def test_a_given_up_attempt_is_not_reopened_once_a_newer_attempt_has_started(tmp_path):
     policy = _policy(_sheet("words"), tmp_path)
     with AttemptStore(":memory:") as store:
-        store.record("younger", "words", "abandoned", _at(10, 31, 16, 0), started_at=_at(10, 31, 15, 55))
-        store.record("younger", "words", "failure", _at(10, 31, 16, 10), started_at=_at(10, 31, 16, 5))
-        _open(_at(10, 31, 16, 20), "/tasks/words", policy, store)
-        assert [row.outcome for row in store.attempts("younger", "words")] == ["abandoned", "failure", "in_progress"]
+        store.record("younger", _key(policy, "words"), "abandoned", _at(10, 31, 16, 0), started_at=_at(10, 31, 15, 55))
+        store.record("younger", _key(policy, "words"), "failure", _at(10, 31, 16, 10), started_at=_at(10, 31, 16, 5))
+        _open(_at(10, 31, 16, 20), _path(policy, "words"), policy, store)
+        assert [row.outcome for row in store.attempts("younger", _key(policy, "words"))] == ["abandoned", "failure", "in_progress"]
 
 
 def test_giving_up_again_abandons_again_and_the_parent_sees_each_give_up_and_return(tmp_path):
@@ -663,9 +637,9 @@ def test_giving_up_again_abandons_again_and_the_parent_sees_each_give_up_and_ret
     with PolicyStore(":memory:") as saved:
         store = AttemptStore(connection=saved.connection)
         for minutes in (0, 10, 20):
-            _open(now + timedelta(minutes=minutes), "/tasks/words", policy, store)
-            _open(now + timedelta(minutes=minutes + 5), "/tasks/words", policy, store, method="POST")
-        [attempt] = store.attempts("younger", "words")
+            _open(now + timedelta(minutes=minutes), _path(policy, "words"), policy, store)
+            _open(now + timedelta(minutes=minutes + 5), _path(policy, "words"), policy, store, method="POST")
+        [attempt] = store.attempts("younger", _key(policy, "words"))
         assert attempt.outcome == "abandoned"
         assert [(event["gave_up"][11:16], event["came_back"][11:16]) for event in attempt.reopened] == [
             ("16:05", "16:10"),
@@ -684,10 +658,10 @@ def test_giving_up_again_abandons_again_and_the_parent_sees_each_give_up_and_ret
 def test_an_attempt_left_open_is_closed_as_unfinished_and_a_fresh_one_starts_in_todays_set(tmp_path):
     policy = _policy(_sheet("words", "max_skips: 1") + _sheet("other"), tmp_path)
     with AttemptStore(":memory:") as store:
-        _open(_at(11, 2), "/tasks/words", policy, store)
-        assert store.in_progress("younger", "words").task_set == "potential"
-        _open(_at(11, 3), "/tasks/words", policy, store)
-        old, fresh = store.attempts("younger", "words")
+        _open(_at(11, 2), _path(policy, "words"), policy, store)
+        assert store.in_progress("younger", _key(policy, "words")).task_set == "potential"
+        _open(_at(11, 3), _path(policy, "words"), policy, store)
+        old, fresh = store.attempts("younger", _key(policy, "words"))
         assert old.outcome == "unfinished"
         assert old.finished_at is None
         assert (fresh.outcome, fresh.task_set) == ("in_progress", "required")
@@ -697,13 +671,13 @@ def test_an_attempt_left_open_is_a_skip_day_for_the_day_it_started_even_if_never
     policy = _policy(_sheet("words", "max_skips: 1") + _sheet("other"), tmp_path)
     with AttemptStore(":memory:") as store:
         monday = _at(11, 2)
-        _open(monday, "/tasks/words", policy, store)
+        _open(monday, _path(policy, "words"), policy, store)
         assert store.task_sets(policy.tasks, "younger", monday.date()).required == ()
-        _open(monday, "/tasks/words", policy, store, method="POST")
-        _open(monday + timedelta(minutes=90), "/tasks/words", policy, store)
+        _open(monday, _path(policy, "words"), policy, store, method="POST")
+        _open(monday + timedelta(minutes=90), _path(policy, "words"), policy, store)
         tuesday = store.task_sets(policy.tasks, "younger", _at(11, 3).date())
         assert [task.name for task in tuesday.required] == ["words"]
-        assert skip_days("words", "younger", store.attempts("younger"), before=_at(11, 3).date()) == {monday.date()}
+        assert skip_days(_key(policy, "words"), "younger", store.attempts("younger"), before=_at(11, 3).date()) == {monday.date()}
 
 
 def test_an_unfinished_practice_attempt_has_no_effect(tmp_path):
@@ -711,8 +685,8 @@ def test_an_unfinished_practice_attempt_has_no_effect(tmp_path):
     with AttemptStore(":memory:") as store:
         monday = _at(11, 2)
         _pass_by_page(monday, "words", policy, store)
-        _open(monday + timedelta(minutes=5), "/tasks/words", policy, store)
-        assert store.in_progress("younger", "words").task_set == "practice"
+        _open(monday + timedelta(minutes=5), _path(policy, "words"), policy, store)
+        assert store.in_progress("younger", _key(policy, "words")).task_set == "practice"
         assert store.task_sets(policy.tasks, "younger", _at(11, 3).date()).required == ()
 
 
@@ -720,14 +694,14 @@ def test_a_quiz_on_screen_when_the_day_ends_carries_on_and_scores_on_the_day_it_
     policy = _policy(_sums(), tmp_path)
     late = _at(10, 31, 23, 58)
     with AttemptStore(":memory:") as store:
-        _open(late, "/tasks/sums", policy, store)
+        _open(late, _path(policy, "sums"), policy, store)
         _quiz(late, "sums", policy, store, "visit")
         _answer_one(late, "sums", policy, store)
         after = _at(11, 1, 0, 2)
         _answer_one(after, "sums", policy, store)
         judged = _answer_one(after, "sums", policy, store)
         assert judged["finished"] is True
-        [attempt] = store.attempts("younger", "sums")
+        [attempt] = store.attempts("younger", _key(policy, "sums"))
         assert (attempt.outcome, attempt.task_set) == ("pass", "potential")
         assert _score(store, policy, after) == 1
         assert _score(store, policy, late) == 0
@@ -744,7 +718,7 @@ def test_the_attempts_page_shows_each_set_unfinished_attempts_and_where_today_st
     now = _at(10, 31)
     with PolicyStore(":memory:") as saved:
         store = AttemptStore(connection=saved.connection)
-        _open(_at(10, 30), "/tasks/left", policy, store)
+        _open(_at(10, 30), _path(policy, "left"), policy, store)
         _pass_by_page(now, "words", policy, store)
         _pass_by_page(now + timedelta(minutes=5), "words", policy, store)
         accounts = Accounts(saved.connection)
@@ -753,9 +727,9 @@ def test_the_attempts_page_shows_each_set_unfinished_attempts_and_where_today_st
         page = attempts_report(store, ("younger", "older"), "younger", now=now, tasks=policy.tasks)
         assert page["summary"] == [
             {"label": "Today's score", "value": "1"},
-            {"label": "Required tasks outstanding", "value": "due"},
-            {"label": "Potential tasks available", "value": "sums, left"},
-            {"label": "Potential passes waiting on required tasks", "value": "words"},
+            {"label": "Required tasks outstanding", "value": "worksheet/due"},
+            {"label": "Potential tasks available", "value": "worksheet/sums, worksheet/left"},
+            {"label": "Potential passes waiting on required tasks", "value": "worksheet/words"},
         ]
         shown = {row["set"] for row in page["attempts"]} | {row["outcome"] for row in page["attempts"]}
         for label in ("Potential", "Practice", "Parent check", "Unfinished"):
@@ -817,16 +791,18 @@ def test_the_service_opens_a_bookmarked_task_while_a_required_one_is_outstanding
             found.setdefault(key.decode(), []).append(value.decode())
         return start["status"], payload.decode(), found
 
-    status, body, _headers = call("GET", "/tasks/optional")
+    status, body, _headers = call("GET", "/tasks/worksheet/optional")
     assert status == 200
     assert "Try a different task" in body
     status, _body, headers = call("GET", "/tasks/next")
-    assert headers["location"] == ["https://tasks.example/tasks/due"]
+    assert headers["location"] == ["https://tasks.example/tasks/worksheet/due"]
     decision = json.dumps({"client_ip": YOUNGER, "method": "GET", "url": YOUTUBE}).encode()
     status, body, _headers = call("POST", "/v1/decisions", body=decision, content_type="application/json")
     assert json.loads(body)["location"] == PICKER
-    task_page = json.dumps({"client_ip": YOUNGER, "method": "GET", "url": SITE + "/tasks/optional"}).encode()
+    task_page = json.dumps({"client_ip": YOUNGER, "method": "GET", "url": SITE + "/tasks/worksheet/optional"}).encode()
     status, body, _headers = call("POST", "/v1/decisions", body=task_page, content_type="application/json")
     assert json.loads(body)["location"] == PICKER
     with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT task_name, task_set FROM attempts").fetchall() == [("optional", "potential")]
+        assert connection.execute("SELECT task_type, task_name, task_set FROM attempts").fetchall() == [
+            ("worksheet", "optional", "potential")
+        ]

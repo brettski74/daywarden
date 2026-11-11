@@ -162,25 +162,39 @@ A policy edit does not disturb a transfer until that stored time or a volume cei
 
 ## Tasks
 
-A task has a name, unique in the task namespace, the common attributes below, and a `body` with the settings its type needs. Each type's subsection after this one describes its body.
+Under `tasks:`, each key is a task type, `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`, and under each type each key is a task name. Each task has the common attributes below and a `body` with the settings its type needs. Each type's subsection after this one describes its body.
 
-The same type may appear on more than one task. `parts-of-speech-1` and `parts-of-speech-2` keep separate sentences, dates, and attempt history. Attempts are rows, not part of this file. Editing a task does not delete them. S003.1 is the catalogue. S009 moves the household day off local midnight. Until then the day starts at midnight.
+```yaml
+tasks:
+  arithmetic:
+    week-1:
+      group: younger
+      body: { operation: addition, max_timeout: 10s, min_timeout: 4s, correct_answers_required: 10, operands: [{ from: 1, to: 9, weight: 1 }] }
+  spelling:
+    week-1:
+      group: younger
+    week-2:
+      group: younger
+```
+
+A task is its type and its name together, written `<type>/<name>` in messages, such as `spelling/week-1`. Two tasks may share a name when their types differ, so `arithmetic/week-1` and `spelling/week-1` above are two tasks, each with its own address, history, dates, and limits. The same type and name twice is a load error, whether as a duplicate key in one file or in two files, and the error names both places. An included file may add tasks under a type that another file also uses. Every load error about a task names it as `<type>/<name>`, such as `task 'arithmetic/sums': body.operands entry 2: ...`. A file in the layout before S012, with `type:` inside each task, fails to load like any other malformed file.
+
+The same type may appear on more than one task. `parts-of-speech-1` and `parts-of-speech-2` keep separate sentences, dates, and attempt history. Attempts are rows, not part of this file. Each attempt is stored with its task's type and name, and a task's history is the attempts with the same client group, type, and name. Editing a task, or removing it and putting it back, does not delete them, and a task with a new type under an old name starts with no history. S003.1 is the catalogue. S009 moves the household day off local midnight. Until then the day starts at midnight.
 
 ### Editing a task from the parent portal
 
-Each task has a page in the parent portal, at `/parent/tasks/<name>`. Saving it rewrites that task in whichever file defines it, including a file brought in by `include`. Only the fields that changed are rewritten. The file's comments, its layout, and every other entry stay exactly as they were, and a cleared field is removed from the file. So the `decisions` service mounts the config directory writable. The other services still mount it read-only. Each file it writes keeps its owner and mode.
+Each task has a page in the parent portal, at `/parent/tasks/<type>/<name>`. Task Administration lists the tasks by name, adding the type in brackets where two tasks share a name. Saving it rewrites that task in whichever file defines it, including a file brought in by `include`. Only the fields that changed are rewritten. The file's comments, its layout, and every other entry stay exactly as they were, and a cleared field is removed from the file. A weighted list that changed, such as a skip counting task's `difference` or an arithmetic task's `first` and `operands`, is written again whole, one flow mapping per entry such as `- { from: 3, to: 9, weight: 10 }`, and loses any comments inside it. So the `decisions` service mounts the config directory writable. The other services still mount it read-only. Each file it writes keeps its owner and mode.
 
-Before anything is written, the whole policy is checked with the changed file and with any spelling words already in their new pools, exactly as `dw check` would. A save that would not load is refused, and nothing changes. A good save is applied to every service as `dw reload` applies it, and committed to the config history as the signed-in parent, such as `2026-11-08 21:15 -0500 brett: saved task spelling`. A save first commits any hand edits it finds in the config directory, as `<time> hand edits found before a portal save`, when they pass the check, and refuses to save when they do not. A file changed on the server since the page was opened is not saved over: the page has to be reloaded first.
+Before anything is written, the whole policy is checked with the changed file and with any spelling words already in their new pools, exactly as `dw check` would. A save that would not load is refused, and nothing changes. A good save is applied to every service as `dw reload` applies it, and committed to the config history as the signed-in parent, such as `2026-11-08 21:15 -0500 brett: saved task spelling/spelling`. A save first commits any hand edits it finds in the config directory, as `<time> hand edits found before a portal save`, when they pass the check, and refuses to save when they do not. A file changed on the server since the page was opened is not saved over: the page has to be reloaded first.
 
-A spelling task's new week's words, at `/parent/tasks/<name>/week`, are applied the same way. Apply is checked first with every word already in its new pool and every kept clip already in place. It moves the current words that are not on the week's list to revision, moves listed revision and attic words into current, writes each kept clip into current in place of the word's older clip of that kind, and gives an existing plain word, such as `read`, the next free number when the list adds a new numbered meaning of it, such as `read.1`. Every step is a rename, and an older clip is moved aside into the setup until Apply has gone through, so a failure partway moves everything back and keeps the setup. A change to `current_required` or `revision_required` made with Apply is written, applied, and committed as a save is.
+A spelling task's new week's words, at `/parent/tasks/spelling/<name>/week`, are applied the same way. Apply is checked first with every word already in its new pool and every kept clip already in place. It moves the current words that are not on the week's list to revision, moves listed revision and attic words into current, writes each kept clip into current in place of the word's older clip of that kind, and gives an existing plain word, such as `read`, the next free number when the list adds a new numbered meaning of it, such as `read.1`. Every step is a rename, and an older clip is moved aside into the setup until Apply has gone through, so a failure partway moves everything back and keeps the setup. A change to `current_required` or `revision_required` made with Apply is written, applied, and committed as a save is.
 
 ### Common task attributes
 
-Every task takes these fields, whatever its type. Any other field on a task fails the load, and the previous policy stays in force.
+Every task takes these fields, whatever its type. Its type is the key above its name, not a field. Any other field on a task fails the load, and the previous policy stays in force.
 
 | Field | Default | Value |
 | --- | --- | --- |
-| `type` | Required | The kind of task: `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`. |
 | `group` or `groups` | Required | The client group the task is assigned to with `group`, or a list of one or more with `groups`. Use one of the two, not both. `default` means the implicit client group. |
 | `pass_cooldown` | 1 | Household days after a pass before the task is offered again. A task is never offered again on the day it was passed, so 0 and 1 both mean the next day, and leaving it out is the same as 1. |
 | `failure_cooldown` | No wait | Household days after a failure before the task is offered again. |
@@ -204,15 +218,15 @@ A task is offered to a group only when it is assigned to that group, today is on
 
 ```yaml
 tasks:
-  term-4-spelling:
-    type: spelling
-    groups: [younger, older]
-    pass_cooldown: 1
-    failure_cooldown: 0
-    available_from: 2026-10-05
-    due_date: 2026-12-11
-    max_skips: 2
-    max_passes: 20
+  spelling:
+    term-4-spelling:
+      groups: [younger, older]
+      pass_cooldown: 1
+      failure_cooldown: 0
+      available_from: 2026-10-05
+      due_date: 2026-12-11
+      max_skips: 2
+      max_passes: 20
 ```
 
 This spelling task is first offered on 5 October. After a pass it rests until the next day. After a failure it can be tried again at once. Two skip days since the last pass make it required, and from 11 December it is required until the group has passed it. After 20 passes it is not offered again. `younger` and `older` each keep their own cooldowns, skip days, and passes, so a pass by `older` does nothing for `younger`.
@@ -240,11 +254,9 @@ The score is what `tasks_required` compares with `required`.
 
 So he can do the easier tasks first. With parts of speech due today, spelling and addition not required, and `tasks_required` of 2, passing spelling and addition scores nothing yet. If parts of speech has `failure_cooldown: 1` and he fails it, it is no longer required today, and the score becomes 2. Passing it instead makes the score 3. Without a failure cooldown, a failed task stays required, and only parent checks add to the score that day. A reload that makes another task required stops the waiting points counting again until that task is cleared. Once every task he can do is passed or cooling down, nothing he does adds a point that day. Only a parent check does.
 
-Attempts stored before task sets existed are treated as required. They count for cooldowns, skip days, `max_passes`, and due dates as they did, and a pass from earlier on the day of the upgrade scores one point.
-
 ### The picker and the selector
 
-`/tasks/next` is the picker. It opens an available task. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in name order. A redirect to `revision_task`, and "Next task" on the end screen of a quiz, go to the picker, so his revision keeps its variety. "Next task" is shown only while a task is available, and "All done for now" otherwise.
+`/tasks/next` is the picker. It opens an available task. It prefers a task that has never been passed, then the one whose last pass is oldest. Candidates that tie rotate in order of name, then type. A redirect to `revision_task`, and "Next task" on the end screen of a quiz, go to the picker, so his revision keeps its variety. "Next task" is shown only while a task is available, and "All done for now" otherwise.
 
 `/tasks/choose` is the task selector. Opening it does not move the picker's rotation, and nothing on it changes which attempts score. It has up to three sections, worked out for his client group on the household day:
 
@@ -252,11 +264,11 @@ Attempts stored before task sets existed are treated as required. They count for
 |---------|---------|---------------|-------|
 | Choose a task | Blue | The available tasks: the required tasks while any is required, otherwise the potential tasks. | The picker's order |
 | After These | Teal | The potential tasks while any task is required. With nothing required they are the available tasks, so this section is empty. | The picker's order |
-| Extra Practice | Purple | Every other task assigned to the group: one passed today, cooling down after a pass or a failure, or at `max_passes`. A task before its `available_from` is left out, though its URL still opens it as practice. | Name |
+| Extra Practice | Purple | Every other task assigned to the group: one passed today, cooling down after a pass or a failure, or at `max_passes`. A task before its `available_from` is left out, though its URL still opens it as practice. | Name, then type |
 
-A `parent_check` task and a task assigned to another group are in no section. A section with no tasks is not shown. After These says "These count once the tasks above are done." and Extra Practice says "Practice is just for fun. It doesn't count toward your internet time today." Each opens and closes from its heading, a button that Tab reaches and Enter or Space toggles, over 500ms with swing easing, the parent portal's timing, or at once when the browser asks for reduced motion. Both start closed each time the page opens, and a closed section's buttons are skipped by Tab. Opening a task from any section is the same as opening its URL, so its attempt is required, potential, or practice by the rules above.
+A `parent_check` task and a task assigned to another group are in no section. A section with no tasks is not shown. A button shows the task's name, with its type in brackets when another task has the same name, such as `week-1 (skip counting)`. After These says "These count once the tasks above are done." and Extra Practice says "Practice is just for fun. It doesn't count toward your internet time today." Each opens and closes from its heading, a button that Tab reaches and Enter or Space toggles, over 500ms with swing easing, the parent portal's timing, or at once when the browser asks for reduced motion. Both start closed each time the page opens, and a closed section's buttons are skipped by Tab. Opening a task from any section is the same as opening its URL, so its attempt is required, potential, or practice by the rules above.
 
-When exactly one task is available and After These and Extra Practice are both empty, the selector opens that task straight away. When nothing is available, the picker and the selector both say "There is nothing to revise right now." with Extra Practice open beneath when it has a task. A task named `next` or `choose` is served at `/tasks/work/next` or `/tasks/work/choose`.
+When exactly one task is available and After These and Extra Practice are both empty, the selector opens that task straight away. When nothing is available, the picker and the selector both say "There is nothing to revise right now." with Extra Practice open beneath when it has a task. The picker and the selector have one part after `/tasks/` and a task's address has two, so a task named `next` or `choose` is at `/tasks/<type>/next` or `/tasks/<type>/choose`.
 
 When an end screen says "All done for now" and Extra Practice has a task, it also shows an "Extra Practice" link to the selector, which then has Extra Practice open. After a pass that is counting down to go back to the page he was sent away from, pressing it stops the countdown, as "Next task" does.
 
@@ -268,7 +280,7 @@ The task pages' colours are custom properties in `policy/child_page.py`, with th
 
 ### Direct task URLs
 
-Any configured task opens at its own URL, such as a bookmark of `https://garden:8084/tasks/spelling`, whatever the task sets say: a task passed today, cooling down, at `max_passes`, before its `available_from`, or optional while a required task is outstanding. The page serves its quiz requests and its audio too. A name that is not a task, a task assigned to another client group, and a `parent_check` task send him to the picker. Nothing a child sends records a parent check.
+Any configured task opens at its own URL, `/tasks/<type>/<name>`, such as a bookmark of `https://garden:8084/tasks/spelling/spelling`, whatever the task sets say: a task passed today, cooling down, at `max_passes`, before its `available_from`, or optional while a required task is outstanding. The page serves its quiz requests, and its audio under `/tasks/<type>/<name>/audio/`. A type and name that is not a task, including the right name with the wrong type and an address in the form before S012 such as `/tasks/spelling`, a task assigned to another client group, and a `parent_check` task send him to the picker. Nothing a child sends records a parent check.
 
 ### Try a different task
 
@@ -284,15 +296,15 @@ An attempt left in progress, for example when he closed the tab partway through,
 
 ### Parent checks and the attempts page
 
-An authenticated parent records a `parent_check` pass for a client group from `/parent/attempts` in the parent portal. That pass scores one point and is listed with the group's other attempts. The child has no request that records one. For the chosen client group, `/parent/attempts` shows today's score, which is the one the rules use at that moment, the required tasks still outstanding, the potential tasks still available, and the potential passes waiting on the required tasks. Each attempt there, and the attempt page it opens, says whether it was Required, Potential, Practice, or a Parent check.
+An authenticated parent records a `parent_check` pass for a client group from `/parent/attempts` in the parent portal. That pass scores one point and is listed with the group's other attempts. The child has no request that records one. For the chosen client group, `/parent/attempts` shows today's score, which is the one the rules use at that moment, the required tasks still outstanding, the potential tasks still available, and the potential passes waiting on the required tasks. Each attempt there, and the attempt page it opens, shows its task's name and the type stored with it, and says whether it was Required, Potential, Practice, or a Parent check. A task named in the summary is written `<type>/<name>`. A parent check is stored with the type `parent_check`, under the name of the group's `parent_check` task, or `parent_check` when it has none.
 
 ### Arithmetic tasks
 
-A task with `type: arithmetic` is a timed quiz. Its `body` is checked when the file is loaded. A bad body fails the load, the previous policy stays in force, and the error names the task and the field.
+An `arithmetic` task is a timed quiz. Its `body` is checked when the file is loaded. A bad body fails the load, the previous policy stays in force, and the error names the task and the field.
 
 | Field | Required | Value |
 | --- | --- | --- |
-| `operation` | Yes | `addition`. Subtraction, multiplication, and division arrive with S026. |
+| `operation` | Yes | `addition`, `subtraction`, `multiplication`, or `division`. |
 | `max_timeout` | Yes | The time for the first question. A duration greater than zero. |
 | `min_timeout` | Yes | The time once `correct_answers_required - 1` answers are right. Greater than zero and no longer than `max_timeout`. |
 | `correct_answers_required` | Yes | The number of right answers that pass the attempt. 1 or more. |
@@ -303,21 +315,32 @@ A duration is a whole number with `h`, `m`, `s`, or `ms`, such as `10s` or `7500
 
 ```yaml
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 1
-    body:
-      operation: addition
-      max_timeout: 10s
-      min_timeout: 4s
-      correct_answers_required: 20
-      operands:
-        - { value: 1, weight: 5 }
-        - { value: 2, weight: 7 }
-        - { from: 3, to: 9, weight: 10 }
-        - { value: 10, weight: 5 }
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 1
+      body:
+        operation: addition
+        max_timeout: 10s
+        min_timeout: 4s
+        correct_answers_required: 20
+        operands:
+          - { value: 1, weight: 5 }
+          - { value: 2, weight: 7 }
+          - { from: 3, to: 9, weight: 10 }
+          - { value: 10, weight: 5 }
 ```
+
+Each operation asks a question built from `m` and `n`, with the signs used on paper:
+
+| `operation` | Question | Answer | A draw of 6 and 7 asks |
+| --- | --- | --- | --- |
+| `addition` | `m + n =` | `m + n` | `6 + 7 =`, answer 13 |
+| `subtraction` | `(m + n) − m =` | `n` | `13 − 6 =`, answer 7 |
+| `multiplication` | `m × n =` | `m × n` | `6 × 7 =`, answer 42 |
+| `division` | `(m × n) ÷ m =` | `n` | `42 ÷ 6 =`, answer 7 |
+
+So `first` sets the number taken away or divided by in subtraction and division, such as a single `7` for every question to take away or divide by 7. The weights apply to `m` and `n`, never to the sum or product shown. Division cannot divide by 0, so a division task with a 0 in the list `m` is drawn from, `first`, or `operands` when there is no `first`, as a `value` or inside a range, fails the load, naming the task and the field. A 0 in `operands` with a `first` free of 0 is allowed, and asks questions such as `0 ÷ 7 =`.
 
 `m` and `n` are drawn independently. A question is the ordered pair, so `6 + 7` and `7 + 6` are different questions. None of the last three questions in the attempt is asked again while another question is possible. After `k` right answers the time allowed is `max_timeout * (min_timeout / max_timeout) ^ (k / (correct_answers_required - 1))`. Wrong answers and timeouts do not shorten it.
 
@@ -331,7 +354,7 @@ The quiz talks to the server by posting to its own task URL, `?do=visit`, `?do=q
 
 ### Skip counting tasks
 
-A task with `type: skip_counting` shows a row of numbers that count up or down by the same step, with some boxes left blank for him to fill in. Its `body` is checked when the file is loaded, the same way as an arithmetic body. Every field is optional.
+A `skip_counting` task shows a row of numbers that count up or down by the same step, with some boxes left blank for him to fill in. Its `body` is checked when the file is loaded, the same way as an arithmetic body. Every field is optional.
 
 | Field | Default | Value |
 | --- | --- | --- |
@@ -355,24 +378,24 @@ The default list caps counting by 2 at 99, by 5 at 199, and by 10 at 499, in bot
 
 ```yaml
 tasks:
-  skip-counting:
-    type: skip_counting
-    group: younger
-    pass_cooldown: 1
-    failure_cooldown: 0
-    body:
-      sequence_length: 10
-      completed: 4
-      minimum_value: 0
-      maximum_value: 200
-      difference:
-        - { value: 2, weight: 3, maximum_value: 60 }
-        - { value: 5, weight: 2 }
-        - { value: -2, weight: 3, maximum_value: 60 }
-        - { value: -5, weight: 2 }
-      minimum_questions: 10
-      maximum_questions: 15
-      timeout: 2m
+  skip_counting:
+    skip-counting:
+      group: younger
+      pass_cooldown: 1
+      failure_cooldown: 0
+      body:
+        sequence_length: 10
+        completed: 4
+        minimum_value: 0
+        maximum_value: 200
+        difference:
+          - { value: 2, weight: 3, maximum_value: 60 }
+          - { value: 5, weight: 2 }
+          - { value: -2, weight: 3, maximum_value: 60 }
+          - { value: -5, weight: 2 }
+        minimum_questions: 10
+        maximum_questions: 15
+        timeout: 2m
 ```
 
 Each question draws a difference, leaving out the differences of the last two questions, and the rest keep their weights. With two differences they alternate. With one, every question uses it. The start is drawn evenly from every start that keeps the sequence in range, leaving out the last two starts used with that difference. The filled-in positions are drawn evenly from every set that meets `consecutive`.
@@ -385,7 +408,7 @@ The attempt `detail` holds `settings`, `runs`, `last_activity`, and `questions`.
 
 ### Parts of speech tasks
 
-A task with `type: parts_of_speech` lists sentences, and for each one says which of its words are nouns, verbs, adjectives, or any other part of speech the parent wants him to practise. Its `body` is checked when the file is loaded. On the task page he drags the words of each sentence into a table with one row per part of speech.
+A `parts_of_speech` task lists sentences, and for each one says which of its words are nouns, verbs, adjectives, or any other part of speech the parent wants him to practise. Its `body` is checked when the file is loaded. On the task page he drags the words of each sentence into a table with one row per part of speech.
 
 | Field | Default | Value |
 | --- | --- | --- |
@@ -403,24 +426,24 @@ Each sentence has these fields.
 
 ```yaml
 tasks:
-  parts-of-speech-1:
-    type: parts_of_speech
-    group: younger
-    pass_cooldown: 21
-    failure_cooldown: 1
-    body:
-      sentences:
-        - sentence: "The quick, brown fox jumped over the lazy dog."
-          parts:
-            noun: [fox, dog]
-            verb: [jumped]
-            adjective: [quick, brown, lazy]
-        - sentence: "Dry the dishes with a dry towel."
-          timeout: 2m
-          parts:
-            verb: ["dry[1]"]
-            noun: [dishes, towel]
-            adjective: ["dry[2]"]
+  parts_of_speech:
+    parts-of-speech-1:
+      group: younger
+      pass_cooldown: 21
+      failure_cooldown: 1
+      body:
+        sentences:
+          - sentence: "The quick, brown fox jumped over the lazy dog."
+            parts:
+              noun: [fox, dog]
+              verb: [jumped]
+              adjective: [quick, brown, lazy]
+          - sentence: "Dry the dishes with a dry towel."
+            timeout: 2m
+            parts:
+              verb: ["dry[1]"]
+              noun: [dishes, towel]
+              adjective: ["dry[2]"]
 ```
 
 The fox sentence gets the default 90 seconds and the dry sentence 2 minutes. With two sentences and no `correct_answers_required`, he needs 2 points to pass. The default is worked out in whole numbers: 10 sentences need 7 points, 5 need 4, 3 need 3, and 1 needs 1.
@@ -441,7 +464,7 @@ In YAML, quote an entry with brackets or a comma inside `[...]`, as in `["dry[1]
 
 YAML reads an unquoted `yes`, `no`, `on`, `off`, or number as something other than text, so write `["yes"]` or `["3"]` for those words. A part with nothing after it, such as `adverb:` on its own, is not a list. Write `adverb: []`.
 
-The load fails, and the previous policy stays in force, for any of these. The error names the task, the sentence number, and the part and entry where there is one, such as `task 'parts-of-speech-1': body.sentences entry 2: parts.adjective: "dry[3]": the sentence has only 2 of "dry"`.
+The load fails, and the previous policy stays in force, for any of these. The error names the task, the sentence number, and the part and entry where there is one, such as `task 'parts_of_speech/parts-of-speech-1': body.sentences entry 2: parts.adjective: "dry[3]": the sentence has only 2 of "dry"`.
 
 - A missing or empty `sentences`, a sentence without `sentence` or `parts`, an empty `parts`, a sentence with no words in it, or a sentence whose parts are all empty.
 - An unknown field on the body or on a sentence, or a field of the wrong type, including a part that is not a list.
@@ -473,7 +496,7 @@ The page is told the sentence as words and the text between them, the part names
 
 ### Spelling tasks
 
-A task with `type: spelling` plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted into the `decisions` container at `/var/lib/daywarden/data`, writable so that the parent portal's task page can move and retire words and write recordings made in the browser. Recordings waiting for the parent to keep them are in the hidden `.recordings` directory there, and are removed after a day. A new week's spelling words being set up on the portal, with their sentence text and the clips kept for them, are in the hidden `.weeks/<task>` directory until the parent applies or cancels them. Everything the service moves or creates there keeps the host user as its owner. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
+A `spelling` task plays a recorded word, and he types it into a large box. The words are audio files the parent puts in directories under the household data directory. On the host that is `DAYWARDEN_DATA_DIR` in `.env`, `$HOME/daywarden` by default. It is mounted into the `decisions` container at `/var/lib/daywarden/data`, writable so that the parent portal's task page can move and retire words and write recordings made in the browser. Recordings waiting for the parent to keep them are in the hidden `.recordings` directory there, and are removed after a day. A new week's spelling words being set up on the portal, with their sentence text and the clips kept for them, are in the hidden `.weeks/<task name>` directory until the parent applies or cancels them. Everything the service moves or creates there keeps the host user as its owner. The `observations` container does not mount it, so it checks the spelling fields but not the recordings. `make up` creates it when it is missing. A plain `docker compose up` refuses to start without it rather than creating it owned by root. Every field is optional.
 
 | Field | Default | Value |
 | --- | --- | --- |
@@ -493,14 +516,14 @@ Each word is one recording named `<word>.<ext>`, spoken clearly on its own, with
 
 ```yaml
 tasks:
-  weekly-spelling:
-    type: spelling
-    group: younger
-    pass_cooldown: 1
-    body:
-      timeout: 25s
-      current_required: 8
-      revision_required: 4
+  spelling:
+    weekly-spelling:
+      group: younger
+      pass_cooldown: 1
+      body:
+        timeout: 25s
+        current_required: 8
+        revision_required: 4
 ```
 
 The alphabet directory holds one recording per character, named for it: `a.<ext>` to `z.<ext>`, `dash.<ext>` for `-`, and `apostrophe.<ext>` for `'`, matched without regard to case. Every letter is required. `dash` and `apostrophe` are required only when a word in either pool uses that character. Other files are ignored.

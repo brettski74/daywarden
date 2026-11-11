@@ -1,8 +1,8 @@
 Ticket: S025
 Title: Skip counting administration and the weighted number table
-Status: Draft
+Status: In Progress
 Story Points: 13
-Last Updated: 2026-11-10 00:40:00
+Last Updated: 2026-11-10 08:05:00
 ---
 
 # User Voice
@@ -76,6 +76,9 @@ A row is empty when every box in it is empty and Multiples Only is on the task's
       Tab out of an empty last row reaches the control after the table.
 - [ ] A row that becomes empty in the middle of the table, by clearing its boxes, is removed the same way when the
       focus leaves it.
+- [ ] *Added in implementation:* An empty row still on the page, such as the one Add row has just made, is not part of
+      the list. It is not counted in the status bar, not saved, and is no change on its own, so the default list's note
+      stays until something is typed in it.
 
 ## Problems
 
@@ -143,3 +146,91 @@ Sizing: the settings and saving are like the parts of speech settings in S007.3,
 S007.3 built the save path and the list rewrite. The table, with its keyboard rules, its row checks, and its tests, is
 about 5. The default list, the per-row Min, Max, and Multiples Only, and the placeholders that follow the page add
 about 5, which makes 13. It has 31 checks.
+
+# Implementation
+
+## Files Added
+
+- `policy/number_lists_admin.py`: the weighted number tables of a task page, for S025 and S026. Rows as the page
+  shows them, the skip counting and arithmetic page data, and `list_changes()`, which turns the rows a save sends
+  into a whole-list rewrite, or nothing when they hold the file's numbers.
+- `policy/portal/src/numberTable.ts`: the table's model. Rows, the row checks, the clash check over ranges, the
+  comparison of two lists, and the rows a save sends.
+- `policy/portal/src/components/WeightedTable.tsx`: the table component, with Add row, the remove buttons, the
+  problems under each row, and the keyboard rules.
+- `policy/portal/src/skipCounting.ts`: the skip counting page's model. Placeholders that follow the page, the
+  checkboxes, the default rows with their caps, and whether the list on show is the default or changed.
+- `policy/portal/src/pages/SkipCounting.tsx`: the skip counting area of the task page.
+- `policy/portal/src/numberTable.test.ts`, `skipCounting.test.tsx`: Vitest tests of the model and the page.
+- `tests/test_skip_counting_admin.py`: the page data and saves through the app, the whole-list write, the default
+  list, refusals, the history commit, and the child's next run.
+
+## Files Changed
+
+- `policy/task_edit.py`: `ListEdit` takes `flow`, which writes the whole list again with one flow mapping per line.
+- `policy/skip_counting.py`: `default_differences()` is public, and without a maximum gives each difference its own
+  cap, which is what the page is sent.
+- `policy/task_admin.py`: a `skip_counting` task's page carries `skip_counting`, and a save takes its `settings` and
+  `lists`.
+- `policy/portal/src/pages/Task.tsx`: holds the number lists in its edits, sends them, counts them in the status bar,
+  and keeps Save disabled while a problem remains, with "Fix the problems marked on the page first."
+- `policy/portal/src/labels.ts`: the skip counting settings.
+- `policy/portal/src/styles/layout.css`: the checkbox settings, the table, its notes, and problems under a setting.
+  No new colours.
+- `tests/test_task_edit.py`: flow list rewrites, over a block list, a missing list, and a flow body.
+- `docs/hierarchical-policy.md`: a changed weighted list is written whole, losing comments inside it.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The service reads the task's body as the loader would and sends the settings as written, the two checkboxes' values
+in force, the task's own list as rows of text, or none, and the default list from `skip_counting.py` with each
+difference's own cap. The page lowers each cap to the Maximum Value it shows. A save sends `lists.difference` only
+when the list changed: the rows, or `"default"` to remove the field. The service turns each row into the entry it
+writes and compares the result with the file's list read the same way, so a list that holds the same numbers keeps
+its text, even when a box was retyped. Otherwise the whole `difference` entry is replaced, which is why comments
+inside it are lost. Then the policy check and the save go as in S023.2. A row the page would never send, such as a
+From that is not a number or an unknown column, is refused before anything is checked.
+
+The page keeps the list untouched, as `"default"`, or as its own rows. The first change to a default list on show
+copies its rows, with the caps as shown, and changes those. A copied list whose rows still equal the default rows is
+treated as the default list again. A checkbox changed back writes back the field's text as written, so it is no
+change. The page's checks are only the row checks. Settings are judged by the policy check on Save.
+
+A row is removed when focus leaves it empty, through the row's `focusout` and the element taking the focus. Focus
+leaving the window, with nothing taking it, does not count. Enter and Tab past the end only move the focus or add a
+row. The removal always comes from the focus leaving, so it happens once.
+
+A file entry the table cannot show, such as one that is not a mapping or has an unknown key, is listed above the
+table as a problem with the file, and a save of the list then always writes it again.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S025
+
+Set up two `skip_counting` tasks: one with its own `difference` list, written as block entries and flow mappings, with
+a comment inside the list, a `from`/`to` range, an entry with its own `maximum_value`, and one with
+`multiples_only: true`. Leave the second with no `difference` and no `consecutive`. Keep the config history on.
+
+1. Open the first task. Check The page and The weighted number table: the two groups, the titles, the placeholders,
+   Correct Answers Required following Maximum Questions `5` and Minimum Questions `12`, Minimum Questions following
+   it, the checkboxes, the rows in file order, the column titles, and Min, Max, and the task's Multiples Only
+   following the settings above.
+2. Work the table from the keyboard as in the scenario and The keyboard in the table: Enter through rows, Enter and
+   Tab past the end of the last row, Enter in an empty last row, Tab out of an empty last row, Shift+Tab, clearing a
+   middle row then clicking elsewhere, Add row, Add row left empty, and the remove button.
+3. Check Problems: a row with Weight but no From, `2.5`, To below From, Weight `0`, Max `0`, Min `1000`, 3 to 9
+   beside 7 to 12, `0` and -5 to 5, and every row removed. Try Save and Ctrl+S each time.
+4. Save, as in Saving: change a row, set To equal to From on another, add a row with Min, Max, and Multiples Only,
+   clear a setting, and tick and untick Consecutive. Read the policy file after each save, run `bin/dw check`, look
+   at `git log` in the config directory, and reload the page. Save a list that counts by 100 with Sequence Length 8
+   and Maximum Value `702`, and Sequence Length `13`, and check each refusal. Edit the file by hand with the page open
+   and check the save is refused as in S023.2.
+5. Open the second task. Check The default list: the note, the rows and caps, Maximum Value `150`, saving another
+   setting writes no list, removing rows takes the note away and saving writes the list, then Use the default list
+   puts the rows back and saving removes the field.
+6. Start the child's run of a task, save a changed list, finish the run, then start a new one, as in the last Saving
+   check.

@@ -79,21 +79,19 @@ quotas:
     time: 30m
     ruleset: meter
 tasks:
-  sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body: {json.dumps(SUMS)}
-  more_sums:
-    type: arithmetic
-    group: younger
-    pass_cooldown: 0
-    body: {json.dumps(SUMS)}
-  older_sums:
-    type: arithmetic
-    group: older
-    pass_cooldown: 0
-    body: {json.dumps(SUMS)}
+  arithmetic:
+    sums:
+      group: younger
+      pass_cooldown: 0
+      body: {json.dumps(SUMS)}
+    more_sums:
+      group: younger
+      pass_cooldown: 0
+      body: {json.dumps(SUMS)}
+    older_sums:
+      group: older
+      pass_cooldown: 0
+      body: {json.dumps(SUMS)}
 rule_sets:
   meter:
     - condition: site_group
@@ -256,7 +254,7 @@ class Service:
 
     def pass_task(self, *, client=YOUNGER, task="sums") -> dict:
         """Open the task in the browser and answer its one question."""
-        path = f"/tasks/{task}"
+        path = f"/tasks/arithmetic/{task}"
         status, page = _call(self.app, "GET", path, client=client)
         assert status == 200, page
         for action in ("visit", "question"):
@@ -331,7 +329,7 @@ def test_a_deny_or_a_redirect_written_in_the_policy_keeps_the_earlier_page(servi
 def test_the_task_pages_themselves_are_never_remembered(service):
     service.decide(VIDEO)
     assert service.decide("https://tasks.example/tasks/next")["action"] == "redirect"
-    assert service.decide("https://tasks.example/tasks/older_sums")["action"] == "redirect"
+    assert service.decide("https://tasks.example/tasks/arithmetic/older_sums")["action"] == "redirect"
     assert service.pass_task()["back"] == VIDEO
 
 

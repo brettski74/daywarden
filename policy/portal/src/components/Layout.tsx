@@ -2,15 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Outlet, useLoaderData, useLocation, type LoaderFunctionArgs } from "react-router";
 import { api, pageOf } from "../api";
 import { SlotsContext } from "../slots";
+import type { TaskRef } from "../taskRef";
 import { Sidebar } from "./Sidebar";
 
-type Frame = { username: string; tasks: string[] };
+type Frame = { username: string; tasks: TaskRef[] };
 
 export async function layoutLoader({ request }: LoaderFunctionArgs): Promise<Frame> {
   const page = pageOf(request);
   const [session, listed] = await Promise.all([
     api<{ username: string }>("/session", { page, signal: request.signal }),
-    api<{ tasks: string[] }>("/tasks", { page, signal: request.signal }),
+    api<{ tasks: TaskRef[] }>("/tasks", { page, signal: request.signal }),
   ]);
   return { username: session.username, tasks: listed.tasks };
 }

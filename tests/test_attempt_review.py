@@ -9,7 +9,7 @@ from asgi import call, session_cookie
 from policy.accounts import Accounts
 from policy.review import attempt_report, attempts_report, record_parent_check
 from policy.store import PolicyStore
-from policy.tasks import PARENT_CHECK, AttemptStore, Task
+from policy.tasks import PARENT_CHECK, AttemptStore, Task, TaskKey
 
 PASSWORD = "s3cret-pass"
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
@@ -26,16 +26,16 @@ def _accounts(store: PolicyStore, **limits) -> Accounts:
 def _plant(store: AttemptStore) -> None:
     store.record(
         "older",
-        "private-task",
+        TaskKey("worksheet", "private-task"),
         "failure",
         datetime(2026, 10, 31, 18, 0),
         started_at=datetime(2026, 10, 31, 17, 30),
         detail={"answers": ["platypus"]},
     )
-    store.begin("younger", "open-task", datetime(2026, 10, 31, 17, 0))
+    store.begin("younger", TaskKey("worksheet", "open-task"), datetime(2026, 10, 31, 17, 0))
     store.record(
         "younger",
-        "later",
+        TaskKey("arithmetic", "later"),
         "pass",
         datetime(2026, 10, 31, 16, 12, 30),
         started_at=datetime(2026, 10, 31, 16, 0),
@@ -43,7 +43,7 @@ def _plant(store: AttemptStore) -> None:
     )
     store.record(
         "younger",
-        "middle",
+        TaskKey("worksheet", "middle"),
         "failure",
         datetime(2026, 10, 31, 15, 5),
         started_at=datetime(2026, 10, 31, 15, 0),
@@ -51,7 +51,7 @@ def _plant(store: AttemptStore) -> None:
     )
     store.record(
         "younger",
-        "early",
+        TaskKey("worksheet", "early"),
         "abandoned",
         datetime(2026, 10, 31, 14, 10, 45),
         started_at=datetime(2026, 10, 31, 14, 10),
@@ -76,6 +76,7 @@ def test_a_pass_a_failure_and_an_abandonment_show_outcome_and_local_times():
         assert _row(report, "open-task") | {"id": 0} == {
             "id": 0,
             "task": "open-task",
+            "type": "worksheet",
             "set": "Required",
             "started": "Saturday 31 October 2026, 17:00",
             "finished": "still going",
@@ -83,6 +84,7 @@ def test_a_pass_a_failure_and_an_abandonment_show_outcome_and_local_times():
             "duration": "still going",
         }
         later = _row(report, "later")
+        assert later["type"] == "arithmetic"
         assert (later["started"], later["finished"], later["outcome"], later["duration"]) == (
             "Saturday 31 October 2026, 16:00",
             "Saturday 31 October 2026, 16:12:30",
@@ -130,7 +132,8 @@ def test_an_attempt_shows_each_answer_and_a_parent_check_shows_its_record():
         _plant(store)
         passed = next(row for row in store.recent("younger") if row.task == "later")
         page = attempt_report(store, str(passed.id), now=NOW)
-        assert page["task"] == "later"
+        assert (page["task"], page["type"]) == ("later", "arithmetic")
+        assert {"label": "Type", "value": "arithmetic"} in page["summary"]
         assert page["client"] == "younger"
         assert {"label": "Outcome", "value": "pass"} in page["summary"]
         assert page["answers"] == ["wombat", "kangaroo"]
@@ -148,6 +151,7 @@ def test_an_attempt_shows_each_answer_and_a_parent_check_shows_its_record():
         opened = attempt_report(store, str(credit.id), now=NOW)
         assert opened["record"] == {"recorded_by": "parent"}
         assert {"label": "Set", "value": "Parent check"} in opened["summary"]
+        assert {"label": "Type", "value": "parent_check"} in opened["summary"]
         assert store.passes_on("younger", NOW.date()) == 2
 
 
@@ -171,8 +175,9 @@ def test_a_parent_records_a_parent_check_and_a_stranger_group_does_not():
         assert record_parent_check(accounts, store, "younger", now=NOW, tasks=(CREDIT,), clients=CLIENTS) is None
         report = attempts_report(store, CLIENTS, "younger", now=NOW, tasks=(CREDIT,))
         top = report["attempts"][0]
-        assert (top["task"], top["set"], top["outcome"], top["started"]) == (
+        assert (top["task"], top["type"], top["set"], top["outcome"], top["started"]) == (
             "credit",
+            "parent_check",
             "Parent check",
             "pass",
             "Saturday 31 October 2026, 12:00",
@@ -180,6 +185,8 @@ def test_a_parent_records_a_parent_check_and_a_stranger_group_does_not():
         assert store.passes_on("younger", NOW.date()) == 1
         assert [row.outcome for row in store.attempts("younger")] == ["pass"]
         assert accounts.parent_checks()[0][0] == "younger"
+        assert record_parent_check(accounts, store, "older", now=NOW, tasks=(CREDIT,), clients=CLIENTS) is None
+        assert store.attempts("older")[0].key == TaskKey("parent_check", "parent_check")
 
 
 @pytest.fixture
@@ -194,7 +201,7 @@ def service(tmp_path, monkeypatch):
     monkeypatch.setenv("PARENT_IDLE", "1m")
     with PolicyStore(database) as saved:
         Accounts(saved.connection).set_password("ada", PASSWORD)
-        AttemptStore(connection=saved.connection).record("younger", "later", "pass", NOW, detail={"answers": ["wombat"]})
+        AttemptStore(connection=saved.connection).record("younger", TaskKey("worksheet", "later"), "pass", NOW, detail={"answers": ["wombat"]})
     app = create_app()
     app.state.database = database
     return app

@@ -134,7 +134,7 @@ def respond_api(
     back: Back | None = None,
 ) -> PageResponse:
     """Record a page load, issue a word, record a replay, or judge a spelling, and answer with JSON."""
-    attempt = store.in_progress(client_group, task.name)
+    attempt = store.in_progress(client_group, task.key)
     if attempt is None:
         return reload()
     rng = rng or _RNG
@@ -273,7 +273,7 @@ def _question(session: Session, task: Task, question: Mapping, rng: random.Rando
     settings = session.settings
     pool, key = question["pool"], question["key"]
     word = session.word(pool, key)
-    base = task_media_path(task.name)
+    base = task_media_path(task.key)
     sentence = None
     if word["sentence"] is not None:
         sentence = base + media_name(key, pool, Clip(word["sentence"], word["sentence_ms"]), sentence=True, rng=rng)
@@ -295,7 +295,7 @@ def _practice_word(
 ) -> dict:
     """Return one practice word and each clip to play for it, with the pause before each in milliseconds."""
     word = session.word(pool, key)
-    base = task_media_path(task.name)
+    base = task_media_path(task.key)
     spoken = base + media_name(key, pool, Clip(word["clip"], word["clip_ms"]), sentence=False, rng=rng)
     clips = {WORD_CLIP: (spoken, word["clip_ms"])}
     for character in word["word"]:

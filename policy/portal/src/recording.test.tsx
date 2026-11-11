@@ -30,14 +30,14 @@ async function openSpelling({ upload, cut, keep, found = 2 }: Answers = {}) {
       return cut?.(call) ?? { body: { take: TAKE, clips: clips(found), ignored: 0, loudness: "Loudness -30.0 LUFS, raised 12.0 dB to -18.0 LUFS." } };
     }
     if (call.path === `/parent/api/recordings/${TAKE}/discard`) return { body: { discarded: true } };
-    if (call.path === "/parent/api/tasks/spelling/recordings") return keep?.(call) ?? { body: { message: "Saved the new word recording of rope.", warnings: [] } };
-    if (call.path === "/parent/api/tasks/spelling") {
+    if (call.path === "/parent/api/tasks/spelling/spelling/recordings") return keep?.(call) ?? { body: { message: "Saved the new word recording of rope.", warnings: [] } };
+    if (call.path === "/parent/api/tasks/spelling/spelling") {
       refetched += 1;
       return { body: SPELLING };
     }
     return undefined;
   });
-  const view = renderPortal("/parent/tasks/spelling");
+  const view = renderPortal("/parent/tasks/spelling/spelling");
   await screen.findByRole("heading", { name: "spelling" });
   return { calls, refetches: () => refetched - 1, ...view };
 }
@@ -197,7 +197,7 @@ describe("reviewing the clips", () => {
     expect(within(dialog).getByRole("row", { name: "rope (word) Kept" })).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")[0].body).toEqual({ take: TAKE, word: "rope", clips: { word: "aaaaaa-1" } });
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")[0].body).toEqual({ take: TAKE, word: "rope", clips: { word: "aaaaaa-1" } });
     expect(screen.getByRole("status")).toHaveTextContent("Saved the new word recording of rope.");
     await waitFor(() => expect(refetches()).toBe(1));
   });
@@ -214,8 +214,8 @@ describe("reviewing the clips", () => {
     expect(within(dialog).getByText("Playing: rope (sentence)")).toBeInTheDocument();
     await userEvent.keyboard("k");
     await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toHaveLength(1));
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")[0].body).toMatchObject({ clips: { word: "aaaaaa-2", sentence: "aaaaaa-3" } });
+    await waitFor(() => expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")).toHaveLength(1));
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")[0].body).toMatchObject({ clips: { word: "aaaaaa-2", sentence: "aaaaaa-3" } });
     expect(media.played).toEqual(["aaaaaa-1", "aaaaaa-2", "aaaaaa-3"].map((id) => `/parent/api/recordings/${TAKE}/${id}.opus`));
   });
 
@@ -230,8 +230,8 @@ describe("reviewing the clips", () => {
     expect(within(dialog).getByRole("row", { name: "rope (word) Missing" })).toBeInTheDocument();
     expect(within(dialog).getByRole("row", { name: "rope (sentence) Kept" })).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toHaveLength(1));
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")[0].body).toMatchObject({ clips: { sentence: "aaaaaa-1" } });
+    await waitFor(() => expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")).toHaveLength(1));
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")[0].body).toMatchObject({ clips: { sentence: "aaaaaa-1" } });
   });
 
   it("goes back to the last clip and item, undoing the choice, and replays on R", async () => {
@@ -268,7 +268,7 @@ describe("reviewing the clips", () => {
     await userEvent.keyboard("k");
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toEqual([]);
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")).toEqual([]);
     expect(posts(calls, `/parent/api/recordings/${TAKE}/discard`)).toHaveLength(2);
   });
 
@@ -291,7 +291,7 @@ describe("reviewing the clips", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Record again" }));
     expect(within(dialog).getByText("Press any key to start recording.")).toBeInTheDocument();
     expect(posts(calls, `/parent/api/recordings/${TAKE}/discard`)).toHaveLength(1);
-    expect(posts(calls, "/parent/api/tasks/spelling/recordings")).toEqual([]);
+    expect(posts(calls, "/parent/api/tasks/spelling/spelling/recordings")).toEqual([]);
   });
 });
 
@@ -304,7 +304,7 @@ describe("a session that ends while recording", () => {
     const dialog = await openDialog("Re-record word for rope");
     await recordTake(dialog);
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Your session has ended. Sign in again in another tab, then press Upload.");
-    expect(shown(router)).toBe("/parent/tasks/spelling");
+    expect(shown(router)).toBe("/parent/tasks/spelling/spelling");
     expect(posts(calls, "/parent/api/recordings")).toHaveLength(1);
 
     refused = false;

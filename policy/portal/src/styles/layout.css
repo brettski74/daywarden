@@ -817,6 +817,95 @@ input[data-changed],
   padding-left: 1.2rem;
 }
 
+/* A checkbox setting, which sits in the box column of its group. */
+.setting-flag {
+  justify-self: start;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.25rem;
+}
+
+.setting-flag[data-changed],
+select[data-changed] {
+  background: var(--changed-bg);
+}
+
+/* A weighted number table: one row per entry of a list, such as a skip counting task's differences. */
+
+.number-lists {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem 3rem;
+}
+
+.number-list {
+  margin: 1rem 0;
+}
+
+.number-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+}
+
+.number-table {
+  border-collapse: collapse;
+}
+
+.number-table th,
+.number-table td {
+  padding: 0.2rem 0.35rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.number-table thead th {
+  border-bottom: 0.08rem solid var(--border);
+  background: var(--table-head-bg);
+}
+
+.number-table input {
+  width: 5.5rem;
+}
+
+.number-table tr[data-changed] > * {
+  background: var(--changed-bg);
+}
+
+.number-problems td {
+  padding-top: 0;
+}
+
+.number-under {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+
+.notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.15rem 0;
+}
+
+.note-problem {
+  color: var(--failure-text);
+  font-weight: 600;
+}
+
+/* A problem with a setting, under its box. */
+.setting-problem {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 /* The parts of speech editor. Each sentence is a two-column table laid out like the child's. */
 
 .pos-block {

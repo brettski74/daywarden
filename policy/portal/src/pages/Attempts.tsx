@@ -15,6 +15,7 @@ type Labelled = { label: string; value: string };
 type AttemptRow = {
   id: number;
   task: string;
+  type: string;
   set: string;
   started: string;
   finished: string;
@@ -106,6 +107,7 @@ export function Attempts() {
           <thead>
             <tr>
               <th scope="col">Task</th>
+              <th scope="col">Type</th>
               <th scope="col">Set</th>
               <th scope="col">Started</th>
               <th scope="col">Finished</th>
@@ -119,6 +121,7 @@ export function Attempts() {
                 <td>
                   <Link to={`/attempts/${row.id}`}>{row.task}</Link>
                 </td>
+                <td>{row.type}</td>
                 <td>{row.set}</td>
                 <td>{row.started}</td>
                 <td>{row.finished}</td>

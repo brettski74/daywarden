@@ -5,6 +5,7 @@ import { Dialog } from "../components/Dialog";
 import { RecordDialog, type Kept } from "../components/RecordDialog";
 import { label } from "../labels";
 import type { Item, Kind } from "../review";
+import { taskPath, type TaskRef } from "../taskRef";
 
 export type Pool = "current" | "revision" | "attic";
 export type SpellingWord = { key: string; word: string; pool: Pool; clip: string; sentence: string | null };
@@ -47,8 +48,8 @@ export const RECORDINGS: { kinds: Kind[]; label: string; icon: typeof Mic }[] = 
   { kinds: ["sentence"], label: "Re-record sentence", icon: MessageSquareText },
 ];
 
-export function audioAddress(task: string, pool: Pool, file: string): string {
-  return `${BASE}/api/tasks/${encodeURIComponent(task)}/audio/${pool}/${encodeURIComponent(file)}`;
+export function audioAddress(task: TaskRef, pool: Pool, file: string): string {
+  return `${BASE}/api${taskPath(task)}/audio/${pool}/${encodeURIComponent(file)}`;
 }
 
 function recordingItems(key: string, kinds: Kind[]): Item[] {
@@ -56,7 +57,7 @@ function recordingItems(key: string, kinds: Kind[]): Item[] {
 }
 
 type Props = {
-  task: string;
+  task: TaskRef;
   data: SpellingData;
   filter: string;
   settings: Record<string, string>;
@@ -82,7 +83,7 @@ export function SpellingAdmin({ task, data, filter, settings, moves, onSetting, 
 
   async function keep(take: string, kept: Kept[]): Promise<string> {
     const clips = Object.fromEntries(kept.map(({ item, clip }) => [item.kind, clip]));
-    const done = await api<{ message: string }>(`/tasks/${encodeURIComponent(task)}/recordings`, {
+    const done = await api<{ message: string }>(`${taskPath(task)}/recordings`, {
       page: null,
       method: "POST",
       body: { take, word: kept[0].item.key, clips },

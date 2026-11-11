@@ -1,7 +1,7 @@
 """The parent portal's task pages: read a task, save changes to it, and move its spelling words.
 
-A task page shows how the policy file writes the task, and the spelling
-words in the data directory. A save rewrites only that task, in whichever
+A task page, named by the task's type and name, shows how the policy file
+writes the task, and the spelling words in the data directory. A save rewrites only that task, in whichever
 file defines it, with ``policy.task_edit``. Before anything is written, the
 whole policy is checked with the changed file and with the words already in
 their new pools, exactly as ``dw check`` would load it. A policy that would
@@ -35,15 +35,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from policy import clips, parts_of_speech_admin, spelling
+from policy import clips, number_lists_admin, parts_of_speech_admin, spelling
+from policy.arithmetic import ARITHMETIC
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, task_files
 from policy.history import History, HistoryError, stamp
 from policy.owned import make_directory, own_like
 from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.recordings import GONE, Recordings
+from policy.skip_counting import SKIP_COUNTING
 from policy.task_edit import EditError, WrittenTask, name_list, read_task, rewrite_task, scalar
-from policy.tasks import PARENT_CHECK, AttemptStore, stored_passes
+from policy.tasks import PARENT_CHECK, AttemptStore, TaskKey, stored_passes
 
 COMMON_FIELDS = ("pass_cooldown", "failure_cooldown", "max_skips", "max_passes", "available_from", "due_date")
 # A parent check is never required, so these do not apply to it.
@@ -111,23 +113,26 @@ class TaskAdmin:
     def history(self) -> History:
         return History(self.policy_file.parent)
 
-    def names(self) -> list[str]:
-        """Return every task the policy files define, in name order."""
-        return sorted(self._files())
+    def catalogue(self) -> list[dict[str, str]]:
+        """Return the type and name of every task the policy files define, in order of name, then type."""
+        return [{"type": key.type, "name": key.name} for key in sorted(self._files(), key=lambda key: (key.name, key.type))]
 
-    def page(self, name: str) -> Answer:
-        found = self._read(name)
+    def keys(self) -> set[TaskKey]:
+        return set(self._files())
+
+    def page(self, key: TaskKey) -> Answer:
+        found = self._read(key)
         if isinstance(found, Answer):
             return found
         path, text, written = found
-        kind = written.fields.get("type", "")
+        kind = key.type
         fields = {key: written.fields.get(key, "") for key in COMMON_FIELDS}
         if kind == PARENT_CHECK:
             fields = {key: value for key, value in fields.items() if key not in NOT_FOR_PARENT_CHECK}
         clients = list(self.clients())
         clients += [group for group in written.groups if group not in clients]
         body = {
-            "name": name,
+            "name": key.name,
             "type": kind,
             "file": str(path),
             "version": _version(text),
@@ -139,20 +144,24 @@ class TaskAdmin:
             body["spelling"] = self._spelling_page(written)
         elif kind == PARTS_OF_SPEECH:
             body["parts_of_speech"] = parts_of_speech_admin.page(written)
+        elif kind == SKIP_COUNTING:
+            body["skip_counting"] = number_lists_admin.skip_counting_page(written)
+        elif kind == ARITHMETIC:
+            body["arithmetic"] = number_lists_admin.arithmetic_page(written)
         return Answer(200, body)
 
-    def save(self, name: str, request: Mapping, username: str) -> Answer:
-        found = self._read(name)
+    def save(self, key: TaskKey, request: Mapping, username: str) -> Answer:
+        found = self._read(key)
         if isinstance(found, Answer):
             return found
         path, text, written = found
         if request.get("version") != _version(text):
             return Answer(409, {"error": STALE, "stale": True})
         try:
-            changes = _changes(written, request)
+            changes = _changes(key.type, written, request)
             settings = _settings(written)
             moves, moved = self._moves(settings, request.get("moves") or {})
-            new_text = rewrite_task(text, path, name, changes) if changes else text
+            new_text = rewrite_task(text, path, key, changes) if changes else text
         except _Clash:
             return self._clash()
         except (EditError, ValueError) as error:
@@ -160,13 +169,13 @@ class TaskAdmin:
         if new_text == text and not moves:
             return Answer(200, {"message": "Nothing has changed, so nothing was saved.", "warnings": []})
         return self.write(
-            name, path, text, new_text, moves, username,
+            key, path, text, new_text, moves, username,
             confirmed=bool(request.get("confirmed")), moved=_moved_words(moved) if moved else None,
         )
 
     def write(
         self,
-        name: str,
+        key: TaskKey,
         path: Path,
         text: str,
         new_text: str,
@@ -191,7 +200,7 @@ class TaskAdmin:
         try:
             hand = history.changed() if history.kept else []
         except HistoryError as error:
-            print(f"task {name}: the config history could not be read: {error}", flush=True)
+            print(f"task {key}: the config history could not be read: {error}", flush=True)
             hand = []
         if hand:
             problems = self._problems()
@@ -201,11 +210,11 @@ class TaskAdmin:
         if refused is not None:
             return refused
         checked = self._checked
-        task = None if checked is None else checked.task(name)
+        task = None if checked is None else checked.task(key)
         if task is not None and task.due_date is not None and not confirmed:
-            passed = [group for group in task.groups if stored_passes(name, group, self.attempts.history(group))]
+            passed = [group for group in task.groups if stored_passes(key, group, self.attempts.history(group))]
             if passed:
-                return Answer(409, {"confirm": _due_warning(name, passed), "groups": passed})
+                return Answer(409, {"confirm": _due_warning(key.name, passed), "groups": passed})
         warnings: list[str] = []
         when = self.now()
         if hand:
@@ -227,17 +236,17 @@ class TaskAdmin:
             applied = self._reload(warnings)
             if applied is not None:
                 return applied
-            parts.append(f"Saved {name}. The decisions, observations, and autoconfig services are using it.")
+            parts.append(f"Saved {key.name}. The decisions, observations, and autoconfig services are using it.")
         if moved:
             parts.append(moved)
         if new_text != text:
             relative = _within(path, self.policy_file.parent)
             if relative is not None and history.kept:
-                self._commit(f"{stamp(when)} {username}: saved task {name}", username, when, [relative], warnings)
+                self._commit(f"{stamp(when)} {username}: saved task {key}", username, when, [relative], warnings)
         return Answer(200, {"message": " ".join(parts), "warnings": warnings})
 
-    def retire(self, name: str, key: object) -> Answer:
-        found = self._read(name)
+    def retire(self, task: TaskKey, key: object) -> Answer:
+        found = self._read(task)
         if isinstance(found, Answer):
             return found
         _path, _text, written = found
@@ -261,19 +270,19 @@ class TaskAdmin:
             return Answer(500, {"error": f"{key} could not be retired: {error}"})
         return Answer(200, {"message": f"Retired {moved[0][0]}. Its recordings are in the attic.", "warnings": []})
 
-    def keep(self, name: str, request: Mapping) -> Answer:
+    def keep(self, task: TaskKey, request: Mapping) -> Answer:
         """Write the kept clips of a take as a word's new recordings, in the word's own pool directory.
 
         ``request`` names the take, the word's entry key, and the clip kept for
         each kind, ``word`` and ``sentence``. Each replaces the word's old clip
         of that kind, whatever its format. The take is thrown away afterwards.
         """
-        found = self._read(name)
+        found = self._read(task)
         if isinstance(found, Answer):
             return found
         written = found[2]
-        if written.fields.get("type") != spelling.SPELLING:
-            return Answer(400, {"error": f"{name} is not a spelling task, so it has no recordings."})
+        if task.type != spelling.SPELLING:
+            return Answer(400, {"error": f"{task.name} is not a spelling task, so it has no recordings."})
         take, key, kept = request.get("take"), request.get("word"), request.get("clips")
         if not isinstance(take, str) or not isinstance(key, str) or not isinstance(kept, Mapping):
             return Answer(400, {"error": "Name the take, the word, and the clip kept for each kind."})
@@ -305,10 +314,10 @@ class TaskAdmin:
         what = " and ".join(kind for kind in (spelling.WORD_CLIP, spelling.SENTENCE_CLIP) if kind in sources)
         return Answer(200, {"message": f"Saved the new {what} recording{'s' if len(sources) > 1 else ''} of {entry['key']}.", "warnings": []})
 
-    def audio(self, name: str, pool: str, file_name: str) -> Path | None:
+    def audio(self, task: TaskKey, pool: str, file_name: str) -> Path | None:
         """Return a recording in one of a spelling task's pools, or None."""
-        found = self._read(name)
-        if isinstance(found, Answer) or found[2].fields.get("type") != spelling.SPELLING:
+        found = self._read(task)
+        if isinstance(found, Answer) or task.type != spelling.SPELLING:
             return None
         if pool not in spelling.ALL_POOLS or "/" in file_name or file_name.startswith("."):
             return None
@@ -321,19 +330,19 @@ class TaskAdmin:
 
     # Reading
 
-    def _files(self) -> dict[str, Path]:
+    def _files(self) -> dict[TaskKey, Path]:
         try:
             return task_files(self.policy_file)
         except ConfigError:
             return {}
 
-    def _read(self, name: str) -> tuple[Path, str, WrittenTask] | Answer:
-        path = self._files().get(name)
+    def _read(self, key: TaskKey) -> tuple[Path, str, WrittenTask] | Answer:
+        path = self._files().get(key)
         if path is None:
-            return Answer(404, {"error": f"There is no task named {name}."})
+            return Answer(404, {"error": missing(key)})
         try:
             text = path.read_bytes().decode("utf-8")
-            return path, text, read_task(text, path, name)
+            return path, text, read_task(text, path, key)
         except (OSError, UnicodeDecodeError, EditError) as error:
             return Answer(400, {"error": str(error)})
 
@@ -468,11 +477,16 @@ def _version(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
+def missing(key: TaskKey) -> str:
+    """Return what a task page says when the policy files define no such task."""
+    return f"There is no {key.type} task named {key.name}."
+
+
+def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, object]:
     """Return the fields whose text differs from the file, as ``rewrite_task`` changes."""
     changes: dict[str, object] = {}
     allowed = COMMON_FIELDS
-    if written.fields.get("type") == PARENT_CHECK:
+    if kind == PARENT_CHECK:
         allowed = tuple(key for key in COMMON_FIELDS if key not in NOT_FOR_PARENT_CHECK)
     _diff(changes, written.fields, request.get("fields"), allowed)
     groups = request.get("groups")
@@ -487,13 +501,19 @@ def _changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
                 changes["group"] = None
                 changes["groups"] = name_list(groups)
     body: dict[str, object] = {}
-    if written.fields.get("type") == spelling.SPELLING:
+    if kind == spelling.SPELLING:
         _diff(body, written.body, request.get("settings"), SPELLING_SETTINGS)
-    elif written.fields.get("type") == PARTS_OF_SPEECH:
+    elif kind == PARTS_OF_SPEECH:
         _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
         sentences = parts_of_speech_admin.sentences_edit(written, request.get("sentences"))
         if sentences is not None:
             body["sentences"] = sentences
+    elif kind == SKIP_COUNTING:
+        _diff(body, written.body, request.get("settings"), number_lists_admin.SKIP_COUNTING_SETTINGS)
+        body.update(number_lists_admin.list_changes(written, number_lists_admin.SKIP_COUNTING_TABLES, request.get("lists")))
+    elif kind == ARITHMETIC:
+        _diff(body, written.body, request.get("settings"), number_lists_admin.ARITHMETIC_SETTINGS)
+        body.update(number_lists_admin.list_changes(written, number_lists_admin.ARITHMETIC_TABLES, request.get("lists")))
     if body:
         changes["body"] = body
     return changes
