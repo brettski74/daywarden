@@ -4,8 +4,9 @@
 service, and the command-line tools share, and sets its pragmas. Each module
 that keeps data there creates its own tables on that connection with
 ``CREATE TABLE IF NOT EXISTS``: parent accounts in ``policy.accounts``, task
-attempts in ``policy.tasks``, the usage ledger in ``policy.usage``, and the
-pages a child was sent away from in ``policy.returns``.
+attempts in ``policy.tasks``, the usage ledger in ``policy.usage``, the usage
+graph's presets in ``policy.usage_graph``, and the pages a child was sent away
+from in ``policy.returns``.
 """
 
 from __future__ import annotations

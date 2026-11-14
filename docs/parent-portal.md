@@ -4,7 +4,7 @@ The parent portal is the parent's side of Daywarden: one React Router app, serve
 
 ## Scope
 
-- The portal is the parent side only. It holds the sign-in screen and every page a parent uses: the attempt review, the usage report, and later the editors and analytics.
+- The portal is the parent side only. It holds the sign-in screen and every page a parent uses: the attempt review, the usage graph, the task editors, and later more analytics.
 - The child's task pages under `/tasks/...` and `/quiz` are not part of the portal. They keep their own simple layout with large fonts and large controls. The portal's components, stylesheets, palette, layout, and build never apply to them, and portal work does not change their layout or design.
 - The one piece of code the portal and the child's pages share is `policy/static/word_sort.js`, the drag-and-drop that sorts words into a table, used by the parts of speech editor and the child's parts of speech page. It is plain JavaScript outside the portal. The portal imports it, with `word_sort.d.ts` beside it, and the child's page inlines it into its own script. It marks elements only with `data-` attributes, and each page styles those with its own palette, so a change to it is checked on both pages.
 
@@ -14,7 +14,7 @@ Every signed-in page has the same frame:
 
 - **Sidebar.** Down the left side for the full height of the window. The logo is centred at the top, then the page entries, then who is signed in and Sign out at the bottom. The entry for the open page is marked. Entries that do not fit scroll between the logo and the bottom cluster, and the logo and the bottom cluster stay in place. The sidebar may grow headed groups, such as Reports and Settings, when there are enough entries to need them.
 - **Main pane.** The rest of the window, from top to bottom:
-  - **Context bar.** One line high, across the full width of the main pane. It holds what the page is about and the choices for it: the page title or a breadcrumb such as Attempts › younger › spelling-week-3, the page's pull-downs, and buttons that act on what is on show, such as Record parent check.
+  - **Context bar.** One line high, across the full width of the main pane. It holds what the page is about and the choices for it: the page title or a breadcrumb such as Attempts › younger › spelling-week-3, the page's pull-downs, and buttons that act on what is on show, such as Record parent check. A page with more filters than fit on that line, such as the usage graph, puts them on a second line in a `bar-filters` group, which wraps onto a third line in a narrow window. The title and the page's buttons stay on the first line.
   - **Content pane.** Takes most of the window and holds the page itself.
   - **Status bar.** One line high, across the full width of the main pane. It holds facts about what is on show, such as how many records are listed and the timezone of the times, and confirms or refuses the last action.
 
@@ -87,7 +87,7 @@ The portal uses the parent session from S007.1: a `Secure`, `HttpOnly`, `SameSit
 
 - **The shell carries no household data.** `index.html`, the scripts, the stylesheets, and the images are the same for everyone and are served without a session. Attempts, usage, tasks, the household's group names, and the signed-in username come only from JSON endpoints under `/parent/api/`. Spelling recordings the task pages play also come from under `/parent/api/`, and need a session in the same way.
 - **Data endpoints answer 401 or 403 and never redirect.** With no valid session they answer 401 with no data. With no parent account they answer 403 with `"closed": true` and no data. Over plain HTTP they are refused, as every parent address is. The browser does not follow these answers anywhere. Only the portal's own code reacts to them.
-- **State-changing requests are JSON POSTs.** Sign-in, sign-out, the parent check, a task save, locking in a new task's name and type, creating a task, renaming one, making a spelling directory, Retire, cutting, keeping, or discarding a recording, and saving, applying, or cancelling a setup of spelling words are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
+- **State-changing requests are JSON POSTs.** Sign-in, sign-out, the parent check, a task save, locking in a new task's name and type, creating a task, renaming one, making a spelling directory, Retire, cutting, keeping, or discarding a recording, saving, applying, or cancelling a setup of spelling words, and saving or deleting a usage preset are `POST`s whose body must be `application/json`. Anything else is refused with 415, so a form on another site cannot act with the parent's cookie. A password in a query string is never read.
 - **The one exception is a recording's upload.** `POST /parent/api/recordings` takes the raw audio, and only when its `Content-Type` is `audio/webm` or `audio/ogg`, with or without a `codecs` parameter. Anything else, including `multipart/form-data`, `application/x-www-form-urlencoded`, and `text/plain`, is refused with 415. A form on another site can send only those three refused types, a script on another site that sends an audio type needs a CORS preflight that the service never approves, and the `SameSite=Lax` cookie is not sent on a cross-site POST. A body over 20 MB is refused with 413 before it is read to the end. No other endpoint takes anything but JSON.
 - **Sign-out ends the session on the service.** It deletes that session's row, so the key cannot be used again in any tab.
 - **The portal makes no background requests.** A request happens only when the parent acts: opening a page, changing a choice, or pressing a button. There is no polling or timed refresh, so a tab left open does not extend the idle limit.
@@ -108,7 +108,7 @@ After sign-in, the parent always lands on a portal page with the full frame. The
 
 - **Layout and theme are separate stylesheets.** `src/styles/layout.css` holds structure, sizes, spacing, and type, and names no colours. `src/styles/theme.css` holds every colour. No CSS framework or CSS-in-JS that compiles colours into class names or component code is used.
 - **Palette properties feed role properties.** Palette properties, such as `--palette-navy`, name the theme's raw colours and are used only inside the theme stylesheet. Role properties say what a colour is for, such as `--sidebar-bg`, `--bar-bg`, `--content-bg`, `--content-text`, `--border`, `--row-hover`, `--focus-ring`, `--button-bg`, and `--button-text`. Layout CSS and components use only role properties. A colour a page needs is a new role property in the theme.
-- **No colour values outside the theme.** No component, layout stylesheet, inline style, or TypeScript file names a colour, hex or otherwise. Lucide icons draw with `currentColor`, so they follow the text around them. Later charts read their series colours from role properties.
+- **No colour values outside the theme.** No component, layout stylesheet, inline style, or TypeScript file names a colour, hex or otherwise. Lucide icons draw with `currentColor`, so they follow the text around them. Charts read their series colours from role properties, as below.
 - **Beyond colours.** The theme also sets anything else a theme might change: `color-scheme` for the browser's scroll bars and form controls, shadows, and the logo images through `--sidebar-logo` and `--signin-logo`. Components never name an image path for the logo.
 - **Themes are ready to add.** The theme's properties are defined on `:root` and on `:root[data-theme="daywarden"]`, and `index.html` sets `data-theme="daywarden"`. A later theme is a second stylesheet with its own `data-theme` value. Switching themes changes that attribute or the stylesheet, and no component changes. Nothing offers a theme choice yet.
 - **Contrast.** Body text meets WCAG AA, 4.5:1. The current palette is midnight navy `#17243A`, antique gold `#D4B477`, soft teal `#80B9C5`, warm ivory `#E9E2D2`, and muted lavender `#777E9C`. Gold on navy is about 7.8:1, navy on teal about 7.2:1, and navy on ivory about 12:1. These are the sidebar, the context and status bars, and the content pane. Navy on lavender is only about 3.9:1, so lavender is used for borders, hover, and selected-row tints, never as a background behind text. Whether the content pane is ivory or white is a one-line change to `--content-bg` in the theme.
@@ -119,6 +119,16 @@ After sign-in, the parent always lands on a portal page with the full frame. The
 - Code that waits for an animation reads the duration with `expandDuration()` in `src/motion.ts`, so it never waits longer or shorter than the CSS runs. `useExpander()` there keeps collapsing content on screen while it animates out, makes it inert so the keyboard skips it, and removes it when the animation ends.
 - When the browser asks for reduced motion, `--expand-duration` is `0ms` and every expand and collapse happens at once.
 - Only an expand or a collapse animates. A drag, a key press on the resize handle, and a window resize change the sidebar width at once.
+
+## Charts
+
+Charts are built from the small kit in `src/components/charts/`, not from a charting library. `ChartFrame.tsx` holds the parts every chart shares: the plot beside its legend, the axes, and the readout of what the pointer is on. `LineChart.tsx` is the line chart on it. A later chart type, such as bars or a donut, is another component on the same frame.
+
+- Scales and tick values come from `d3-scale`, and paths from `d3-shape`. React draws the SVG. Nothing draws on a canvas.
+- Series colours are the role properties `--chart-series-1` to `--chart-series-8`, applied by the classes `chart-series-1` to `chart-series-8`, which set `color`. Lines, dots, and legend swatches draw in `currentColor`. A ninth series and beyond reuse the colours with a dashed line.
+- Labels along a time axis are text the service formats in household-local time. The browser's timezone is never used to label a chart.
+- Lines and legend entries are DOM elements. Each line is focusable, with an `aria-label` naming it and its total, and the arrow keys, Home, and End move the readout along it, so the keyboard reaches everything the pointer does.
+- The plot measures its own box with a `ResizeObserver` and draws at that size, so a chart fills whatever space its page gives it.
 
 ## Icons and controls
 

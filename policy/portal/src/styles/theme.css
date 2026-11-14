@@ -20,6 +20,10 @@
   --palette-lavender: #777e9c;
   --palette-white: #ffffff;
   --palette-brick: #8a2c2c;
+  /* Used only for chart series. */
+  --palette-green: #3d7a4a;
+  --palette-orange: #c0652a;
+  --palette-plum: #7a3f73;
 
   color-scheme: light;
 
@@ -85,4 +89,18 @@
   --sort-target-bg: color-mix(in srgb, var(--palette-teal) 50%, var(--palette-ivory));
 
   --shadow: 0 0.1rem 0.6rem color-mix(in srgb, var(--palette-navy) 25%, transparent);
+
+  /* Charts: eight series colours that stand apart on ivory, then the axes, grid, marker, and readout. */
+  --chart-series-1: var(--palette-navy);
+  --chart-series-2: var(--palette-brick);
+  --chart-series-3: color-mix(in srgb, var(--palette-teal) 55%, var(--palette-navy));
+  --chart-series-4: color-mix(in srgb, var(--palette-gold) 75%, var(--palette-navy));
+  --chart-series-5: var(--palette-lavender);
+  --chart-series-6: var(--palette-green);
+  --chart-series-7: var(--palette-orange);
+  --chart-series-8: var(--palette-plum);
+  --chart-axis: var(--palette-navy);
+  --chart-grid: color-mix(in srgb, var(--palette-lavender) 35%, var(--palette-ivory));
+  --chart-marker-ring: var(--palette-white);
+  --chart-readout-bg: var(--palette-white);
 }

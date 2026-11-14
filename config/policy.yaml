@@ -29,7 +29,7 @@ bucket_length: 3m
 client_groups:
   younger:
     # PLACEHOLDER: replace with this computer's reserved IP or DNS name.
-    addresses: ["192.168.12.28", "192.168.12.29", "tundra"]
+    addresses: ["192.168.12.28", "192.168.12.29", "10.0.1.231", "172.19.0.1"]
 
 # The older child is not enrolled. To enrol them, add a client group, set
 # their reserved address, and add their computer to the proxy alias on the
@@ -122,7 +122,7 @@ quotas:
     # run the five-minute grace past that. bytes is omitted, so volume is
     # not a ceiling. The evening window is separate: the same grace is added
     # to the moment that window stops being true.
-    time: 25m
+    time: 45m
     ruleset: entertainment_meter
 
 rule_sets:

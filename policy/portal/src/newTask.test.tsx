@@ -299,7 +299,7 @@ describe("Rename", () => {
     await openSpelling();
     await userEvent.click(screen.getByRole("button", { name: "Rename" }));
     await userEvent.keyboard("words");
-    await userEvent.click(screen.getByRole("link", { name: "Usage" }));
+    await userEvent.click(screen.getByRole("link", { name: "Attempts" }));
     expect(await screen.findByRole("alertdialog", { name: "Leave this page?" })).toBeInTheDocument();
   });
 

@@ -287,7 +287,7 @@ def test_a_signed_in_parent_stays_signed_in_across_a_reload(service):
     cookie = headers["set-cookie"][0].split(";", 1)[0]
     service.edit(NO_READING, "when_true: { action: allow }")
     assert service.reload()[1]["reloaded"] is True
-    for path in ("/parent/api/session", "/parent/api/usage", "/parent/api/attempts"):
+    for path in ("/parent/api/session", "/parent/api/usage/minutes", "/parent/api/attempts"):
         status, body, _headers = _call(service.app, "GET", path, cookie=cookie, scheme="https")
         assert status == 200, body
 

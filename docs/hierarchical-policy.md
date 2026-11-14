@@ -133,7 +133,7 @@ The measuring rules already built stay in force for whatever the rule set accept
 - Time accrued is the sum of ended buckets. An open bucket does not add its length yet. A bucket keeps the length it was opened with. Changing the bucket length does not resize a quota or rewrite ended buckets.
 - Bytes accrued include a bucket that has not ended. There is one byte meter, the bytes on the observation.
 - Yesterday's usage is not counted today. Another client group's usage is not counted.
-- School and any other traffic that no quota accepts is still stored against its client group and site group. The usage report does not depend on a quota existing.
+- School and any other traffic that no quota accepts is still stored against its client group and site group. The usage graph does not depend on a quota existing.
 - `time_remaining` and `volume_remaining` use the limits above. Grace is not added to either test. A new transfer is refused once the limit is reached, while the balance is still inside the grace. A zero limit refuses the new transfer immediately.
 
 These do not break the finished accounting behaviour. The change is what an observation is filed under. It is filed once under the classified client group and site group, and again under each quota whose rule set returns allow or continue. Bucket length, ended buckets for time, open buckets for bytes, local midnight, and per-identity balances all stay.
@@ -864,9 +864,9 @@ A DNS name that does not resolve keeps the addresses it had before the reload. A
 
 Apply policy changes and upgrades overnight, while the child is not using the computer. A reload never changes the set of an attempt already stored, but it can make a task required partway through the day, and a potential pass he has already made then waits on that task. For example, he has passed spelling as a potential task, and a reload makes spelling and two new tasks required. Spelling was passed today, so it is not required, but its point waits until both new tasks are passed: three tasks where two would have done. A parent check makes up for it. An upgrade restarts the services, so a quiz on the screen reloads.
 
-# Usage report
+# Usage graph
 
-The report can be sliced by site group, by client group, or by quota. A quota slice is still per client group, because that is whose balance it is. Selecting a quota without a client group shows each client group's balance for it, including `default`.
+The parent portal's usage graph reads both ledgers. With no quota in play it counts the site-group rows, so traffic that no quota accepts is included. With a quota chosen, or grouped by quota, it counts the quota rows. A quota row keeps its client group but not its site group, so site groups and quotas are never used together. [S030.1](../stories/S030.1-usage-graph.md) describes the graph.
 
 `default` is a real slice for both kinds of group. Traffic that matched no configured group is visible there. An observation still answers success when the policy service is only recording it. Metering does not turn into a refusal.
 

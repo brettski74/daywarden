@@ -1,0 +1,12 @@
+# This is a comment
+tasks:
+  spelling:
+    Spelling:
+      pass_cooldown: 1
+      body:
+        timeout: 30s
+        revision_required: 10
+      max_passes: 2
+      max_skips: 170
+      groups: [younger, default]
+

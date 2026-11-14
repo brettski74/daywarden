@@ -174,8 +174,8 @@ def test_an_unknown_data_address_is_json_not_the_portal_page(portal):
 
 def test_the_old_addresses_and_the_root_redirect_to_the_portal(portal):
     for path, query, location in (
-        ("/usage", "view=client&client=younger", "/parent/usage?view=client&client=younger"),
-        ("/usage", "", "/parent/usage"),
+        ("/usage", "view=client&client=younger", "/parent/usage/minutes"),
+        ("/usage", "", "/parent/usage/minutes"),
         ("/attempts", "client=younger", "/parent/attempts?client=younger"),
         ("/attempts/7", "", "/parent/attempts/7"),
         ("/", "", "/parent/"),

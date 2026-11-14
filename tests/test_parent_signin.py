@@ -321,7 +321,7 @@ def test_without_an_account_or_a_session_the_data_endpoints_show_nothing(service
     closed = service.app(account=False)
     with PolicyStore(service.database) as store:
         AttemptStore(connection=store.connection).record("younger", TaskKey("spelling", "words"), "pass", NOW, detail={"answers": ["wombat"]})
-    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage", "view=client&client=younger"), ("/parent/api/session", "")):
+    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage/minutes", "client=younger"), ("/parent/api/session", "")):
         status, body, _headers = call(closed, "GET", path, query=query)
         assert status == 403, path
         assert json.loads(body) == {"error": "The parent portal is closed until a parent account is added.", "closed": True}
@@ -330,7 +330,7 @@ def test_without_an_account_or_a_session_the_data_endpoints_show_nothing(service
     assert "set-cookie" not in headers
 
     app = service.app()
-    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage", "view=client&client=younger")):
+    for path, query in (("/parent/api/attempts", "client=younger"), ("/parent/api/attempts/1", ""), ("/parent/api/usage/minutes", "client=younger")):
         status, body, headers = call(app, "GET", path, query=query)
         assert status == 401, path
         assert "wombat" not in body and "words" not in body and "younger" not in body
@@ -426,7 +426,7 @@ def test_plain_http_does_not_sign_in_show_data_or_record_a_pass(service):
     assert service.count("parent_sessions") == 0
 
     cookie = session_cookie(_sign_in(app)[2])
-    for path in ("/parent/api/session", "/parent/api/attempts", "/parent/api/usage", "/parent/", "/parent/attempts", "/usage", "/attempts/1"):
+    for path in ("/parent/api/session", "/parent/api/attempts", "/parent/api/usage/minutes", "/parent/", "/parent/attempts", "/usage", "/attempts/1"):
         status, body, headers = call(app, "GET", path, query="client=younger", cookie=cookie, scheme="http")
         assert status == 403, path
         assert "Open this page over HTTPS." in body
