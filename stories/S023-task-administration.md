@@ -1,6 +1,6 @@
 Ticket: S023
 Title: Task administration in the parent portal
-Status: Refined
+Status: Done
 Story Points: 60
 Last Updated: 2026-11-08 21:30:00
 ---
