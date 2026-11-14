@@ -18,7 +18,7 @@ async function openTask(address: string, handler?: (call: Call) => Reply | undef
 describe("Task Administration in the sidebar", () => {
   it("is a button that lists every task as a link, and hides them again, remembering the choice", async () => {
     fakeService();
-    renderPortal("/parent/usage");
+    renderPortal("/parent/usage/minutes");
     const nav = await screen.findByRole("navigation", { name: "Portal pages" });
     const toggle = within(nav).getByRole("button", { name: "Task Administration" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -270,10 +270,10 @@ describe("saving", () => {
   it("asks before leaving with unsaved changes, with Stay as the default", async () => {
     localStorage.setItem(TASKS_KEY, "true");
     fakeService();
-    const { router } = renderPortal("/parent/usage");
+    const { router } = renderPortal("/parent/usage/minutes");
     await userEvent.click(await screen.findByRole("link", { name: "spelling" }));
     await userEvent.type(await screen.findByRole("textbox", { name: "Max Passes" }), "2");
-    await userEvent.click(screen.getByRole("link", { name: "Usage" }));
+    await userEvent.click(screen.getByRole("link", { name: "Attempts" }));
     const dialog = await screen.findByRole("alertdialog", { name: "Leave this page?" });
     expect(within(dialog).getByRole("button", { name: "Stay" })).toHaveFocus();
     await userEvent.keyboard("{Enter}");
@@ -282,7 +282,7 @@ describe("saving", () => {
 
     await router.navigate(-1);
     await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Leave" }));
-    await waitFor(() => expect(shown(router)).toBe("/parent/usage"));
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes"));
   });
 });
 

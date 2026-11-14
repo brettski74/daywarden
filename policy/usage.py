@@ -283,6 +283,24 @@ class UsageStore(Ledger):
             first if last is None else last,
         )
 
+    def rows_between(self, ledger: str, start: datetime, end: datetime) -> list[tuple[str, str, datetime, int, int]]:
+        """Return every bucket of one ledger that starts at or after start and before end.
+
+        ``ledger`` is ``site`` for the site-group rows or ``quota`` for the
+        quota rows. Each item is the client group, the site group or quota,
+        the local start, the stored length, and the bytes, oldest start first.
+        """
+        table, column = {"site": ("group_buckets", "site_group"), "quota": ("quota_buckets", "quota")}[ledger]
+        rows = self.connection.execute(
+            f"SELECT client_group, {column}, started_at, length_seconds, byte_count FROM {table} "
+            "WHERE started_at >= ? AND started_at < ? ORDER BY started_at",
+            (_wall(start).isoformat(timespec="seconds"), _wall(end).isoformat(timespec="seconds")),
+        ).fetchall()
+        return [
+            (client_group, name, datetime.fromisoformat(started_at), int(length), int(nbytes))
+            for client_group, name, started_at, length, nbytes in rows
+        ]
+
     def quota_clients(self, quota: str) -> list[str]:
         """Return client groups that have any balance on this quota.
 
@@ -352,6 +370,8 @@ class UsageStore(Ledger):
                 ON quota_buckets (client_group, quota, day);
             CREATE INDEX IF NOT EXISTS quota_buckets_by_quota
                 ON quota_buckets (quota, client_group);
+            CREATE INDEX IF NOT EXISTS group_buckets_by_start ON group_buckets (started_at);
+            CREATE INDEX IF NOT EXISTS quota_buckets_by_start ON quota_buckets (started_at);
             CREATE TABLE IF NOT EXISTS transfers (
                 flow_id TEXT PRIMARY KEY,
                 client_group TEXT NOT NULL,

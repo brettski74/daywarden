@@ -6,6 +6,7 @@ export const KEY_STEP = 16;
 export const WIDTH_KEY = "daywarden.portal.sidebarWidth";
 export const COLLAPSED_KEY = "daywarden.portal.sidebarCollapsed";
 export const TASKS_KEY = "daywarden.portal.tasksExpanded";
+export const USAGE_KEY = "daywarden.portal.usageExpanded";
 
 /** Return the narrowest and widest the sidebar may be in this window, in pixels. */
 export function widthLimits(windowWidth: number, remPx: number): { min: number; max: number } {
@@ -35,27 +36,30 @@ function rootFontPx(): number {
 }
 
 /**
- * Whether the Task Administration list is expanded, kept in localStorage.
+ * Whether a sidebar group's list is expanded, kept in localStorage under key.
  *
- * It is always expanded while a task page is open, and opening one keeps it
- * expanded afterwards.
+ * It is always expanded while one of its pages is open, and opening one keeps
+ * it expanded afterwards.
  */
-export function useTaskList(onTaskPage: boolean) {
-  const [stored, setStored] = useState(() => localStorage.getItem(TASKS_KEY) === "true");
+export function useGroupList(key: string, onItsPage: boolean) {
+  const [stored, setStored] = useState(() => localStorage.getItem(key) === "true");
 
   useEffect(() => {
-    if (onTaskPage && !stored) {
+    if (onItsPage && !stored) {
       setStored(true);
-      save(TASKS_KEY, "true");
+      save(key, "true");
     }
-  }, [onTaskPage, stored]);
+  }, [key, onItsPage, stored]);
 
-  const setExpanded = useCallback((value: boolean) => {
-    setStored(value);
-    save(TASKS_KEY, String(value));
-  }, []);
+  const setExpanded = useCallback(
+    (value: boolean) => {
+      setStored(value);
+      save(key, String(value));
+    },
+    [key],
+  );
 
-  return { expanded: stored || onTaskPage, setExpanded };
+  return { expanded: stored || onItsPage, setExpanded };
 }
 
 function save(key: string, value: string): void {

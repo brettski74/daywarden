@@ -49,12 +49,37 @@ export const ATTEMPT = {
   record: { result: "pass", settings: { words: 10 } },
 };
 
+/** Default settings over the past week at Friday 13 November 2026 21:30: younger used 1h 15m on the Tuesday, older nothing. */
 export const USAGE = {
+  unit: "minutes",
+  today: "2026-11-13",
+  choices: { clients: ["younger", "older", "default"], sites: ["school", "youtube", "default"], quotas: ["youtube", "screen-time"] },
+  settings: { client: [] as string[], site: [] as string[], quota: [] as string[], by: "client", range: "past-week", from: "", to: "" },
+  preset: "Default",
+  presets: ["Default", "School week"],
+  notes: [] as string[],
   times: "Times are Australia/Sydney.",
-  choices: { clients: ["younger", "default"], sites: ["school", "default"], quotas: ["youtube"] },
-  chosen: { view: "", client: "", site: "", quota: "" },
-  report: null,
-  message: "Choose a site group, a client group, or a quota.",
+  range: "Friday 6 November 2026 21:30 to Friday 13 November 2026 21:30",
+  days: { from: "2026-11-06", to: "2026-11-13" },
+  graph: {
+    length: 7 * 86400,
+    interval: "day",
+    ticks: [{ at: 9000, label: "Sat 7 Nov" }],
+    points: [
+      "Friday 6 November 2026 21:30 to 24:00",
+      "Saturday 7 November 2026",
+      "Sunday 8 November 2026",
+      "Monday 9 November 2026",
+      "Tuesday 10 November 2026",
+      "Wednesday 11 November 2026",
+      "Thursday 12 November 2026",
+      "Friday 13 November 2026 00:00 to 21:30",
+    ].map((label, index) => ({ at: index * 86400, label })),
+    lines: [
+      { name: "younger", values: [0, 0, 0, 0, 4500, 0, 0, 0] },
+      { name: "older", values: [0, 0, 0, 0, 0, 0, 0, 0] },
+    ],
+  },
 };
 
 export const TASKS = {
@@ -187,8 +212,10 @@ function standard(call: Call): Reply {
       return { body: call.search ? ATTEMPTS : NO_GROUP };
     case "/parent/api/attempts/42":
       return { body: ATTEMPT };
-    case "/parent/api/usage":
+    case "/parent/api/usage/minutes":
       return { body: USAGE };
+    case "/parent/api/usage/bytes":
+      return { body: { ...USAGE, unit: "bytes" } };
     case "/parent/api/tasks":
       return { body: TASKS };
     case "/parent/api/tasks/spelling/spelling":

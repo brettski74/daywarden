@@ -9,61 +9,92 @@ import {
   SquarePlus,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
-import { KEY_STEP, useSidebar, useTaskList } from "../sidebar";
+import { KEY_STEP, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
 
-// A new portal page adds its entry here and its route in routes.tsx.
-export const ENTRIES: Entry[] = [
-  { to: "/attempts", label: "Attempts", icon: ClipboardCheck },
-  { to: "/usage", label: "Usage", icon: ChartColumn },
-];
+// A new portal page adds its entry here, or in a group below, and its route in routes.tsx.
+export const ENTRIES: Entry[] = [{ to: "/attempts", label: "Attempts", icon: ClipboardCheck }];
 
-/** Task Administration: a button that expands the list of tasks, each a link to its page. */
-function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
-  const { pathname } = useLocation();
-  const onTaskPage = pathname.startsWith("/tasks/") || pathname === NEW_TASK;
-  const { expanded, setExpanded } = useTaskList(onTaskPage);
+const USAGE_PAGES = ["/usage/minutes", "/usage/bytes"];
+
+/** A button that expands a list of links, indented beneath it. It stays expanded while one of its pages is open. */
+function NavGroup({ id, label, icon: Icon, storageKey, onItsPage, hint, children }: {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  storageKey: string;
+  onItsPage: boolean;
+  /** The button's title while one of the group's pages is open. */
+  hint: string;
+  children: ReactNode;
+}) {
+  const { expanded, setExpanded } = useGroupList(storageKey, onItsPage);
   const { shown, moving, toggle } = useExpander(expanded, setExpanded);
-  const hint = onTaskPage ? "The task list stays open while a task page is open" : undefined;
   return (
     <li className="nav-group" data-open={expanded || undefined} data-moving={moving || undefined}>
       <button
         type="button"
         className="nav-group-toggle"
         aria-expanded={expanded}
-        aria-controls="task-list"
-        aria-disabled={onTaskPage || undefined}
-        title={hint}
-        onClick={onTaskPage ? undefined : toggle}
+        aria-controls={id}
+        aria-disabled={onItsPage || undefined}
+        title={onItsPage ? hint : undefined}
+        onClick={onItsPage ? undefined : toggle}
       >
-        <ListChecks aria-hidden="true" />
-        <span>Task Administration</span>
+        <Icon aria-hidden="true" />
+        <span>{label}</span>
         <ChevronRight className="nav-chevron" aria-hidden="true" />
       </button>
       {shown && (
         <div className="nav-sub" inert={!expanded}>
-          <ul id="task-list">
-            <li>
-              <NavLink to={NEW_TASK} className="nav-new">
-                <SquarePlus aria-hidden="true" />
-                <span>Create New Task</span>
-              </NavLink>
-            </li>
-            {tasks.map((task) => (
-              <li key={`${task.type}/${task.name}`}>
-                <NavLink to={taskPath(task)}>{taskLabel(task, tasks)}</NavLink>
-              </li>
-            ))}
-          </ul>
+          <ul id={id}>{children}</ul>
         </div>
       )}
     </li>
+  );
+}
+
+/** Usage: Minutes and Bytes. Moving between them keeps the settings in the address. */
+function UsageGroup() {
+  const { pathname, search } = useLocation();
+  const onUsagePage = USAGE_PAGES.includes(pathname);
+  const kept = onUsagePage ? search : "";
+  return (
+    <NavGroup id="usage-list" label="Usage" icon={ChartColumn} storageKey={USAGE_KEY} onItsPage={onUsagePage} hint="The usage list stays open while a usage page is open">
+      <li>
+        <NavLink to={{ pathname: "/usage/minutes", search: kept }}>Minutes</NavLink>
+      </li>
+      <li>
+        <NavLink to={{ pathname: "/usage/bytes", search: kept }}>Bytes</NavLink>
+      </li>
+    </NavGroup>
+  );
+}
+
+/** Task Administration: the list of tasks, each a link to its page. */
+function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
+  const { pathname } = useLocation();
+  const onTaskPage = pathname.startsWith("/tasks/") || pathname === NEW_TASK;
+  return (
+    <NavGroup id="task-list" label="Task Administration" icon={ListChecks} storageKey={TASKS_KEY} onItsPage={onTaskPage} hint="The task list stays open while a task page is open">
+      <li>
+        <NavLink to={NEW_TASK} className="nav-new">
+          <SquarePlus aria-hidden="true" />
+          <span>Create New Task</span>
+        </NavLink>
+      </li>
+      {tasks.map((task) => (
+        <li key={`${task.type}/${task.name}`}>
+          <NavLink to={taskPath(task)}>{taskLabel(task, tasks)}</NavLink>
+        </li>
+      ))}
+    </NavGroup>
   );
 }
 
@@ -131,6 +162,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
                     </NavLink>
                   </li>
                 ))}
+                <UsageGroup />
                 <TaskGroup tasks={tasks} />
               </ul>
             </nav>

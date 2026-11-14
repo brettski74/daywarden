@@ -11,7 +11,8 @@ S007.1. With no session they answer 401, and with no parent account 403,
 with no data. They never redirect: only the portal's own code reacts to
 those answers. Sign-in, sign-out, the parent check, a task save, creating
 or renaming a task, making a spelling directory, Retire, cutting or keeping
-a recording, and each step of a setup of spelling words are JSON POSTs, and a POST whose body is not
+a recording, each step of a setup of spelling words, and saving or deleting a
+usage preset are JSON POSTs, and a POST whose body is not
 application/json is refused, so a form on another site cannot use the
 parent's cookie to act. The one exception is the upload of a recording,
 which is the raw audio, and must be audio/webm or audio/ogg. A form cannot
@@ -39,7 +40,6 @@ from starlette.concurrency import run_in_threadpool
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value
 from policy.hierarchy import Policy
 from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
-from policy.report import USAGE_KEYS, usage_report
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
@@ -47,6 +47,7 @@ from policy.task_admin import TaskAdmin, missing
 from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
+from policy.usage_graph import UNITS, Presets, usage_graph
 from policy.week import Weeks
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal" / "dist"
@@ -125,6 +126,7 @@ def install_portal(
     recordings = tasks.recordings if tasks is not None else Recordings()
     weeks = Weeks(tasks) if tasks is not None else None
     changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
+    presets = Presets(usage_store.connection)
 
     def guard(request: Request) -> tuple[str | None, Response | None]:
         """Return the signed-in username, or the refusal to send instead."""
@@ -228,14 +230,32 @@ def install_portal(
             return _json(400, {"error": problem})
         return _json(200, {"message": f"Recorded a parent check for {client.strip()}."})
 
-    @app.get("/parent/api/usage")
-    async def usage(request: Request) -> Response:
+    @app.post("/parent/api/usage/presets")
+    async def preset_save(request: Request) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        answer = presets.save(body, username, loaded().clock.local())
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/usage/presets/delete")
+    async def preset_delete(request: Request) -> Response:
+        body, _username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        answer = presets.delete(body)
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/usage/{unit}")
+    async def usage(request: Request, unit: str) -> Response:
         _username, refused = guard(request)
         if refused is not None:
             return refused
+        if unit not in UNITS:
+            return _json(404, {"error": "Not found."})
         now = loaded()
-        query = {key: request.query_params[key] for key in USAGE_KEYS if key in request.query_params}
-        return _json(200, usage_report(now.policy, usage_store, query, now.clock.local()))
+        pairs = list(request.query_params.multi_items())
+        return _json(200, usage_graph(now.policy, usage_store, presets, pairs, now.clock.local(), unit))
 
     @app.get("/parent/api/tasks")
     async def task_list(request: Request) -> Response:
@@ -548,7 +568,10 @@ def install_portal(
 
     @app.get("/usage")
     async def old_usage(request: Request) -> Response:
-        return _moved(request, "/parent/usage")
+        # The old report's choices mean nothing to the graph, so they are not carried over.
+        if request.url.scheme != "https":
+            return _https_only()
+        return RedirectResponse("/parent/usage/minutes", status_code=301)
 
     @app.get("/attempts")
     async def old_attempts(request: Request) -> Response:

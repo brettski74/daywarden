@@ -8,6 +8,11 @@ type Props = {
   selected: string[];
   onToggle: (option: string) => void;
   changed?: boolean;
+  /** What the closed pull-down says with nothing chosen, None unless given. */
+  empty?: string;
+  disabled?: boolean;
+  /** Why the pull-down is disabled, shown as its title. */
+  disabledTitle?: string;
 };
 
 /**
@@ -18,7 +23,7 @@ type Props = {
  * option on or off. The arrow keys move between options. Escape, Tab, or a
  * click elsewhere closes it.
  */
-export function MultiSelect({ label, options, selected, onToggle, changed }: Props) {
+export function MultiSelect({ label, options, selected, onToggle, changed, empty = "None", disabled, disabledTitle }: Props) {
   const [open, setOpen] = useState(false);
   const { shown, moving, toggle } = useExpander(open, setOpen);
   const [active, setActive] = useState(0);
@@ -85,10 +90,12 @@ export function MultiSelect({ label, options, selected, onToggle, changed }: Pro
         aria-controls={listId}
         aria-labelledby={`${labelId} ${summaryId}`}
         data-changed={changed || undefined}
+        disabled={disabled}
+        title={disabled ? disabledTitle : undefined}
         onClick={toggle}
       >
         <span id={summaryId} className="multi-select-summary">
-          {chosen.length ? chosen.join(", ") : "None"}
+          {chosen.length ? chosen.join(", ") : empty}
         </span>
         <ChevronDown className="multi-select-chevron" aria-hidden="true" />
       </button>

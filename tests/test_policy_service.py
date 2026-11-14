@@ -141,7 +141,7 @@ with UsageStore("/var/lib/daywarden/policy.sqlite3") as usage:
 GET_USAGE = """
 import json, urllib.error, urllib.request
 request = urllib.request.Request(
-    "http://127.0.0.1:8090/parent/api/usage?view=client&client=younger",
+    "http://127.0.0.1:8090/parent/api/usage/minutes?client=younger",
     headers={"X-Forwarded-Proto": "https"},
 )
 try:

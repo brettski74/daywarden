@@ -1842,3 +1842,254 @@ input[aria-invalid],
 select[aria-invalid] {
   border-color: var(--failure-text);
 }
+
+/* Filters in the context bar take its second line, and wrap onto a third when the bar is too narrow for them. */
+
+.bar-filters {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.9rem;
+}
+
+.bar-preset select {
+  min-width: 8rem;
+}
+
+.context-bar .multi-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.context-bar .multi-select-label {
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+.context-bar .multi-select-button {
+  width: auto;
+  min-width: 5rem;
+  max-width: 13rem;
+}
+
+.context-bar .multi-select-panel {
+  left: auto;
+  min-width: 12rem;
+}
+
+/* The Custom range's From and To boxes. They slide open beside Date range like every other expand. */
+
+@keyframes bar-dates-open {
+  from {
+    grid-template-columns: 0fr;
+  }
+}
+
+.bar-dates {
+  display: grid;
+  grid-template-columns: 0fr;
+  transition: grid-template-columns var(--expand-duration) var(--expand-easing);
+}
+
+.bar-dates[data-open] {
+  grid-template-columns: 1fr;
+}
+
+.bar-dates[data-open][data-moving] {
+  animation: bar-dates-open var(--expand-duration) var(--expand-easing);
+}
+
+.bar-dates-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+/* Clipped only while sliding, so an open calendar can hang below the bar. */
+.bar-dates[data-moving] .bar-dates-inner {
+  overflow: hidden;
+}
+
+.bar-date {
+  display: grid;
+  grid-template-columns: max-content 9.5rem;
+  align-items: center;
+  gap: 0 0.35rem;
+  white-space: nowrap;
+}
+
+/* Charts. Lines, dots, and swatches draw in currentColor, which each chart-series-n class sets. */
+
+.chart-series-1 {
+  color: var(--chart-series-1);
+}
+
+.chart-series-2 {
+  color: var(--chart-series-2);
+}
+
+.chart-series-3 {
+  color: var(--chart-series-3);
+}
+
+.chart-series-4 {
+  color: var(--chart-series-4);
+}
+
+.chart-series-5 {
+  color: var(--chart-series-5);
+}
+
+.chart-series-6 {
+  color: var(--chart-series-6);
+}
+
+.chart-series-7 {
+  color: var(--chart-series-7);
+}
+
+.chart-series-8 {
+  color: var(--chart-series-8);
+}
+
+.usage-graph {
+  height: calc(100% - 1rem);
+  min-height: 18rem;
+}
+
+.chart {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 1.25rem;
+  height: 100%;
+}
+
+.chart-plot {
+  position: relative;
+  min-width: 0;
+  min-height: 16rem;
+}
+
+.chart-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.chart-svg text {
+  fill: currentColor;
+  font-size: 0.8rem;
+}
+
+.chart-axis line {
+  stroke: var(--chart-axis);
+}
+
+.chart-grid line {
+  stroke: var(--chart-grid);
+}
+
+.chart-hit {
+  fill: transparent;
+}
+
+.chart-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.chart-line[data-dashed],
+.chart-legend [data-dashed] line {
+  stroke-dasharray: 6 4;
+}
+
+.chart-line:focus {
+  outline: none;
+}
+
+.chart-line:focus-visible {
+  stroke-width: 4;
+}
+
+.chart-dot,
+.chart-marker {
+  fill: currentColor;
+  pointer-events: none;
+}
+
+.chart-marker {
+  stroke: var(--chart-marker-ring);
+  stroke-width: 2;
+}
+
+.chart-readout {
+  position: absolute;
+  z-index: 2;
+  padding: 0.25rem 0.55rem;
+  border: 0.06rem solid var(--input-border);
+  border-radius: 0.25rem;
+  background: var(--chart-readout-bg);
+  color: var(--content-text);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(0.75rem, -125%);
+}
+
+.chart-readout[data-flip] {
+  transform: translate(calc(-100% - 0.75rem), -125%);
+}
+
+.chart-empty {
+  position: absolute;
+  top: 40%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-weight: 600;
+}
+
+.chart-legend {
+  align-self: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chart-legend li {
+  display: grid;
+  grid-template-columns: 1.6rem max-content max-content;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+.chart-legend-name {
+  color: var(--content-text);
+}
+
+.chart-legend-total {
+  color: var(--content-text);
+  font-weight: 600;
+}
+
+.chart-swatch {
+  width: 1.6rem;
+  height: 0.8rem;
+}
+
+.chart-swatch line {
+  stroke: currentColor;
+  stroke-width: 3;
+}

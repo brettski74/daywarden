@@ -25,6 +25,8 @@ type Props = {
   today: string;
   changed: boolean;
   onChange: (text: string) => void;
+  /** A problem the page finds with a real day, such as one before another field's, shown under the box. */
+  problem?: string | null;
 };
 
 /** Sent when a calendar opens, so any other that is open closes. */
@@ -48,7 +50,7 @@ const MOVES: Record<string, (day: Day, shift: boolean) => Day> = {
  * box, or above it when the content pane has no room below. It opens on the
  * box's day, or on the household's today when the box holds no date.
  */
-export function DateField({ name, label, value, today, changed, onChange }: Props) {
+export function DateField({ name, label, value, today, changed, onChange, problem: outside = null }: Props) {
   const [open, setOpen] = useState(false);
   const { shown, moving, toggle } = useExpander(open, setOpen);
   const selected = parseDay(value);
@@ -65,7 +67,7 @@ export function DateField({ name, label, value, today, changed, onChange }: Prop
   const id = useId();
   const monthId = `${id}-month`;
   const problemId = `${id}-problem`;
-  const problem = dateProblem(value);
+  const problem = dateProblem(value) ?? outside;
 
   const close = useCallback(
     (then?: "box" | "button") => {

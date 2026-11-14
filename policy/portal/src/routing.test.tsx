@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { USAGE_KEY } from "./sidebar";
 import { ATTEMPTS, fakeService, renderPortal, shown } from "./test/portal";
 
 describe("each portal address opens its page", () => {
@@ -45,27 +46,6 @@ describe("each portal address opens its page", () => {
     expect(screen.getByRole("navigation", { name: "Portal pages" })).toBeInTheDocument();
   });
 
-  it("opens the usage report the address asks for", async () => {
-    const calls = fakeService((call) =>
-      call.path === "/parent/api/usage"
-        ? {
-            body: {
-              times: "Times are Australia/Sydney.",
-              choices: { clients: ["younger", "default"], sites: ["default"], quotas: ["youtube"] },
-              chosen: { view: "quota", client: "", site: "", quota: "youtube" },
-              report: { kind: "balances", heading: "youtube", day: "Sunday 8 November 2026", limits: ["Time limit: 2h.", "Byte limit: 1 KB."], rows: [], empty: "No client group has a balance." },
-              message: null,
-            },
-          }
-        : undefined,
-    );
-    renderPortal("/parent/usage?view=quota&quota=youtube");
-    expect(await screen.findByText("No client group has a balance.")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Show" })).toHaveValue("quota");
-    expect(screen.getByRole("combobox", { name: "Quota" })).toHaveValue("youtube");
-    expect(calls.map((call) => call.path + call.search)).toContain("/parent/api/usage?view=quota&quota=youtube");
-  });
-
   it("shows a not-found message for an unknown address with the layout around it", async () => {
     fakeService();
     renderPortal("/parent/nothing-here");
@@ -77,13 +57,13 @@ describe("each portal address opens its page", () => {
 describe("the sidebar", () => {
   it("lists every page as a real link and marks the open one", async () => {
     fakeService();
-    renderPortal("/parent/usage");
+    renderPortal("/parent/usage/minutes");
     const nav = await screen.findByRole("navigation", { name: "Portal pages" });
     const attempts = within(nav).getByRole("link", { name: "Attempts" });
-    const usage = within(nav).getByRole("link", { name: "Usage" });
+    const usage = within(nav).getByRole("link", { name: "Minutes" });
     expect(attempts.tagName).toBe("A");
     expect(attempts).toHaveAttribute("href", "/parent/attempts");
-    expect(usage).toHaveAttribute("href", "/parent/usage");
+    expect(usage).toHaveAttribute("href", "/parent/usage/minutes");
     expect(usage).toHaveAttribute("aria-current", "page");
     expect(attempts).not.toHaveAttribute("aria-current");
     expect(screen.getByText("ada")).toBeInTheDocument();
@@ -91,12 +71,12 @@ describe("the sidebar", () => {
 
   it("changes page in place when an entry is clicked", async () => {
     fakeService();
-    const { router } = renderPortal("/parent/attempts?client=younger");
-    await screen.findByRole("link", { name: "spelling-week-3" });
-    await userEvent.click(screen.getByRole("link", { name: "Usage" }));
-    expect(await screen.findByText("Choose a site group, a client group, or a quota.")).toBeInTheDocument();
-    expect(shown(router)).toBe("/parent/usage");
-    expect(screen.getByRole("link", { name: "Usage" })).toHaveAttribute("aria-current", "page");
+    const { router } = renderPortal("/parent/usage/minutes");
+    await screen.findByRole("list", { name: "Legend" });
+    await userEvent.click(screen.getByRole("link", { name: "Attempts" }));
+    expect(await screen.findByText("Choose a client group.")).toBeInTheDocument();
+    expect(shown(router)).toBe("/parent/attempts");
+    expect(screen.getByRole("link", { name: "Attempts" })).toHaveAttribute("aria-current", "page");
   });
 
   it("changes page in a browser whose scrollTo returns a promise, as current Chromium's does", async () => {
@@ -104,12 +84,12 @@ describe("the sidebar", () => {
     Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => Promise.resolve() });
     try {
       fakeService();
-      renderPortal("/parent/attempts?client=younger");
-      await screen.findByRole("link", { name: "spelling-week-3" });
-      await userEvent.click(screen.getByRole("link", { name: "Usage" }));
-      expect(await screen.findByText("Choose a site group, a client group, or a quota.")).toBeInTheDocument();
+      renderPortal("/parent/usage/minutes");
+      await screen.findByRole("list", { name: "Legend" });
       await userEvent.click(screen.getByRole("link", { name: "Attempts" }));
       expect(await screen.findByText("Choose a client group.")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("link", { name: "Minutes" }));
+      expect(await screen.findByRole("list", { name: "Legend" })).toBeInTheDocument();
     } finally {
       if (before) Object.defineProperty(Element.prototype, "scrollTo", before);
       else delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
@@ -128,15 +108,6 @@ describe("pull-down choices live in the address", () => {
     await router.navigate(-1);
     await waitFor(() => expect(shown(router)).toBe("/parent/attempts?client=younger"));
   });
-
-  it("writes each usage choice to the address and keeps the others", async () => {
-    fakeService();
-    const { router } = renderPortal("/parent/usage");
-    await userEvent.selectOptions(await screen.findByRole("combobox", { name: "Show" }), "quota");
-    await waitFor(() => expect(shown(router)).toBe("/parent/usage?view=quota"));
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Quota" }), "youtube");
-    await waitFor(() => expect(shown(router)).toBe("/parent/usage?view=quota&quota=youtube"));
-  });
 });
 
 describe("a refused data request returns to its page after sign-in", () => {
@@ -152,12 +123,13 @@ describe("a refused data request returns to its page after sign-in", () => {
   it("sends a 401 found while moving to another page back to that page", async () => {
     let signedIn = true;
     fakeService(() => (signedIn ? undefined : { status: 401, body: {} }));
+    localStorage.setItem(USAGE_KEY, "true");
     const { router } = renderPortal("/parent/attempts?client=younger");
     await screen.findByRole("link", { name: "spelling-week-3" });
     signedIn = false;
-    await userEvent.click(screen.getByRole("link", { name: "Usage" }));
+    await userEvent.click(screen.getByRole("link", { name: "Bytes" }));
     await screen.findByRole("button", { name: "Login" });
-    expect(new URLSearchParams(router.state.location.search).get("next")).toBe("/parent/usage");
+    expect(new URLSearchParams(router.state.location.search).get("next")).toBe("/parent/usage/bytes");
   });
 
   it("sends an action's 401 back to the page on show and does not repeat the action after sign-in", async () => {

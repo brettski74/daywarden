@@ -28,7 +28,9 @@ export const routes: RouteObject[] = [
           { index: true, loader: () => redirect("/attempts") },
           { path: "attempts", element: <Attempts />, loader: attemptsLoader, action: attemptsAction },
           { path: "attempts/:id", element: <Attempt />, loader: attemptLoader },
-          { path: "usage", element: <Usage />, loader: usageLoader },
+          { path: "usage", loader: () => redirect("/usage/minutes") },
+          { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },
+          { path: "usage/bytes", element: <Usage unit="bytes" />, loader: usageLoader("bytes") },
           {
             path: "tasks/:type/:name",
             element: <Task />,
