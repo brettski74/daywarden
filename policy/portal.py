@@ -48,6 +48,7 @@ from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
 from policy.usage_graph import UNITS, Presets, usage_graph
+from policy.usage_requests import usage_requests
 from policy.week import Weeks
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal" / "dist"
@@ -245,6 +246,15 @@ def install_portal(
             return refused
         answer = presets.delete(body)
         return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/usage/requests")
+    async def usage_request_table(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        now = loaded()
+        pairs = list(request.query_params.multi_items())
+        return _json(200, usage_requests(now.policy, usage_store, presets, pairs, now.clock.local()))
 
     @app.get("/parent/api/usage/{unit}")
     async def usage(request: Request, unit: str) -> Response:

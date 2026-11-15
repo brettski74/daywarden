@@ -1,6 +1,6 @@
 import { scaleLinear } from "d3-scale";
 import { stack } from "d3-shape";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChartFrame, seriesClass } from "./ChartFrame";
 import { useSize } from "./useSize";
 
@@ -17,6 +17,9 @@ type Props = {
   format: (bar: Bar) => string;
   /** Said in place of the bars when there are none. */
   empty: string;
+  /** Open a bar: double-clicking it or Enter when it is focused. */
+  onOpen?: (name: string) => void;
+  openTitle?: (name: string) => string;
 };
 
 /** The height of one bar's row, and the room above and below the bars, in pixels. */
@@ -43,8 +46,11 @@ function widest(root: SVGSVGElement, selector: string): number | null {
  * right with its segments stacked by ``d3-shape``, and the bar's value at its
  * end. Each segment is coloured by its series class, and a key beside the
  * chart names the segments when there is more than one.
+ *
+ * With ``onOpen``, double-clicking a bar or pressing Enter on its focused
+ * row opens it.
  */
-export function BarChart({ label, bars, segments, format, empty }: Props) {
+export function BarChart({ label, bars, segments, format, empty, onOpen, openTitle }: Props) {
   const [plotRef, size] = useSize<HTMLDivElement>();
   const svg = useRef<SVGSVGElement>(null);
   const [measured, setMeasured] = useState<Widths | null>(null);
@@ -71,6 +77,13 @@ export function BarChart({ label, bars, segments, format, empty }: Props) {
     .keys(keys)
     .value((bar, key) => bar.values[key] ?? 0)(bars);
 
+  function key(name: string, event: KeyboardEvent<SVGGElement>) {
+    if (event.key === "Enter" && onOpen) {
+      event.preventDefault();
+      onOpen(name);
+    }
+  }
+
   return (
     <ChartFrame plotRef={plotRef} legend={segments.length > 1 ? segments.map((name) => ({ name })) : []} legendLabel="Key" swatch="box" kind="bars">
       {bars.length === 0 ? (
@@ -81,7 +94,17 @@ export function BarChart({ label, bars, segments, format, empty }: Props) {
             const top = PAD.top + row * ROW;
             const end = x(stacked[stacked.length - 1][row][1]);
             return (
-              <g key={bar.name} role="listitem" aria-label={`${bar.name}, ${ends[row]}`}>
+              <g
+                key={bar.name}
+                className="bar-row"
+                role="listitem"
+                tabIndex={onOpen ? 0 : undefined}
+                data-openable={onOpen ? true : undefined}
+                aria-label={`${bar.name}, ${ends[row]}`}
+                onDoubleClick={onOpen ? () => onOpen(bar.name) : undefined}
+                onKeyDown={onOpen ? (event) => key(bar.name, event) : undefined}
+              >
+                {onOpen && openTitle ? <title>{openTitle(bar.name)}</title> : null}
                 <text className="bar-name" x={left - PAD.gap} y={top + ROW / 2} dy="0.32em" textAnchor="end" aria-hidden="true">
                   {bar.name}
                 </text>

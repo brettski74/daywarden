@@ -2007,6 +2007,83 @@ select[aria-invalid] {
   margin: 0 0 0.5rem;
 }
 
+@keyframes usage-requests-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+
+.usage-requests {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 1rem;
+  transition: grid-template-rows var(--expand-duration) var(--expand-easing);
+}
+
+.usage-requests[data-open] {
+  grid-template-rows: 1fr;
+}
+
+.usage-requests[data-open][data-moving] {
+  animation: usage-requests-open var(--expand-duration) var(--expand-easing);
+}
+
+.usage-requests-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.requests-page {
+  min-height: 0;
+}
+
+.records-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.records-sort:focus-visible {
+  outline: 0.12rem solid var(--focus-ring);
+  outline-offset: 0.12rem;
+}
+
+.records-sort-arrow {
+  font-weight: 400;
+}
+
+.request-pages {
+  display: flex;
+  gap: 1rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.request-pages-disabled {
+  opacity: 0.5;
+}
+
+.bar-row[data-openable] {
+  cursor: pointer;
+}
+
+.bar-row[data-openable]:focus {
+  outline: none;
+}
+
+.bar-row[data-openable]:focus .bar-name,
+.bar-row[data-openable]:focus .bar-value {
+  font-weight: 700;
+}
+
 .chart {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;

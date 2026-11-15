@@ -83,6 +83,58 @@ export const USAGE = {
   hosts: null as null | { line: string; kept: string | null; bars: { host: string; value: number; down?: number; up?: number }[] },
 };
 
+/** One request row for the Requests page and the host drill-down. */
+export const REQUESTS = {
+  today: "2026-11-13",
+  choices: {
+    clients: ["younger", "older", "default"],
+    sites: ["school", "youtube", "default"],
+    quotas: ["youtube", "screen-time"],
+    outcomes: ["allowed", "denied", "redirected", "cut"],
+  },
+  settings: { client: [] as string[], site: [] as string[], quota: [] as string[], by: "none", range: "past-week", from: "", to: "" },
+  preset: "Default",
+  presets: ["Default", "School week"],
+  host: "",
+  exact: false,
+  outcome: [] as string[],
+  sort: "start",
+  dir: "desc" as const,
+  page: 1,
+  pages: 1,
+  notes: [] as string[],
+  times: "Times are Australia/Sydney.",
+  range: "Friday 6 November 2026 21:30 to Friday 13 November 2026 21:30",
+  days: { from: "2026-11-06", to: "2026-11-13" },
+  kept: null as string | null,
+  total: 1,
+  from: 1,
+  to: 1,
+  status: "Requests 1 to 1 of 1.",
+  rows: [
+    {
+      id: "flow-1",
+      start: "Friday 13 November 2026, 20:00",
+      end: "Friday 13 November 2026, 20:00:05",
+      duration: "5s",
+      address: "192.0.2.40",
+      client_group: "younger",
+      site_group: "youtube",
+      quotas: "youtube, screen-time",
+      method: "GET",
+      host: "www.youtube.com",
+      path: "https://www.youtube.com/watch",
+      query: "v=abc123",
+      url: "https://www.youtube.com/watch?v=abc123",
+      status: "200",
+      type: "text/html",
+      down: "2 KB",
+      up: "40 bytes",
+      outcome: "allowed",
+    },
+  ],
+};
+
 export const TASKS = {
   tasks: [
     { type: "parent_check", name: "check" },
@@ -217,6 +269,8 @@ function standard(call: Call): Reply {
       return { body: USAGE };
     case "/parent/api/usage/bytes":
       return { body: { ...USAGE, unit: "bytes" } };
+    case "/parent/api/usage/requests":
+      return { body: REQUESTS };
     case "/parent/api/tasks":
       return { body: TASKS };
     case "/parent/api/tasks/spelling/spelling":

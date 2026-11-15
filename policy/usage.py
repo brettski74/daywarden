@@ -12,6 +12,10 @@ bucket's length once however many reports it has in that bucket. The host
 rows are kept for the policy's ``host_retention``. The site-group and quota
 rows are kept for good.
 
+Each judged request is also one row keyed by the proxy's flow id, written when
+the decision is taken and updated as observation reports arrive. Those rows are
+kept for the policy's ``request_retention``.
+
 Time is the sum of ended buckets. Bytes include a bucket that has not ended.
 A bucket keeps the length it was opened with. The length still divides the
 local day, and a load that changes it shortens a bucket that is still open
@@ -32,11 +36,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from policy.buckets import place, require_day_length
 from policy.clients import normalize_ip
@@ -58,7 +62,10 @@ _ACCRUING = frozenset({"allow", "continue"})
 _DEFAULT_PORTS = {"http": 80, "ws": 80, "https": 443, "wss": 443}
 # The household-local start of the earliest host row, so a drill-down knows how far back hosts reach.
 _HOSTS_SINCE = "hosts_since"
+_REQUESTS_SINCE = "requests_since"
 _HOST_LEDGERS = {"site": ("host_buckets", "site_group"), "quota": ("host_quota_buckets", "quota")}
+_REQUEST_OUTCOMES = {"allow": "allowed", "deny": "denied", "redirect": "redirected"}
+_ENDED_OUTCOMES = frozenset({"denied", "redirected", "cut"})
 
 
 class UsageStore(Ledger):
@@ -240,6 +247,154 @@ class UsageStore(Ledger):
             for table, _column in _HOST_LEDGERS.values():
                 removed += self.connection.execute(f"DELETE FROM {table} WHERE started_at < ?", (cutoff,)).rowcount
         return removed
+
+    def record_request(
+        self,
+        flow_id: str,
+        *,
+        started_at: datetime,
+        client_ip: str,
+        client_group: str,
+        site_group: str,
+        method: str,
+        url: str,
+        outcome: str,
+        status: int | None = None,
+    ) -> None:
+        """Insert one request row for a judged flow. A later insert for the same flow replaces it."""
+        if not flow_id or not isinstance(flow_id, str):
+            raise ValueError("a flow id is required")
+        if outcome not in ("allowed", "denied", "redirected", "cut"):
+            raise ValueError("outcome is allowed, denied, redirected, or cut")
+        host, path, query = parts_of(url)
+        start = _wall(started_at).isoformat(timespec="seconds")
+        ended = start if outcome in _ENDED_OUTCOMES else None
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO requests ("
+                "flow_id, started_at, ended_at, client_ip, client_group, site_group, "
+                "method, host, path, query, url, status, content_type, bytes_down, bytes_up, outcome"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?) "
+                "ON CONFLICT (flow_id) DO UPDATE SET "
+                "started_at = excluded.started_at, "
+                "ended_at = excluded.ended_at, "
+                "client_ip = excluded.client_ip, "
+                "client_group = excluded.client_group, "
+                "site_group = excluded.site_group, "
+                "method = excluded.method, "
+                "host = excluded.host, "
+                "path = excluded.path, "
+                "query = excluded.query, "
+                "url = excluded.url, "
+                "status = excluded.status, "
+                "content_type = NULL, "
+                "bytes_down = 0, "
+                "bytes_up = 0, "
+                "outcome = excluded.outcome",
+                (
+                    flow_id,
+                    start,
+                    ended,
+                    client_ip,
+                    client_group,
+                    site_group,
+                    method,
+                    host,
+                    path,
+                    query,
+                    url,
+                    status,
+                    outcome,
+                ),
+            )
+            self.connection.execute("DELETE FROM request_quotas WHERE flow_id = ?", (flow_id,))
+            self.connection.execute(
+                "INSERT INTO hierarchy_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE "
+                "SET value = excluded.value WHERE excluded.value < hierarchy_settings.value",
+                (_REQUESTS_SINCE, start),
+            )
+
+    def update_request(
+        self,
+        flow_id: str,
+        *,
+        at: datetime,
+        bytes_down: int = 0,
+        bytes_up: int = 0,
+        quotas: Sequence[str] = (),
+        status: int | None = None,
+        content_type: str | None = None,
+        ended: bool = False,
+        outcome: str | None = None,
+    ) -> None:
+        """Add bytes and quotas to a request, and optionally end it.
+
+        A report for an unknown flow is ignored. ``outcome`` of ``cut`` replaces
+        an earlier allowed outcome. Ending sets ``ended_at`` when it is still open.
+        """
+        if not flow_id:
+            return
+        down = _zero_or_more(bytes_down, "bytes_down")
+        up = _zero_or_more(bytes_up, "bytes_up")
+        names: list[str] = []
+        for name in quotas:
+            if not isinstance(name, str) or not name:
+                raise ValueError("a quota name is required")
+            if name not in names:
+                names.append(name)
+        moment = _wall(at).isoformat(timespec="seconds")
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT outcome, ended_at FROM requests WHERE flow_id = ?", (flow_id,)
+            ).fetchone()
+            if row is None:
+                return
+            current_outcome, ended_at = row
+            next_outcome = current_outcome
+            if outcome == "cut":
+                next_outcome = "cut"
+            elif outcome is not None and outcome in ("allowed", "denied", "redirected", "cut"):
+                next_outcome = outcome
+            next_ended = ended_at
+            if ended and ended_at is None:
+                next_ended = moment
+            self.connection.execute(
+                "UPDATE requests SET "
+                "bytes_down = bytes_down + ?, "
+                "bytes_up = bytes_up + ?, "
+                "status = COALESCE(?, status), "
+                "content_type = COALESCE(?, content_type), "
+                "ended_at = ?, "
+                "outcome = ? "
+                "WHERE flow_id = ?",
+                (down, up, status, content_type, next_ended, next_outcome, flow_id),
+            )
+            for name in names:
+                self.connection.execute(
+                    "INSERT INTO request_quotas (flow_id, quota) VALUES (?, ?) "
+                    "ON CONFLICT (flow_id, quota) DO NOTHING",
+                    (flow_id, name),
+                )
+
+    def prune_requests(self, before: datetime) -> int:
+        """Delete every request that started before ``before``. Return how many went."""
+        cutoff = _wall(before).isoformat(timespec="seconds")
+        with self.connection:
+            gone = self.connection.execute(
+                "SELECT flow_id FROM requests WHERE started_at < ?", (cutoff,)
+            ).fetchall()
+            if not gone:
+                return 0
+            ids = [flow_id for (flow_id,) in gone]
+            placeholders = ",".join("?" for _ in ids)
+            self.connection.execute(f"DELETE FROM request_quotas WHERE flow_id IN ({placeholders})", ids)
+            self.connection.execute(f"DELETE FROM requests WHERE flow_id IN ({placeholders})", ids)
+            return len(ids)
+
+    def requests_since(self) -> datetime | None:
+        """Return the household-local start of the earliest request ever recorded, or None before any."""
+        raw = self._setting(_REQUESTS_SINCE)
+        return None if raw is None else datetime.fromisoformat(raw)
 
     def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
         """Return this client group's ended time on the quota.
@@ -463,6 +618,32 @@ class UsageStore(Ledger):
             );
             CREATE INDEX IF NOT EXISTS host_buckets_by_start ON host_buckets (started_at);
             CREATE INDEX IF NOT EXISTS host_quota_buckets_by_start ON host_quota_buckets (started_at);
+            CREATE TABLE IF NOT EXISTS requests (
+                flow_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                client_ip TEXT NOT NULL,
+                client_group TEXT NOT NULL,
+                site_group TEXT NOT NULL,
+                method TEXT NOT NULL,
+                host TEXT NOT NULL,
+                path TEXT NOT NULL,
+                query TEXT NOT NULL,
+                url TEXT NOT NULL,
+                status INTEGER,
+                content_type TEXT,
+                bytes_down INTEGER NOT NULL DEFAULT 0,
+                bytes_up INTEGER NOT NULL DEFAULT 0,
+                outcome TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS request_quotas (
+                flow_id TEXT NOT NULL,
+                quota TEXT NOT NULL,
+                PRIMARY KEY (flow_id, quota)
+            );
+            CREATE INDEX IF NOT EXISTS requests_by_client_host_start
+                ON requests (client_group, host, started_at);
+            CREATE INDEX IF NOT EXISTS requests_by_start ON requests (started_at);
             CREATE TABLE IF NOT EXISTS transfers (
                 flow_id TEXT PRIMARY KEY,
                 client_group TEXT NOT NULL,
@@ -638,7 +819,8 @@ def file_report(
     """File one observation. Return None when it carried no new bytes.
 
     A malformed report raises ValueError. The quotas on the result are the
-    ones whose rule sets accepted the report before it was stored.
+    ones whose rule sets accepted the report before it was stored. A zero-byte
+    end-of-flow report still updates the request row through ``note_request``.
     """
     parsed = _parse(document)
     if parsed is None:
@@ -655,6 +837,66 @@ def file_report(
     ]
     usage.file_observation(client_group, site_group, moment, nbytes, accepted, host=host_of(url), bytes_up=up)
     return Filing(client_group, moment, tuple(accepted))
+
+
+def note_request(
+    usage: UsageStore,
+    clock: HouseholdClock,
+    document: object,
+    *,
+    quotas: Sequence[str] = (),
+    cut: bool = False,
+) -> None:
+    """Update the request row named on an observation, including a zero-byte end report.
+
+    ``quotas`` are the ones that accepted this report's bytes. ``cut`` marks the
+    outcome as cut. A report with no flow id is ignored. A malformed end field
+    raises ValueError.
+    """
+    if not isinstance(document, dict):
+        raise ValueError("an observation is a JSON object")
+    flow_id = document.get("flow_id")
+    if flow_id is None:
+        return
+    if not isinstance(flow_id, str) or not flow_id:
+        raise ValueError("flow_id must be a string")
+    occurred_at = document.get("occurred_at")
+    if not isinstance(occurred_at, str):
+        raise ValueError("occurred_at must be an ISO 8601 time")
+    try:
+        moment = clock.local(datetime.fromisoformat(occurred_at))
+    except ValueError as exc:
+        raise ValueError("occurred_at must be an ISO 8601 time") from exc
+    nbytes = document.get("bytes", 0)
+    if isinstance(nbytes, bool) or not isinstance(nbytes, int) or nbytes < 0:
+        raise ValueError("bytes is a whole number, zero or more")
+    up = 0
+    down = nbytes
+    if "bytes_up" in document or "bytes_down" in document:
+        up = _zero_or_more(document.get("bytes_up"), "bytes_up")
+        down = _zero_or_more(document.get("bytes_down"), "bytes_down")
+        if up + down != nbytes:
+            raise ValueError("bytes is bytes_up and bytes_down added together")
+    status = document.get("status")
+    if status is not None and (isinstance(status, bool) or not isinstance(status, int) or status < 100 or status > 599):
+        raise ValueError("status is an HTTP status code")
+    content_type = document.get("content_type")
+    if content_type is not None and not isinstance(content_type, str):
+        raise ValueError("content_type must be a string")
+    ended = bool(document.get("ended"))
+    if content_type is not None and ";" in content_type:
+        content_type = content_type.split(";", 1)[0].strip() or None
+    usage.update_request(
+        flow_id,
+        at=moment,
+        bytes_down=down,
+        bytes_up=up,
+        quotas=quotas,
+        status=status,
+        content_type=content_type,
+        ended=ended or cut,
+        outcome="cut" if cut else None,
+    )
 
 
 def host_of(url: str) -> str:
@@ -677,6 +919,28 @@ def host_of(url: str) -> str:
     return f"[{name}]:{port}" if ":" in name else f"{name}:{port}"
 
 
+def parts_of(url: str) -> tuple[str, str, str]:
+    """Return the host, the address without its query string, and the query without its ``?``."""
+    parts = urlsplit(url)
+    path = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return host_of(url), path, parts.query
+
+
+def outcome_of(decision: Mapping[str, object] | dict) -> tuple[str, int | None]:
+    """Return the request outcome and HTTP status for a decision payload."""
+    action = decision.get("action")
+    outcome = _REQUEST_OUTCOMES.get(action if isinstance(action, str) else "", "denied")
+    raw = decision.get("status")
+    status = int(raw) if isinstance(raw, int) and not isinstance(raw, bool) else None
+    if outcome == "denied" and status is None:
+        status = 403
+    if outcome == "redirected" and status is None:
+        status = 302
+    if outcome == "allowed":
+        status = None
+    return outcome, status
+
+
 def host_cutoff(retention_days: int, now: datetime) -> datetime:
     """Return the local midnight before which host rows are older than the retention.
 
@@ -688,6 +952,11 @@ def host_cutoff(retention_days: int, now: datetime) -> datetime:
 def prune_hosts(policy: Policy, usage: UsageStore, now: datetime) -> int:
     """Delete the host rows older than the policy's retention. Return how many went."""
     return usage.prune_hosts(host_cutoff(policy.host_retention, now))
+
+
+def prune_requests(policy: Policy, usage: UsageStore, now: datetime) -> int:
+    """Delete the request rows older than the policy's retention. Return how many went."""
+    return usage.prune_requests(host_cutoff(policy.request_retention, now))
 
 
 def cut_required(

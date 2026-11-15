@@ -68,6 +68,52 @@ export type Hosts = {
   bars: HostBar[];
 };
 
+export type RequestRow = {
+  id: string;
+  start: string;
+  end: string;
+  duration: string;
+  address: string;
+  client_group: string;
+  site_group: string;
+  quotas: string;
+  method: string;
+  host: string;
+  path: string;
+  query: string;
+  url: string;
+  status: string;
+  type: string;
+  down: string;
+  up: string;
+  outcome: string;
+};
+
+export type RequestsData = {
+  today: string;
+  choices: { clients: string[]; sites: string[]; quotas: string[]; outcomes: string[] };
+  settings: Settings;
+  preset: string;
+  presets: string[];
+  host: string;
+  exact: boolean;
+  outcome: string[];
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  pages: number;
+  notes: string[];
+  times: string;
+  range: string | null;
+  days: { from: string; to: string } | null;
+  kept: string | null;
+  total: number;
+  from: number;
+  to: number;
+  rows: RequestRow[];
+  status: string | null;
+};
+
 export type UsageData = {
   unit: Unit;
   today: string;
@@ -82,7 +128,13 @@ export type UsageData = {
   days: { from: string; to: string } | null;
   graph: Graph | null;
   hosts: Hosts | null;
+  /** The requests for the host drilled into, or null when none is. */
+  requests: RequestsData | null;
 };
+
+export const OUTCOMES = ["allowed", "denied", "redirected", "cut"] as const;
+export type OutcomeName = (typeof OUTCOMES)[number];
+
 
 export const DEFAULT_PRESET = "Default";
 export const QUOTA_SITE = "Usage by quota is not kept per site group.";
@@ -117,8 +169,61 @@ export function lineOf(search: string): string | null {
 
 /** An address's query string with its line replaced, or taken away when line is null. Everything else stays in order. */
 export function withLine(search: string, line: string | null): string {
-  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "line");
+  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "line" && key !== "host" && key !== "exact" && key !== "sort" && key !== "dir" && key !== "page");
   if (line) pairs.push(["line", line]);
+  return query(pairs);
+}
+
+/** The host an address drills into, or null. */
+export function hostOf(search: string): string | null {
+  return new URLSearchParams(search).get("host") || null;
+}
+
+/** An address's query string with its host drill replaced. Opening a host is exact; closing drops sort and page too. */
+export function withHost(search: string, host: string | null): string {
+  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "host" && key !== "exact" && key !== "sort" && key !== "dir" && key !== "page");
+  if (host) pairs.push(["host", host], ["exact", "1"]);
+  return query(pairs);
+}
+
+/** Replace sort, direction, and page on an address, keeping everything else. Changing a filter should call this with page 1. */
+export function withTable(search: string, patch: { sort?: string; dir?: "asc" | "desc"; page?: number; host?: string; outcome?: string[] }): string {
+  const params = new URLSearchParams(search);
+  if (patch.sort !== undefined) params.set("sort", patch.sort);
+  if (patch.dir !== undefined) params.set("dir", patch.dir);
+  if (patch.page !== undefined) {
+    if (patch.page <= 1) params.delete("page");
+    else params.set("page", String(patch.page));
+  }
+  if (patch.host !== undefined) {
+    if (patch.host) params.set("host", patch.host);
+    else params.delete("host");
+  }
+  if (patch.outcome !== undefined) {
+    params.delete("outcome");
+    for (const name of patch.outcome) params.append("outcome", name);
+  }
+  const pairs = [...params];
+  return query(pairs);
+}
+
+/** Settings for the Requests page: filters and range, without Group by, plus host fragment and outcomes. */
+export function requestsQuery(
+  settings: Settings,
+  extras: { host?: string; outcome?: string[]; sort?: string; dir?: "asc" | "desc"; page?: number } = {},
+): string {
+  const pairs: [string, string][] = [
+    ...settings.client.map((name): [string, string] => ["client", name]),
+    ...settings.site.map((name): [string, string] => ["site", name]),
+    ...settings.quota.map((name): [string, string] => ["quota", name]),
+    ["range", settings.range],
+  ];
+  if (settings.range === "custom") pairs.push(["from", settings.from], ["to", settings.to]);
+  if (extras.host) pairs.push(["host", extras.host]);
+  for (const name of extras.outcome ?? []) pairs.push(["outcome", name]);
+  if (extras.sort && extras.sort !== "start") pairs.push(["sort", extras.sort]);
+  if (extras.dir && extras.dir !== "desc") pairs.push(["dir", extras.dir]);
+  if (extras.page && extras.page > 1) pairs.push(["page", String(extras.page)]);
   return query(pairs);
 }
 

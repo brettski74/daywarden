@@ -21,7 +21,7 @@ type Entry = { to: string; label: string; icon: LucideIcon };
 // A new portal page adds its entry here, or in a group below, and its route in routes.tsx.
 export const ENTRIES: Entry[] = [{ to: "/attempts", label: "Attempts", icon: ClipboardCheck }];
 
-const USAGE_PAGES = ["/usage/minutes", "/usage/bytes"];
+const USAGE_PAGES = ["/usage/minutes", "/usage/bytes", "/usage/requests"];
 
 /** A button that expands a list of links, indented beneath it. It stays expanded while one of its pages is open. */
 function NavGroup({ id, label, icon: Icon, storageKey, onItsPage, hint, children }: {
@@ -60,7 +60,7 @@ function NavGroup({ id, label, icon: Icon, storageKey, onItsPage, hint, children
   );
 }
 
-/** Usage: Minutes and Bytes. Moving between them keeps the settings in the address. */
+/** Usage: Minutes, Bytes, and Requests. Moving between them keeps the settings in the address. */
 function UsageGroup() {
   const { pathname, search } = useLocation();
   const onUsagePage = USAGE_PAGES.includes(pathname);
@@ -72,6 +72,9 @@ function UsageGroup() {
       </li>
       <li>
         <NavLink to={{ pathname: "/usage/bytes", search: kept }}>Bytes</NavLink>
+      </li>
+      <li>
+        <NavLink to={{ pathname: "/usage/requests", search: kept }}>Requests</NavLink>
       </li>
     </NavGroup>
   );

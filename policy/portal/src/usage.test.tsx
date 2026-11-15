@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { USAGE_KEY } from "./sidebar";
-import { USAGE, fakeService, renderPortal, shown, type Call } from "./test/portal";
+import { REQUESTS, USAGE, fakeService, renderPortal, shown, type Call } from "./test/portal";
 import { bytesAxis, durationAxis, formatBytes, formatDuration, settingsQuery, type Settings } from "./usage";
 
 const DEFAULT_ADDRESS = "/parent/usage/minutes?by=client&range=past-week";
@@ -39,7 +39,7 @@ async function openUsage(address = "/parent/usage/minutes", answer?: (call: Call
 }
 
 describe("Usage in the sidebar", () => {
-  it("is a group that expands into Minutes and Bytes, and remembers whether it is expanded", async () => {
+  it("is a group that expands into Minutes, Bytes, and Requests, and remembers whether it is expanded", async () => {
     fakeService();
     renderPortal("/parent/attempts?client=younger");
     const nav = await screen.findByRole("navigation", { name: "Portal pages" });
@@ -50,6 +50,7 @@ describe("Usage in the sidebar", () => {
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["Minutes", "/parent/usage/minutes"],
       ["Bytes", "/parent/usage/bytes"],
+      ["Requests", "/parent/usage/requests"],
     ]);
     expect(localStorage.getItem(USAGE_KEY)).toBe("true");
     await userEvent.click(toggle);
@@ -281,6 +282,23 @@ const TOP_HOSTS = [
 /** Answer as the service does: the settings asked for, and the top hosts on the line the address names. */
 function drillEcho(kept: string | null = null) {
   return (call: Call) => {
+    if (call.path === "/parent/api/usage/requests") {
+      const asked = new URLSearchParams(call.search);
+      const host = asked.get("host") || "";
+      return {
+        body: {
+          ...REQUESTS,
+          host,
+          exact: asked.get("exact") === "1",
+          sort: asked.get("sort") || "start",
+          dir: asked.get("dir") === "asc" ? "asc" : "desc",
+          page: Number(asked.get("page") || "1"),
+          rows: host && host !== "www.youtube.com" && !host.includes("youtube") ? [] : REQUESTS.rows,
+          total: host && host !== "www.youtube.com" && !host.includes("youtube") ? 0 : 1,
+          status: host && host !== "www.youtube.com" && !host.includes("youtube") ? "No requests in this range." : REQUESTS.status,
+        },
+      };
+    }
     if (!/^\/parent\/api\/usage\/(minutes|bytes)$/.test(call.path)) return undefined;
     const asked = new URLSearchParams(call.search);
     const answer = echo(call) ?? { body: { ...USAGE, unit: call.path.endsWith("bytes") ? "bytes" : "minutes" } };
@@ -357,7 +375,9 @@ describe("the top hosts", () => {
     const kept = "Hosts are kept for 30 days, from Wednesday 14 October 2026.";
     await openUsage("/parent/usage/minutes?by=client&range=past-month&line=younger", (call) => {
       const answer = drillEcho(kept)(call);
-      return answer && { body: { ...answer.body, hosts: { ...answer.body.hosts, bars: [] } } };
+      if (!answer || !/^\/parent\/api\/usage\/(minutes|bytes)$/.test(call.path)) return answer;
+      const body = answer.body as typeof USAGE;
+      return { body: { ...body, hosts: body.hosts ? { ...body.hosts, bars: [] } : null } };
     });
     const panel = await screen.findByRole("region", { name: "younger, Past month: top hosts" });
     expect(within(panel).getByText(kept)).toBeInTheDocument();
@@ -373,6 +393,57 @@ describe("the top hosts", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save preset" }));
     await userEvent.type(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" }), "Week one{Enter}");
     await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?preset=Week%20one&line=younger"));
+  });
+});
+
+describe("the request table under a host", () => {
+  it("opens beneath the bar chart when a host is double-clicked, with the host in the address", async () => {
+    const { calls, router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger`, drillEcho());
+    const panel = await screen.findByRole("region", { name: "younger, Past week: top hosts" });
+    const bar = within(panel).getByRole("listitem", { name: /www\.youtube\.com/ });
+    fireEvent.doubleClick(bar);
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1`));
+    const requests = await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" });
+    expect(within(requests).getByRole("columnheader", { name: /Start/ })).toBeInTheDocument();
+    expect(within(requests).getByText("www.youtube.com")).toBeInTheDocument();
+    await waitFor(() => expect(usageCalls(calls).some((path) => path.includes("/parent/api/usage/requests?") && path.includes("host=www.youtube.com"))).toBe(true));
+  });
+
+  it("opens from Enter on a focused host bar", async () => {
+    const { router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger`, drillEcho());
+    const panel = await screen.findByRole("region", { name: "younger, Past week: top hosts" });
+    const bar = within(panel).getByRole("listitem", { name: /www\.youtube\.com/ });
+    bar.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1`));
+    expect(await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" })).toBeInTheDocument();
+  });
+
+  it("closes when the close button is pressed, and when a filter changes", async () => {
+    const { router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1`, drillEcho());
+    expect(await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close requests" }));
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger`));
+    const bar = within(screen.getByRole("region", { name: /top hosts/ })).getByRole("listitem", { name: /www\.youtube\.com/ });
+    bar.focus();
+    await userEvent.keyboard("{Enter}");
+    await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" });
+    await userEvent.selectOptions(screen.getByLabelText("Date range"), "previous-month");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?by=client&range=previous-month&line=younger"));
+  });
+});
+
+describe("the Requests page", () => {
+  it("opens from the sidebar beneath Bytes, with Host and Outcome filters", async () => {
+    fakeService();
+    const { router } = renderPortal("/parent/usage/requests?range=past-week");
+    const heading = await screen.findByRole("heading", { name: "Requests" });
+    expect(heading).toBeInTheDocument();
+    expect(screen.getByLabelText("Host")).toBeInTheDocument();
+    expect(screen.getByLabelText("Outcome")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Group by")).not.toBeInTheDocument();
+    expect(screen.getByText("Requests 1 to 1 of 1.")).toBeInTheDocument();
+    expect(shown(router)).toBe("/parent/usage/requests?range=past-week");
   });
 });
 

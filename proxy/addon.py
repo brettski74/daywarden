@@ -217,10 +217,25 @@ class DecisionEnforcer:
                     if account and not account.stopped
                     else (0, 0)
                 )
-            # The body has already been delivered. Filing the remainder must
-            # not tear the transfer down on its way out.
-            if account and any(counts):
-                self._post(account, counts, live=False)
+            # Always tell the ledger the flow has ended, even with no bytes
+            # left to report. Filing must not tear the transfer down on its way out.
+            if account:
+                status = None
+                content_type = None
+                response = flow.response
+                if response is not None:
+                    status = response.status_code
+                    raw = response.headers.get("content-type")
+                    if raw:
+                        content_type = raw
+                self._post(
+                    account,
+                    counts,
+                    live=False,
+                    ended=True,
+                    status=status,
+                    content_type=content_type,
+                )
         except Exception as exc:
             print(f"observation failed: {exc}", flush=True)
 
@@ -249,10 +264,19 @@ class DecisionEnforcer:
             account = self._accounts.get(flow_id)
             return account is not None and account.stopped
 
-    def _post(self, account: _Account, counts: tuple[int, int], *, live: bool = True) -> None:
+    def _post(
+        self,
+        account: _Account,
+        counts: tuple[int, int],
+        *,
+        live: bool = True,
+        ended: bool = False,
+        status: int | None = None,
+        content_type: str | None = None,
+    ) -> None:
         up, down = counts
         nbytes = up + down
-        if nbytes <= 0:
+        if nbytes <= 0 and not ended:
             return
         payload = {
             "client_ip": account.client_ip,
@@ -263,6 +287,12 @@ class DecisionEnforcer:
             "bytes_down": down,
             "flow_id": account.flow.id,
         }
+        if ended:
+            payload["ended"] = True
+            if status is not None:
+                payload["status"] = status
+            if content_type is not None:
+                payload["content_type"] = content_type
         request = urllib.request.Request(
             OBSERVATION_URL,
             data=json.dumps(payload).encode("utf-8"),
@@ -274,12 +304,12 @@ class DecisionEnforcer:
                 request, timeout=self.observation_timeout
             ) as response:
                 body = response.read()
-                status = response.status
+                answer = response.status
         except Exception as exc:
             print(f"observation failed: {exc}", flush=True)
             return
         print(f"observe {nbytes} {account.url}", flush=True)
-        if live and observe.is_cut_instruction(status, body):
+        if live and observe.is_cut_instruction(answer, body):
             self._cut(account)
 
     def _cut(self, account: _Account) -> None:

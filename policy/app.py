@@ -51,7 +51,7 @@ from policy.store import PolicyStore
 from policy.task_admin import Reloads, TaskAdmin
 from policy.task_page import respond_task, task_media
 from policy.tasks import AttemptStore, TaskKey
-from policy.usage import UsageStore
+from policy.usage import UsageStore, outcome_of
 
 LOOPBACK = frozenset({"127.0.0.1", "::1"})
 
@@ -153,6 +153,19 @@ def create_app() -> FastAPI:
                 trace.site_group,
                 parsed.url,
                 assumption,
+            )
+        if parsed.flow_id:
+            outcome, status = outcome_of(trace.decision)
+            usage_store.record_request(
+                parsed.flow_id,
+                started_at=at,
+                client_ip=parsed.client_ip,
+                client_group=trace.client_group,
+                site_group=trace.site_group,
+                method=parsed.method,
+                url=parsed.url,
+                outcome=outcome,
+                status=status,
             )
         if now.policy is not None:
             returns.note(

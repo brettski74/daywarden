@@ -5,6 +5,7 @@ import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Login, loginLoader } from "./pages/Login";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
+import { Requests, requestsLoader } from "./pages/Requests";
 import { Usage, usageLoader } from "./pages/Usage";
 import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 
@@ -31,6 +32,7 @@ export const routes: RouteObject[] = [
           { path: "usage", loader: () => redirect("/usage/minutes") },
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },
           { path: "usage/bytes", element: <Usage unit="bytes" />, loader: usageLoader("bytes") },
+          { path: "usage/requests", element: <Requests />, loader: requestsLoader },
           {
             path: "tasks/:type/:name",
             element: <Task />,

@@ -1,8 +1,8 @@
 Ticket: S030
 Title: Usage analytics
 Status: Draft
-Story Points: 55
-Last Updated: 2026-11-14 01:25:00
+Story Points: 63
+Last Updated: 2026-11-15 18:17:58
 ---
 
 # User Voice
@@ -15,7 +15,7 @@ much time and data goes to YouTube or any other site, and what was fetched.
 
 ## Done
 
-- [ ] S030.1, S030.2, and S030.3 are done.
+- [ ] S030.1, S030.2, S030.3, and S030.4 are done.
 
 # Child stories
 
@@ -24,6 +24,7 @@ much time and data goes to YouTube or any other site, and what was fetched.
 | S030.1 | Usage graph with filters and presets | 21 |
 | S030.2 | Drill down to usage by host | 13 |
 | S030.3 | Requests: drill-down table and Requests page | 21 |
+| S030.4 | Request fetch metadata for quieter lists | 8 |
 
 # Notes
 
@@ -60,5 +61,7 @@ back says from when its detail is kept.
 
 S030.1 uses only the existing tables, so it changes no stored data. S030.2 changes what the proxy reports and adds the
 host buckets and the retention, and is accepted through the host bar chart. S030.3 adds a record of every request,
-including those a rule refuses, and is accepted through the request table and the Requests page. Each child is accepted through its own
-page, and each changes the proxy and the stored data in a way worth seeing working before the next is built on it.
+including those a rule refuses, and is accepted through the request table and the Requests page. S030.4 keeps browser
+fetch-metadata on those rows so the same table can favour navigations over subordinate noise. Each child is accepted
+through its own page, and each changes the proxy and the stored data in a way worth seeing working before the next is
+built on it.

@@ -6,6 +6,7 @@ import { DateField } from "../components/DateField";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { NameDialog } from "../components/NameDialog";
+import { RequestTable } from "../components/RequestTable";
 import { BarChart, type Bar } from "../components/charts/BarChart";
 import { LineChart } from "../components/charts/LineChart";
 import { NOT_A_DATE, parseDay } from "../dates";
@@ -27,10 +28,13 @@ import {
   settingsQuery,
   sitesBlocked,
   toggled,
+  withHost,
   withLine,
+  withTable,
   type GroupBy,
   type Hosts,
   type RangeName,
+  type RequestsData,
   type Settings,
   type Unit,
   type UsageData,
@@ -48,10 +52,85 @@ const BAR_TEXT: Record<Unit, (bar: Bar) => string> = {
   bytes: (bar) => `${formatBytes(bar.values[0])} down, ${formatBytes(bar.values[1])} up`,
 };
 
+/** The requests for one host, beneath the bar chart. */
+function RequestPanel({
+  requests,
+  line,
+  settings,
+  open,
+  moving,
+  onClose,
+  search,
+}: {
+  requests: RequestsData;
+  line: string;
+  settings: Settings;
+  open: boolean;
+  moving: boolean;
+  onClose: () => void;
+  search: string;
+}) {
+  const heading = `${line}, ${requests.host}, ${rangeLabel(settings)}: requests`;
+  return (
+    <section className="usage-requests" aria-label={heading} data-open={open || undefined} data-moving={moving || undefined} inert={!open}>
+      <div className="usage-requests-inner">
+        <div className="usage-hosts-head">
+          <h2>{heading}</h2>
+          <button type="button" className="icon-button icon-button-quiet" aria-label="Close requests" title="Close requests" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+        {requests.kept && <p className="usage-hosts-kept">{requests.kept}</p>}
+        <RequestTable
+          rows={requests.rows}
+          sort={requests.sort}
+          dir={requests.dir}
+          page={requests.page}
+          pages={requests.pages}
+          href={(patch) => withTable(search, patch)}
+          empty={
+            requests.kept
+              ? "No request rows in the part of the range that is still kept. The host bar can include earlier usage from before then."
+              : "No requests in this range."
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
 /** The top hosts on the line drilled into, beneath the graph. It opens and closes with the shared animation. */
-function HostPanel({ hosts, settings, unit, open, moving, onClose }: { hosts: Hosts; settings: Settings; unit: Unit; open: boolean; moving: boolean; onClose: () => void }) {
+function HostPanel({
+  hosts,
+  settings,
+  unit,
+  open,
+  moving,
+  onClose,
+  onOpenHost,
+  requests,
+  requestsOpen,
+  requestsMoving,
+  onCloseRequests,
+  search,
+}: {
+  hosts: Hosts;
+  settings: Settings;
+  unit: Unit;
+  open: boolean;
+  moving: boolean;
+  onClose: () => void;
+  onOpenHost: (host: string) => void;
+  requests: RequestsData | null;
+  requestsOpen: boolean;
+  requestsMoving: boolean;
+  onCloseRequests: () => void;
+  search: string;
+}) {
   const heading = `${hosts.line}, ${rangeLabel(settings)}: top hosts`;
   const bars = useMemo(() => hostBars(hosts, unit), [hosts, unit]);
+  const [lastRequests, setLastRequests] = useState(requests);
+  if (requests !== null && requests !== lastRequests) setLastRequests(requests);
   return (
     <section className="usage-hosts" aria-label={heading} data-open={open || undefined} data-moving={moving || undefined} inert={!open}>
       <div className="usage-hosts-inner">
@@ -62,7 +141,28 @@ function HostPanel({ hosts, settings, unit, open, moving, onClose }: { hosts: Ho
           </button>
         </div>
         {hosts.kept && <p className="usage-hosts-kept">{hosts.kept}</p>}
-        <BarChart label={heading} bars={bars} segments={SEGMENTS[unit]} format={BAR_TEXT[unit]} empty="No hosts in this range." />
+        <BarChart
+          label={heading}
+          bars={bars}
+          segments={SEGMENTS[unit]}
+          format={BAR_TEXT[unit]}
+          empty="No hosts in this range."
+          onOpen={onOpenHost}
+          openTitle={(name) => `Show the requests for ${name}`}
+        />
+        {requestsMoving || requestsOpen || lastRequests !== null
+          ? (requests ?? lastRequests) !== null && (
+              <RequestPanel
+                requests={(requests ?? lastRequests)!}
+                line={hosts.line}
+                settings={settings}
+                open={requestsOpen}
+                moving={requestsMoving}
+                onClose={onCloseRequests}
+                search={search}
+              />
+            )
+          : null}
       </div>
     </section>
   );
@@ -70,8 +170,17 @@ function HostPanel({ hosts, settings, unit, open, moving, onClose }: { hosts: Ho
 
 /** The loader for one unit's page. The data endpoint takes the page's own query string. */
 export function usageLoader(unit: Unit) {
-  return ({ request }: LoaderFunctionArgs): Promise<UsageData> =>
-    api<UsageData>(`/usage/${unit}${new URL(request.url).search}`, { page: pageOf(request), signal: request.signal });
+  return async ({ request }: LoaderFunctionArgs): Promise<UsageData> => {
+    const url = new URL(request.url);
+    const page = pageOf(request);
+    const graph = await api<UsageData>(`/usage/${unit}${url.search}`, { page, signal: request.signal });
+    const host = url.searchParams.get("host");
+    if (!host || graph.hosts === null) return { ...graph, requests: null };
+    const params = new URLSearchParams(url.search);
+    if (!params.has("exact")) params.set("exact", "1");
+    const requests = await api<RequestsData>(`/usage/requests?${params}`, { page, signal: request.signal });
+    return { ...graph, requests };
+  };
 }
 
 type Asking = { kind: "name" } | { kind: "replace"; name: string } | { kind: "delete"; name: string } | null;
@@ -125,12 +234,20 @@ export function Usage({ unit }: { unit: Unit }) {
     if (drilled !== hostsOpen) toggleHosts();
   }, [drilled, hostsOpen, toggleHosts]);
 
+  const hostDrilled = data.requests !== null;
+  const [requestsOpen, setRequestsOpen] = useState(hostDrilled);
+  const requestsMotion = useExpander(requestsOpen, setRequestsOpen);
+  const toggleRequests = requestsMotion.toggle;
+  useEffect(() => {
+    if (hostDrilled !== requestsOpen) toggleRequests();
+  }, [hostDrilled, requestsOpen, toggleRequests]);
+
   const here = BASE + location.pathname + location.search;
   const reported = location.state as Outcome | null;
   const outcome: Outcome | null = refusal !== null ? { ok: false, message: refusal } : reported;
   const line = lineOf(location.search);
 
-  /** Change the settings. The line drilled into stays, unless Group by changes what the lines are. */
+  /** Change the settings. The line drilled into stays, unless Group by changes what the lines are. A host drill always closes. */
   function change(patch: Partial<Settings>) {
     const next = { ...draft, ...patch };
     setDraft(next);
@@ -139,6 +256,10 @@ export function Usage({ unit }: { unit: Unit }) {
 
   function drill(name: string) {
     navigate({ search: withLine(location.search, name) });
+  }
+
+  function drillHost(name: string) {
+    navigate({ search: withHost(location.search, name) });
   }
 
   function chooseRange(range: RangeName) {
@@ -326,6 +447,12 @@ export function Usage({ unit }: { unit: Unit }) {
             open={hostsOpen}
             moving={hostsMotion.moving}
             onClose={() => navigate({ search: withLine(location.search, null) })}
+            onOpenHost={drillHost}
+            requests={data.requests}
+            requestsOpen={requestsOpen}
+            requestsMoving={requestsMotion.moving}
+            onCloseRequests={() => navigate({ search: withHost(location.search, null) })}
+            search={location.search}
           />
         )}
       </div>
@@ -357,6 +484,7 @@ export function Usage({ unit }: { unit: Unit }) {
         {data.notes.map((note) => (
           <span key={note}>{note}</span>
         ))}
+        {data.requests?.status && <span>{data.requests.status}</span>}
         <span>{data.range ? `${data.range}. ${data.times}` : data.times}</span>
       </StatusBar>
     </>

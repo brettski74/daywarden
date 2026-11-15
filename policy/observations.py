@@ -12,8 +12,9 @@ A report cuts the transfer only when that flow's recorded allow has reached
 a clock deadline or a volume ceiling, and the access rules no longer allow
 it. Any other answer leaves the transfer running.
 
-Usage by host older than the policy's ``host_retention`` is deleted when the
-service starts, after each reload, and every hour.
+Usage by host older than the policy's ``host_retention``, and request rows
+older than ``request_retention``, are deleted when the service starts, after
+each reload, and every hour.
 
 A POLICY_FILE that does not end in .yaml or .yml stops the service.
 
@@ -43,7 +44,7 @@ from policy.check import load_required
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy.store import PolicyStore
-from policy.usage import UsageStore, cut_required, file_report, prune_hosts
+from policy.usage import UsageStore, cut_required, file_report, note_request, prune_hosts, prune_requests
 
 # The only instruction the proxy treats as a cut. An empty body is not one.
 CUT_BODY = b'{"action":"cut"}'
@@ -72,8 +73,17 @@ def status_for(policy: Policy | None, usage: UsageStore, body: bytes) -> tuple[i
         raise ValueError("an observation is a JSON object") from exc
     if policy is not None:
         flow_id = _flow_id(document)
-        filing = file_report(policy, usage, _clock_for(policy), document)
-        if filing is not None and cut_required(policy, usage, filing, flow_id):
+        clock = _clock_for(policy)
+        filing = file_report(policy, usage, clock, document)
+        cut = filing is not None and cut_required(policy, usage, filing, flow_id)
+        note_request(
+            usage,
+            clock,
+            document,
+            quotas=() if filing is None else filing.quotas,
+            cut=cut,
+        )
+        if cut:
             return 200, CUT_BODY
     return 204, b""
 
@@ -89,8 +99,8 @@ def listen(
     """Serve /health, /v1/observations, and /v1/reload. The returned server is not started.
 
     Without ``policy_file`` there is nothing to reload, and /v1/reload is 404.
-    ``server.prune_hosts()`` deletes the usage by host older than the policy's
-    retention, and a reload does the same.
+    ``server.prune_hosts()`` deletes the usage by host and the request rows
+    older than the policy's retention, and a reload does the same.
     """
     destination = log_path if log_path is not None else LOG_PATH
     lock = threading.Lock()
@@ -101,11 +111,16 @@ def listen(
             loaded = current["policy"]
             if loaded is None:
                 return 0
-            removed = prune_hosts(loaded, usage, _clock_for(loaded).local())
-        if removed:
+            now = _clock_for(loaded).local()
+            hosts = prune_hosts(loaded, usage, now)
+            requests = prune_requests(loaded, usage, now)
+        if hosts:
             days = loaded.host_retention
-            print(f"removed {removed} host rows older than {days} day{'' if days == 1 else 's'}", flush=True)
-        return removed
+            print(f"removed {hosts} host rows older than {days} day{'' if days == 1 else 's'}", flush=True)
+        if requests:
+            days = loaded.request_retention
+            print(f"removed {requests} request rows older than {days} day{'' if days == 1 else 's'}", flush=True)
+        return hosts + requests
 
     def reload_policy() -> dict:
         if policy_file is None:
