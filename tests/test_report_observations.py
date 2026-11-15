@@ -208,7 +208,8 @@ def _allow(stack: Stack) -> None:
 
 
 def _require_observation(entry: dict, url: str) -> None:
-    assert {"client_ip", "url", "occurred_at", "bytes", "flow_id"} <= set(entry)
+    assert {"client_ip", "url", "occurred_at", "bytes", "bytes_up", "bytes_down", "flow_id"} <= set(entry)
+    assert entry["bytes"] == entry["bytes_up"] + entry["bytes_down"]
     assert isinstance(entry["flow_id"], str) and entry["flow_id"]
     ipaddress.ip_address(entry["client_ip"])
     assert entry["url"] == url
@@ -248,6 +249,8 @@ def test_post_body_is_included_in_the_observation(stack):
     for entry in observations:
         _require_observation(entry, url)
     assert sum(entry["bytes"] for entry in observations) == len(payload) + len(body)
+    assert sum(entry["bytes_up"] for entry in observations) == len(payload)
+    assert sum(entry["bytes_down"] for entry in observations) == len(body)
 
 
 def test_stream_is_reported_before_it_ends(stack):

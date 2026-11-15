@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useLoaderData, useLocation, useNavigate, type LoaderFunctionArgs } from "react-router";
 import { ApiError, BASE, api, pageOf } from "../api";
 import { DateField } from "../components/DateField";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { NameDialog } from "../components/NameDialog";
+import { BarChart, type Bar } from "../components/charts/BarChart";
 import { LineChart } from "../components/charts/LineChart";
 import { NOT_A_DATE, parseDay } from "../dates";
 import { useExpander } from "../motion";
@@ -18,12 +20,16 @@ import {
   formatBytes,
   formatDuration,
   groupByChoices,
+  lineOf,
   presetQuery,
   quotasBlocked,
+  rangeLabel,
   settingsQuery,
   sitesBlocked,
   toggled,
+  withLine,
   type GroupBy,
+  type Hosts,
   type RangeName,
   type Settings,
   type Unit,
@@ -31,6 +37,36 @@ import {
 } from "../usage";
 
 const TITLES: Record<Unit, string> = { minutes: "Minutes", bytes: "Bytes" };
+const SEGMENTS: Record<Unit, string[]> = { minutes: ["Minutes"], bytes: ["Downloaded", "Uploaded"] };
+
+function hostBars(hosts: Hosts, unit: Unit): Bar[] {
+  return hosts.bars.map((bar) => ({ name: bar.host, values: unit === "minutes" ? [bar.value] : [bar.down ?? bar.value, bar.up ?? 0] }));
+}
+
+const BAR_TEXT: Record<Unit, (bar: Bar) => string> = {
+  minutes: (bar) => formatDuration(bar.values[0]),
+  bytes: (bar) => `${formatBytes(bar.values[0])} down, ${formatBytes(bar.values[1])} up`,
+};
+
+/** The top hosts on the line drilled into, beneath the graph. It opens and closes with the shared animation. */
+function HostPanel({ hosts, settings, unit, open, moving, onClose }: { hosts: Hosts; settings: Settings; unit: Unit; open: boolean; moving: boolean; onClose: () => void }) {
+  const heading = `${hosts.line}, ${rangeLabel(settings)}: top hosts`;
+  const bars = useMemo(() => hostBars(hosts, unit), [hosts, unit]);
+  return (
+    <section className="usage-hosts" aria-label={heading} data-open={open || undefined} data-moving={moving || undefined} inert={!open}>
+      <div className="usage-hosts-inner">
+        <div className="usage-hosts-head">
+          <h2>{heading}</h2>
+          <button type="button" className="icon-button icon-button-quiet" aria-label="Close top hosts" title="Close top hosts" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+        {hosts.kept && <p className="usage-hosts-kept">{hosts.kept}</p>}
+        <BarChart label={heading} bars={bars} segments={SEGMENTS[unit]} format={BAR_TEXT[unit]} empty="No hosts in this range." />
+      </div>
+    </section>
+  );
+}
 
 /** The loader for one unit's page. The data endpoint takes the page's own query string. */
 export function usageLoader(unit: Unit) {
@@ -78,14 +114,31 @@ export function Usage({ unit }: { unit: Unit }) {
     if (custom !== open) toggle();
   }, [custom, open, toggle]);
 
+  // The bars stay on screen while the panel collapses, after the address has dropped the line.
+  const drilled = data.hosts !== null;
+  const [lastHosts, setLastHosts] = useState(data.hosts);
+  if (data.hosts !== null && data.hosts !== lastHosts) setLastHosts(data.hosts);
+  const [hostsOpen, setHostsOpen] = useState(drilled);
+  const hostsMotion = useExpander(hostsOpen, setHostsOpen);
+  const toggleHosts = hostsMotion.toggle;
+  useEffect(() => {
+    if (drilled !== hostsOpen) toggleHosts();
+  }, [drilled, hostsOpen, toggleHosts]);
+
   const here = BASE + location.pathname + location.search;
   const reported = location.state as Outcome | null;
   const outcome: Outcome | null = refusal !== null ? { ok: false, message: refusal } : reported;
+  const line = lineOf(location.search);
 
+  /** Change the settings. The line drilled into stays, unless Group by changes what the lines are. */
   function change(patch: Partial<Settings>) {
     const next = { ...draft, ...patch };
     setDraft(next);
-    navigate({ search: settingsQuery(next) });
+    navigate({ search: settingsQuery(next, next.by === draft.by ? line : null) });
+  }
+
+  function drill(name: string) {
+    navigate({ search: withLine(location.search, name) });
   }
 
   function chooseRange(range: RangeName) {
@@ -119,7 +172,7 @@ export function Usage({ unit }: { unit: Unit }) {
     const done = await send("/usage/presets", { name, settings: data.settings, replace });
     if (typeof done === "string") return done;
     setAsking(null);
-    navigate({ search: presetQuery(done.name) }, { state: { ok: true, message: done.message } satisfies Outcome });
+    navigate({ search: presetQuery(done.name, line) }, { state: { ok: true, message: done.message } satisfies Outcome });
     return null;
   }
 
@@ -144,7 +197,7 @@ export function Usage({ unit }: { unit: Unit }) {
     setAsking(null);
     const done = await send("/usage/presets/delete", { name });
     if (typeof done === "string") setRefusal(done);
-    else navigate({ search: settingsQuery(data.settings) }, { state: { ok: true, message: done.message } satisfies Outcome });
+    else navigate({ search: settingsQuery(data.settings, line) }, { state: { ok: true, message: done.message } satisfies Outcome });
   }
 
   const sitesWhy = sitesBlocked(draft);
@@ -246,19 +299,33 @@ export function Usage({ unit }: { unit: Unit }) {
         </div>
       </ContextBar>
 
-      <div className="usage-graph">
-        {graph === null ? (
-          <p>Fix the date range to draw the graph.</p>
-        ) : (
-          <LineChart
-            label={`${TITLES[unit]} ${data.settings.by === "none" ? "in total" : `by ${byName.toLowerCase()}`}`}
-            length={graph.length}
-            ticks={graph.ticks}
-            points={graph.points}
-            series={graph.lines}
-            axis={unit === "minutes" ? durationAxis : bytesAxis}
-            format={unit === "minutes" ? formatDuration : formatBytes}
-            empty="No usage in this range."
+      <div className="usage-page" data-hosts={hostsOpen || undefined}>
+        <div className="usage-graph">
+          {graph === null ? (
+            <p>Fix the date range to draw the graph.</p>
+          ) : (
+            <LineChart
+              label={`${TITLES[unit]} ${data.settings.by === "none" ? "in total" : `by ${byName.toLowerCase()}`}`}
+              length={graph.length}
+              ticks={graph.ticks}
+              points={graph.points}
+              series={graph.lines}
+              axis={unit === "minutes" ? durationAxis : bytesAxis}
+              format={unit === "minutes" ? formatDuration : formatBytes}
+              empty="No usage in this range."
+              onOpen={drill}
+              openTitle={(name) => `Show the top hosts for ${name}`}
+            />
+          )}
+        </div>
+        {hostsMotion.shown && lastHosts !== null && (
+          <HostPanel
+            hosts={data.hosts ?? lastHosts}
+            settings={data.settings}
+            unit={unit}
+            open={hostsOpen}
+            moving={hostsMotion.moving}
+            onClose={() => navigate({ search: withLine(location.search, null) })}
           />
         )}
       </div>

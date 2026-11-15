@@ -1,5 +1,5 @@
 import { line } from "d3-shape";
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { Axes, ChartFrame, MARGIN, Readout, dashed, plotScales, seriesClass, type AxisTick, type Tick } from "./ChartFrame";
 import { useSize } from "./useSize";
 
@@ -20,6 +20,9 @@ type Props = {
   format: (value: number) => string;
   /** Said in place of the lines when every value is zero. */
   empty: string;
+  /** Open a series: double-clicking its line, Enter on its line, or its legend entry. ``openTitle`` says what opening does. */
+  onOpen?: (name: string) => void;
+  openTitle?: (name: string) => string;
 };
 
 type Focus = { line: number; point: number };
@@ -34,9 +37,10 @@ const DOTTED = 50;
  * series with its total, and a readout of the point the pointer is on.
  *
  * Each line is focusable. Focused, the readout starts on its largest point,
- * and the left and right arrow keys, Home, and End move along it.
+ * and the left and right arrow keys, Home, and End move along it. With
+ * ``onOpen``, double-clicking a line, Enter on it, or its legend entry opens it.
  */
-export function LineChart({ label, length, ticks, points, series, axis, format, empty }: Props) {
+export function LineChart({ label, length, ticks, points, series, axis, format, empty, onOpen, openTitle }: Props) {
   const [plotRef, size] = useSize<HTMLDivElement>();
   const svg = useRef<SVGSVGElement>(null);
   const [focus, setFocus] = useState<Focus | null>(null);
@@ -84,13 +88,27 @@ export function LineChart({ label, length, ticks, points, series, axis, format, 
     return best === null ? null : { line: best, point };
   }
 
-  function pointed(event: PointerEvent<SVGRectElement>) {
+  function under(event: { clientX: number; clientY: number }): Focus | null {
     const box = svg.current?.getBoundingClientRect();
-    if (!box) return;
-    setFocus(nearest(event.clientX - box.left, event.clientY - box.top));
+    if (!box) return null;
+    return nearest(event.clientX - box.left, event.clientY - box.top);
+  }
+
+  function pointed(event: PointerEvent<SVGRectElement>) {
+    setFocus(under(event));
+  }
+
+  function opened(event: MouseEvent<SVGRectElement>) {
+    const found = under(event);
+    if (found !== null && onOpen) onOpen(drawn[found.line].name);
   }
 
   function key(index: number, event: KeyboardEvent<SVGPathElement>) {
+    if (event.key === "Enter" && onOpen) {
+      event.preventDefault();
+      onOpen(drawn[index].name);
+      return;
+    }
     const last = points.length - 1;
     const at = focus?.line === index ? focus.point : peak(index);
     const moves: Record<string, number> = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: last };
@@ -104,10 +122,26 @@ export function LineChart({ label, length, ticks, points, series, axis, format, 
   const marked = shown === null ? null : { left: x(points[shown.point].at), top: y(drawn[shown.line].values[shown.point]) };
 
   return (
-    <ChartFrame plotRef={plotRef} legend={drawn.map((each, index) => ({ name: each.name, total: format(totals[index]) }))} legendLabel="Legend">
+    <ChartFrame
+      plotRef={plotRef}
+      legend={drawn.map((each, index) => ({ name: each.name, total: format(totals[index]) }))}
+      legendLabel="Legend"
+      onPick={onOpen}
+      pickTitle={openTitle}
+    >
       <svg ref={svg} className="chart-svg" width={size.width} height={size.height} role="group" aria-label={label}>
         <Axes x={x} y={y} xTicks={ticks} yTicks={yAxis.ticks} />
-        <rect className="chart-hit" x={left} y={top} width={right - left} height={bottom - top} onPointerMove={pointed} onPointerLeave={() => setFocus(null)} />
+        <rect
+          className="chart-hit"
+          data-openable={(onOpen && shown !== null) || undefined}
+          x={left}
+          y={top}
+          width={right - left}
+          height={bottom - top}
+          onPointerMove={pointed}
+          onPointerLeave={() => setFocus(null)}
+          onDoubleClick={opened}
+        />
         {drawn.map((each, index) => (
           <g key={each.name} className={seriesClass(index)}>
             <path

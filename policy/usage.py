@@ -6,6 +6,12 @@ is then evaluated on that same observation. ``allow`` and ``continue`` accrue
 to this client group's balance. ``deny`` and ``redirect`` do not. Falling off
 the end of the set is a continue, so it accrues.
 
+The same report is filed again under its host, beside the site group and
+beside each quota, with its bytes down and up kept apart. A host gains a
+bucket's length once however many reports it has in that bucket. The host
+rows are kept for the policy's ``host_retention``. The site-group and quota
+rows are kept for good.
+
 Time is the sum of ended buckets. Bytes include a bucket that has not ended.
 A bucket keeps the length it was opened with. The length still divides the
 local day, and a load that changes it shortens a bucket that is still open
@@ -30,6 +36,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from policy.buckets import place, require_day_length
 from policy.clients import normalize_ip
@@ -48,6 +55,10 @@ from policy.tasks import Task, ensure_attempts, pass_count
 # A quota rule set is read before the access path turns a top-level continue
 # into a deny. On a quota, allow and continue both mean the traffic belongs.
 _ACCRUING = frozenset({"allow", "continue"})
+_DEFAULT_PORTS = {"http": 80, "ws": 80, "https": 443, "wss": 443}
+# The household-local start of the earliest host row, so a drill-down knows how far back hosts reach.
+_HOSTS_SINCE = "hosts_since"
+_HOST_LEDGERS = {"site": ("host_buckets", "site_group"), "quota": ("host_quota_buckets", "quota")}
 
 
 class UsageStore(Ledger):
@@ -151,6 +162,9 @@ class UsageStore(Ledger):
         moment: datetime,
         byte_count: int,
         quotas: Sequence[str],
+        *,
+        host: str | None = None,
+        bytes_up: int = 0,
     ) -> None:
         """Store one report under the pair, and under each named quota.
 
@@ -158,8 +172,18 @@ class UsageStore(Ledger):
         start, length, and byte count are written for the site group and for
         every quota. A second report in the bucket adds bytes and does not
         change the length or insert another row. The writes commit together.
+
+        With ``host``, the same report is written again under the host, beside
+        the site group and each quota, with ``bytes_up`` of the byte count sent
+        up and the rest down. A second report for the host in the bucket adds
+        its bytes and not its time.
         """
         byte_count = _zero_or_more(byte_count, "a byte count")
+        bytes_up = _zero_or_more(bytes_up, "a byte count sent up")
+        if bytes_up > byte_count:
+            raise ValueError("the bytes sent up are part of the byte count")
+        if host is not None and (not isinstance(host, str) or not host):
+            raise ValueError("a host is a name")
         start, length = place(moment, self.bucket_regimes())
         names: list[str] = []
         for name in quotas:
@@ -171,6 +195,51 @@ class UsageStore(Ledger):
             self._mark("group_buckets", "site_group", client_group, site_group, start, length, byte_count)
             for name in names:
                 self._mark("quota_buckets", "quota", client_group, name, start, length, byte_count)
+            if host is None:
+                return
+            down = byte_count - bytes_up
+            self._mark_host("host_buckets", "site_group", client_group, site_group, host, start, length, down, bytes_up)
+            for name in names:
+                self._mark_host("host_quota_buckets", "quota", client_group, name, host, start, length, down, bytes_up)
+            self.connection.execute(
+                "INSERT INTO hierarchy_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE "
+                "SET value = excluded.value WHERE excluded.value < hierarchy_settings.value",
+                (_HOSTS_SINCE, start.isoformat(timespec="seconds")),
+            )
+
+    def host_rows_between(
+        self, ledger: str, start: datetime, end: datetime
+    ) -> list[tuple[str, str, str, datetime, int, int, int]]:
+        """Return every host row of one ledger that starts at or after start and before end.
+
+        ``ledger`` is ``site`` or ``quota``, as for ``rows_between``. Each item
+        is the client group, the site group or quota, the host, the local
+        start, the stored length, the bytes down, and the bytes up.
+        """
+        table, column = _HOST_LEDGERS[ledger]
+        rows = self.connection.execute(
+            f"SELECT client_group, {column}, host, started_at, length_seconds, bytes_down, bytes_up FROM {table} "
+            "WHERE started_at >= ? AND started_at < ? ORDER BY started_at",
+            (_wall(start).isoformat(timespec="seconds"), _wall(end).isoformat(timespec="seconds")),
+        ).fetchall()
+        return [
+            (client_group, name, host, datetime.fromisoformat(started_at), int(length), int(down), int(up))
+            for client_group, name, host, started_at, length, down, up in rows
+        ]
+
+    def hosts_since(self) -> datetime | None:
+        """Return the household-local start of the earliest host row ever filed, or None before any."""
+        raw = self._setting(_HOSTS_SINCE)
+        return None if raw is None else datetime.fromisoformat(raw)
+
+    def prune_hosts(self, before: datetime) -> int:
+        """Delete every host row that starts before ``before``. Return how many went."""
+        cutoff = _wall(before).isoformat(timespec="seconds")
+        removed = 0
+        with self.connection:
+            for table, _column in _HOST_LEDGERS.values():
+                removed += self.connection.execute(f"DELETE FROM {table} WHERE started_at < ?", (cutoff,)).rowcount
+        return removed
 
     def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
         """Return this client group's ended time on the quota.
@@ -372,6 +441,28 @@ class UsageStore(Ledger):
                 ON quota_buckets (quota, client_group);
             CREATE INDEX IF NOT EXISTS group_buckets_by_start ON group_buckets (started_at);
             CREATE INDEX IF NOT EXISTS quota_buckets_by_start ON quota_buckets (started_at);
+            CREATE TABLE IF NOT EXISTS host_buckets (
+                client_group TEXT NOT NULL,
+                site_group TEXT NOT NULL,
+                host TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                length_seconds INTEGER NOT NULL,
+                bytes_down INTEGER NOT NULL,
+                bytes_up INTEGER NOT NULL,
+                PRIMARY KEY (client_group, site_group, host, started_at)
+            );
+            CREATE TABLE IF NOT EXISTS host_quota_buckets (
+                client_group TEXT NOT NULL,
+                quota TEXT NOT NULL,
+                host TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                length_seconds INTEGER NOT NULL,
+                bytes_down INTEGER NOT NULL,
+                bytes_up INTEGER NOT NULL,
+                PRIMARY KEY (client_group, quota, host, started_at)
+            );
+            CREATE INDEX IF NOT EXISTS host_buckets_by_start ON host_buckets (started_at);
+            CREATE INDEX IF NOT EXISTS host_quota_buckets_by_start ON host_quota_buckets (started_at);
             CREATE TABLE IF NOT EXISTS transfers (
                 flow_id TEXT PRIMARY KEY,
                 client_group TEXT NOT NULL,
@@ -386,11 +477,14 @@ class UsageStore(Ledger):
 
     def _end_open_buckets(self, loaded_at: datetime) -> None:
         wall = _wall(loaded_at)
-        for table, column in (("group_buckets", "site_group"), ("quota_buckets", "quota")):
+        # No bucket is longer than a day, so an older one has already ended.
+        earliest = (wall - timedelta(days=1)).isoformat(timespec="seconds")
+        for table in ("group_buckets", "quota_buckets", "host_buckets", "host_quota_buckets"):
             rows = self.connection.execute(
-                f"SELECT client_group, {column}, started_at, length_seconds FROM {table}"
+                f"SELECT rowid, started_at, length_seconds FROM {table} WHERE started_at >= ?",
+                (earliest,),
             ).fetchall()
-            for client_group, name, started_at, length in rows:
+            for rowid, started_at, length in rows:
                 start = datetime.fromisoformat(started_at)
                 if start >= wall:
                     continue
@@ -398,9 +492,8 @@ class UsageStore(Ledger):
                 if remaining < 1 or remaining >= int(length):
                     continue
                 self.connection.execute(
-                    f"UPDATE {table} SET length_seconds = ? "
-                    f"WHERE client_group = ? AND {column} = ? AND started_at = ?",
-                    (remaining, client_group, name, started_at),
+                    f"UPDATE {table} SET length_seconds = ? WHERE rowid = ?",
+                    (remaining, rowid),
                 )
 
     def _mark(
@@ -427,6 +520,28 @@ class UsageStore(Ledger):
                 length,
                 byte_count,
             ),
+        )
+
+    def _mark_host(
+        self,
+        table: str,
+        column: str,
+        client_group: str,
+        name: str,
+        host: str,
+        start: datetime,
+        length: int,
+        down: int,
+        up: int,
+    ) -> None:
+        self.connection.execute(
+            f"INSERT INTO {table} ("
+            f"client_group, {column}, host, started_at, length_seconds, bytes_down, bytes_up"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?) "
+            f"ON CONFLICT (client_group, {column}, host, started_at) DO UPDATE SET "
+            f"bytes_down = {table}.bytes_down + excluded.bytes_down, "
+            f"bytes_up = {table}.bytes_up + excluded.bytes_up",
+            (client_group, name, host, start.isoformat(timespec="seconds"), length, down, up),
         )
 
     def save_transfer(
@@ -528,17 +643,51 @@ def file_report(
     parsed = _parse(document)
     if parsed is None:
         return None
-    moment = clock.local(parsed[2])
+    client_ip, url, occurred, nbytes, up = parsed
+    moment = clock.local(occurred)
     usage.ensure_length(policy.bucket_length)
-    client_group = classify_client(policy, parsed[0])
-    site_group = classify_site(policy, parsed[1])
+    client_group = classify_client(policy, client_ip)
+    site_group = classify_site(policy, url)
     accepted = [
         quota.name
         for quota in policy.quotas
         if _accepts(policy, usage, quota.ruleset, client_group, site_group, moment)
     ]
-    usage.file_observation(client_group, site_group, moment, parsed[3], accepted)
+    usage.file_observation(client_group, site_group, moment, nbytes, accepted, host=host_of(url), bytes_up=up)
     return Filing(client_group, moment, tuple(accepted))
+
+
+def host_of(url: str) -> str:
+    """Return the host a URL fetched, with its port only when it is not the scheme's default.
+
+    ``https://www.youtube.com:443/x`` is ``www.youtube.com`` and
+    ``http://localhost:3000/`` is ``localhost:3000``. An IPv6 address keeps its
+    brackets when it has a port. A URL with no host name is itself.
+    """
+    parts = urlsplit(url)
+    name = parts.hostname
+    if not name:
+        return url
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None or port == _DEFAULT_PORTS.get(parts.scheme.lower()):
+        return name
+    return f"[{name}]:{port}" if ":" in name else f"{name}:{port}"
+
+
+def host_cutoff(retention_days: int, now: datetime) -> datetime:
+    """Return the local midnight before which host rows are older than the retention.
+
+    Kept for 30 days on Friday 13 November means kept from Wednesday 14 October.
+    """
+    return datetime.combine(_wall(now).date() - timedelta(days=retention_days), time.min)
+
+
+def prune_hosts(policy: Policy, usage: UsageStore, now: datetime) -> int:
+    """Delete the host rows older than the policy's retention. Return how many went."""
+    return usage.prune_hosts(host_cutoff(policy.host_retention, now))
 
 
 def cut_required(
@@ -612,8 +761,13 @@ def _accepts(
     return trace.decision.get("action") in _ACCRUING
 
 
-def _parse(document: object) -> tuple[str, str, datetime, int] | None:
-    """Return client, url, time, and bytes. None when no bytes moved."""
+def _parse(document: object) -> tuple[str, str, datetime, int, int] | None:
+    """Return client, url, time, bytes, and the bytes sent up. None when no bytes moved.
+
+    ``bytes`` is the total. A report that also has ``bytes_up`` and
+    ``bytes_down`` must add up to it. A report from an older proxy with only
+    ``bytes`` sent nothing up.
+    """
     if not isinstance(document, dict):
         raise ValueError("an observation is a JSON object")
     client_ip = document.get("client_ip")
@@ -632,9 +786,15 @@ def _parse(document: object) -> tuple[str, str, datetime, int] | None:
     nbytes = document.get("bytes")
     if isinstance(nbytes, bool) or not isinstance(nbytes, int) or nbytes < 0:
         raise ValueError("bytes is a whole number, zero or more")
+    up = 0
+    if "bytes_up" in document or "bytes_down" in document:
+        up = _zero_or_more(document.get("bytes_up"), "bytes_up")
+        down = _zero_or_more(document.get("bytes_down"), "bytes_down")
+        if up + down != nbytes:
+            raise ValueError("bytes is bytes_up and bytes_down added together")
     if nbytes == 0:
         return None
-    return client_ip, url, moment, nbytes
+    return client_ip, url, moment, nbytes, up
 
 
 def _as_of(when: date | datetime) -> datetime:

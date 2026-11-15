@@ -273,6 +273,109 @@ describe("the graph", () => {
   });
 });
 
+const TOP_HOSTS = [
+  { host: "rr3---sn-ab5l6nrz.googlevideo.com", value: 3600, down: 1.2 * 1024 ** 3, up: 40 * 1024 ** 2 },
+  { host: "www.youtube.com", value: 900, down: 300 * 1024 ** 2, up: 2 * 1024 ** 2 },
+];
+
+/** Answer as the service does: the settings asked for, and the top hosts on the line the address names. */
+function drillEcho(kept: string | null = null) {
+  return (call: Call) => {
+    if (!/^\/parent\/api\/usage\/(minutes|bytes)$/.test(call.path)) return undefined;
+    const asked = new URLSearchParams(call.search);
+    const answer = echo(call) ?? { body: { ...USAGE, unit: call.path.endsWith("bytes") ? "bytes" : "minutes" } };
+    const line = asked.get("line");
+    const bytes = call.path.endsWith("bytes");
+    const bars = TOP_HOSTS.map(({ host, value, down, up }) => (bytes ? { host, value: down + up, down, up } : { host, value }));
+    return { body: { ...answer.body, hosts: line ? { line, kept, bars } : null } };
+  };
+}
+
+describe("the top hosts", () => {
+  it("open beneath the graph when a line is double-clicked, with the line in the address", async () => {
+    const { router } = await openUsage(DEFAULT_ADDRESS, drillEcho());
+    expect(screen.queryByRole("region", { name: /top hosts/ })).not.toBeInTheDocument();
+    const plot = document.querySelector(".chart-hit") as SVGRectElement;
+    fireEvent.doubleClick(plot, { clientX: 431, clientY: 16 });
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger`));
+    const panel = await screen.findByRole("region", { name: "younger, Past week: top hosts" });
+    expect(within(panel).getByRole("heading", { name: "younger, Past week: top hosts" })).toBeInTheDocument();
+    const bars = within(panel).getAllByRole("listitem").map((item) => item.getAttribute("aria-label"));
+    expect(bars).toEqual(["rr3---sn-ab5l6nrz.googlevideo.com, 1h", "www.youtube.com, 15m"]);
+    expect(within(panel).queryByRole("list", { name: "Key" })).not.toBeInTheDocument();
+  });
+
+  it("does not open when the double-click is not on a line", async () => {
+    const { router } = await openUsage(DEFAULT_ADDRESS, drillEcho());
+    fireEvent.doubleClick(document.querySelector(".chart-hit") as SVGRectElement, { clientX: 431, clientY: 200 });
+    expect(shown(router)).toBe(DEFAULT_ADDRESS);
+  });
+
+  it("open from the keyboard with Enter on a legend entry or on a focused line", async () => {
+    const { router } = await openUsage(DEFAULT_ADDRESS, drillEcho());
+    const entry = within(screen.getByRole("list", { name: "Legend" })).getByRole("button", { name: "older, 0m" });
+    expect(entry).toHaveAttribute("title", "Show the top hosts for older");
+    entry.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=older`));
+    expect(await screen.findByRole("region", { name: "older, Past week: top hosts" })).toBeInTheDocument();
+
+    screen.getByRole("img", { name: "younger, 1h 15m" }).focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger`));
+    expect(await screen.findByRole("region", { name: "younger, Past week: top hosts" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^older/ })).not.toBeInTheDocument();
+  });
+
+  it("split each bar into downloaded and uploaded on the Bytes page, with a key", async () => {
+    await openUsage("/parent/usage/bytes?by=client&range=past-week&line=younger", drillEcho());
+    const panel = await screen.findByRole("region", { name: "younger, Past week: top hosts" });
+    expect(within(within(panel).getByRole("list", { name: "Key" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Downloaded", "Uploaded"]);
+    expect(within(panel).getByText("1.2 GB down, 40 MB up")).toBeInTheDocument();
+    const first = within(panel).getAllByRole("listitem", { name: /googlevideo/ })[0];
+    expect(first.querySelectorAll(".chart-bar")).toHaveLength(2);
+  });
+
+  it("close with the close button, which takes the line out of the address", async () => {
+    const { router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger`, drillEcho());
+    const panel = await screen.findByRole("region", { name: "younger, Past week: top hosts" });
+    await userEvent.click(within(panel).getByRole("button", { name: "Close top hosts" }));
+    await waitFor(() => expect(shown(router)).toBe(DEFAULT_ADDRESS));
+    await waitFor(() => expect(screen.queryByRole("region", { name: /top hosts/ })).not.toBeInTheDocument());
+  });
+
+  it("stay open when a filter or the range changes, and close when Group by changes the lines", async () => {
+    const { router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger`, drillEcho());
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Date range" }), "previous-month");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?by=client&range=previous-month&line=younger"));
+    expect(await screen.findByRole("region", { name: "younger, Previous month: top hosts" })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Group by" }), "none");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?by=none&range=previous-month"));
+  });
+
+  it("say from when hosts are kept, and that there are none", async () => {
+    const kept = "Hosts are kept for 30 days, from Wednesday 14 October 2026.";
+    await openUsage("/parent/usage/minutes?by=client&range=past-month&line=younger", (call) => {
+      const answer = drillEcho(kept)(call);
+      return answer && { body: { ...answer.body, hosts: { ...answer.body.hosts, bars: [] } } };
+    });
+    const panel = await screen.findByRole("region", { name: "younger, Past month: top hosts" });
+    expect(within(panel).getByText(kept)).toBeInTheDocument();
+    expect(within(panel).getByText("No hosts in this range.")).toBeInTheDocument();
+  });
+
+  it("name a custom range by its days in the heading, and keep the line when a preset is saved", async () => {
+    const address = "/parent/usage/minutes?by=client&range=custom&from=2026-11-01&to=2026-11-07&line=younger";
+    const { router } = await openUsage(address, (call) =>
+      call.path === "/parent/api/usage/presets" ? { body: { name: "Week one", message: "Saved preset Week one." } } : drillEcho()(call),
+    );
+    expect(await screen.findByRole("region", { name: "younger, 2026-11-01 to 2026-11-07: top hosts" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save preset" }));
+    await userEvent.type(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" }), "Week one{Enter}");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?preset=Week%20one&line=younger"));
+  });
+});
+
 describe("usage values", () => {
   it("read as durations and as the policy file's byte units", () => {
     expect([0, 59, 180, 3600, 22800, 4530].map(formatDuration)).toEqual(["0m", "59s", "3m", "1h", "6h 20m", "1h 15m 30s"]);

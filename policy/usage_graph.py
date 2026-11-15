@@ -18,6 +18,11 @@ saying so.
 A preset is a named set of the settings, kept in ``usage_presets``. Default
 always exists. Until it is first replaced it is every group and quota,
 grouped by client group, over the past week.
+
+``line`` in the address names a line drilled into. The answer then holds the
+top hosts on that line, within the same settings and range, from the host
+rows the policy's ``host_retention`` keeps. A line is not a setting, so a
+preset never holds one.
 """
 
 from __future__ import annotations
@@ -30,9 +35,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 
-from policy.hierarchy import Policy
+from policy.hierarchy import DEFAULT_HOST_RETENTION_DAYS, Policy
 from policy.report import format_day, timezone_note
-from policy.usage import UsageStore
+from policy.usage import UsageStore, host_cutoff
 
 UNITS = ("minutes", "bytes")
 RANGES = (
@@ -54,6 +59,7 @@ LONGEST_NAME = 60
 HOURLY_UP_TO = timedelta(days=2)
 DAILY_UP_TO = timedelta(days=92)
 MOST_TICKS = 12
+MOST_HOSTS = 20
 
 _DAY_TEXT = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _SHORT_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -308,7 +314,8 @@ def usage_graph(
     ``preset`` names the preset whose settings are on show, or is empty.
     ``notes`` says what the status bar should, such as a preset that does not
     exist or a group the policy no longer has. ``graph`` is None when a
-    Custom range cannot be drawn.
+    Custom range cannot be drawn. ``hosts`` is the top hosts on the line the
+    address drills into, or None when it names no line the graph can draw.
     """
     if unit not in UNITS:
         raise ValueError(f"unknown unit {unit!r}")
@@ -350,6 +357,7 @@ def usage_graph(
         "range": None,
         "days": None,
         "graph": None,
+        "hosts": None,
     }
     if problems:
         return answer
@@ -358,7 +366,77 @@ def usage_graph(
     answer["range"] = describe_range(start, end)
     answer["days"] = {"from": start.date().isoformat(), "to": last_day.isoformat()}
     answer["graph"] = _graph(usage, names, settings, start, end, now, unit)
+    line = (_last_value(pairs, "line") or "").strip()
+    if line:
+        drawn = {each["name"] for each in answer["graph"]["lines"]}
+        if _drillable(settings, names, drawn, line):
+            retention = DEFAULT_HOST_RETENTION_DAYS if policy is None else policy.host_retention
+            answer["hosts"] = _hosts(usage, settings, line, start, end, now, unit, retention)
+        else:
+            notes.append(f"{line} is not a line on this graph, so its hosts are not shown.")
     return answer
+
+
+def _drillable(settings: Settings, names: Catalog, drawn: set[str], line: str) -> bool:
+    """Whether line is one the graph draws, or would draw with usage in the range."""
+    if settings.by == "none":
+        return line == TOTAL
+    chosen = {"client": settings.clients, "site": settings.sites, "quota": settings.quotas}[settings.by]
+    if chosen:
+        return line in chosen
+    return line in names.names(settings.by) or line in drawn
+
+
+def _hosts(
+    usage: UsageStore,
+    settings: Settings,
+    line: str,
+    start: datetime,
+    end: datetime,
+    now: datetime,
+    unit: str,
+    retention: int,
+) -> dict:
+    """Return the top hosts on one line, highest first, and from when hosts are kept.
+
+    On the Minutes page a host gains each ended bucket's length once for each
+    row it has, so a line over several groups or quotas adds them as the graph
+    does. On the Bytes page a host's value is its bytes down and up added.
+    Rows older than the retention, or from before hosts were first kept, are
+    never read.
+    """
+    since = usage.hosts_since() or now
+    kept = max(host_cutoff(retention, now), datetime.combine(since.date(), time.min))
+    by_quota = bool(settings.quotas) or settings.by == "quota"
+    wanted = settings.quotas if by_quota else settings.sites
+    found: dict[str, list[int]] = {}
+    for client, name, host, started, length, down, up in usage.host_rows_between(
+        "quota" if by_quota else "site", max(start, kept), end
+    ):
+        if settings.clients and client not in settings.clients:
+            continue
+        if wanted and name not in wanted:
+            continue
+        if settings.by == "client" and client != line:
+            continue
+        if settings.by in ("site", "quota") and name != line:
+            continue
+        if unit == "minutes" and started + timedelta(seconds=length) > now:
+            continue
+        sums = found.setdefault(host, [0, 0, 0])
+        sums[0] += length if unit == "minutes" else down + up
+        sums[1] += down
+        sums[2] += up
+    ranked = sorted(found.items(), key=lambda item: (-item[1][0], item[0]))[:MOST_HOSTS]
+    days = f"{retention} day" + ("" if retention == 1 else "s")
+    return {
+        "line": line,
+        "kept": f"Hosts are kept for {days}, from {format_day(kept.date())}." if start < kept else None,
+        "bars": [
+            {"host": host, "value": value} if unit == "minutes" else {"host": host, "value": value, "down": down, "up": up}
+            for host, (value, down, up) in ranked
+        ],
+    }
 
 
 def _graph(

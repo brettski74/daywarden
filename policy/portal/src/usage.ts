@@ -57,6 +57,17 @@ export type Graph = {
   lines: { name: string; values: number[] }[];
 };
 
+/** One host's bar. ``value`` is seconds on the Minutes page, and bytes down and up added on the Bytes page. */
+export type HostBar = { host: string; value: number; down?: number; up?: number };
+
+/** The top hosts on the line the address drills into, highest first. */
+export type Hosts = {
+  line: string;
+  /** From when hosts are kept, when the range starts before that. */
+  kept: string | null;
+  bars: HostBar[];
+};
+
 export type UsageData = {
   unit: Unit;
   today: string;
@@ -70,6 +81,7 @@ export type UsageData = {
   range: string | null;
   days: { from: string; to: string } | null;
   graph: Graph | null;
+  hosts: Hosts | null;
 };
 
 export const DEFAULT_PRESET = "Default";
@@ -79,8 +91,8 @@ function query(pairs: [string, string][]): string {
   return pairs.length ? `?${pairs.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&")}` : "";
 }
 
-/** The address's query string for settings, with its ?. */
-export function settingsQuery(settings: Settings): string {
+/** The address's query string for settings, with its ?, and the line drilled into last when there is one. */
+export function settingsQuery(settings: Settings, line: string | null = null): string {
   const pairs: [string, string][] = [
     ...settings.client.map((name): [string, string] => ["client", name]),
     ...settings.site.map((name): [string, string] => ["site", name]),
@@ -89,12 +101,31 @@ export function settingsQuery(settings: Settings): string {
     ["range", settings.range],
   ];
   if (settings.range === "custom") pairs.push(["from", settings.from], ["to", settings.to]);
+  if (line) pairs.push(["line", line]);
   return query(pairs);
 }
 
-/** The address's query string for a preset, such as ?preset=School%20week. */
-export function presetQuery(name: string): string {
-  return query([["preset", name]]);
+/** The address's query string for a preset, such as ?preset=School%20week, and the line drilled into. */
+export function presetQuery(name: string, line: string | null = null): string {
+  return query(line ? [["preset", name], ["line", line]] : [["preset", name]]);
+}
+
+/** The line an address drills into, or null. */
+export function lineOf(search: string): string | null {
+  return new URLSearchParams(search).get("line") || null;
+}
+
+/** An address's query string with its line replaced, or taken away when line is null. Everything else stays in order. */
+export function withLine(search: string, line: string | null): string {
+  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "line");
+  if (line) pairs.push(["line", line]);
+  return query(pairs);
+}
+
+/** The date range as the bar chart's heading names it, such as Past week, or 2026-11-01 to 2026-11-07. */
+export function rangeLabel(settings: Settings): string {
+  if (settings.range === "custom") return `${settings.from} to ${settings.to}`;
+  return RANGES.find(([value]) => value === settings.range)?.[1] ?? settings.range;
 }
 
 /** Why Site groups cannot be chosen, or null when they can. */

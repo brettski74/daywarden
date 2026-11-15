@@ -80,6 +80,7 @@ export const USAGE = {
       { name: "older", values: [0, 0, 0, 0, 0, 0, 0, 0] },
     ],
   },
+  hosts: null as null | { line: string; kept: string | null; bars: { host: string; value: number; down?: number; up?: number }[] },
 };
 
 export const TASKS = {

@@ -12,6 +12,9 @@ A report cuts the transfer only when that flow's recorded allow has reached
 a clock deadline or a volume ceiling, and the access rules no longer allow
 it. Any other answer leaves the transfer running.
 
+Usage by host older than the policy's ``host_retention`` is deleted when the
+service starts, after each reload, and every hour.
+
 A POLICY_FILE that does not end in .yaml or .yml stops the service.
 
 POST /v1/reload loads POLICY_FILE again and swaps it in whole. Each report
@@ -40,10 +43,11 @@ from policy.check import load_required
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy.store import PolicyStore
-from policy.usage import UsageStore, cut_required, file_report
+from policy.usage import UsageStore, cut_required, file_report, prune_hosts
 
 # The only instruction the proxy treats as a cut. An empty body is not one.
 CUT_BODY = b'{"action":"cut"}'
+PRUNE_SECONDS = 60 * 60
 
 LOG_PATH = Path(os.environ.get("OBSERVATION_LOG", "/tmp/observations.jsonl"))
 PORT = int(os.environ.get("OBSERVATION_PORT", "8091"))
@@ -85,10 +89,23 @@ def listen(
     """Serve /health, /v1/observations, and /v1/reload. The returned server is not started.
 
     Without ``policy_file`` there is nothing to reload, and /v1/reload is 404.
+    ``server.prune_hosts()`` deletes the usage by host older than the policy's
+    retention, and a reload does the same.
     """
     destination = log_path if log_path is not None else LOG_PATH
     lock = threading.Lock()
     current = {"policy": policy}
+
+    def prune() -> int:
+        with lock:
+            loaded = current["policy"]
+            if loaded is None:
+                return 0
+            removed = prune_hosts(loaded, usage, _clock_for(loaded).local())
+        if removed:
+            days = loaded.host_retention
+            print(f"removed {removed} host rows older than {days} day{'' if days == 1 else 's'}", flush=True)
+        return removed
 
     def reload_policy() -> dict:
         if policy_file is None:
@@ -101,6 +118,10 @@ def listen(
                 print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
                 return {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
         print(f"reloaded {policy_file}", flush=True)
+        try:
+            prune()
+        except Exception as exc:
+            print(f"removing old host rows failed: {exc}", flush=True)
         return {"reloaded": True, "warnings": warnings}
 
     class Handler(BaseHTTPRequestHandler):
@@ -162,7 +183,19 @@ def listen(
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.reload_policy = reload_policy
+    server.prune_hosts = prune
     return server
+
+
+def keep_pruning(server: ThreadingHTTPServer, stop: threading.Event, every: float = PRUNE_SECONDS) -> None:
+    """Prune the old host rows now, and again every ``every`` seconds until stop is set."""
+    while True:
+        try:
+            server.prune_hosts()
+        except Exception as exc:
+            print(f"removing old host rows failed: {exc}", flush=True)
+        if stop.wait(every):
+            return
 
 
 def main() -> None:
@@ -176,6 +209,7 @@ def main() -> None:
     if path is not None:
         controller = control.serve(path, {"reload": server.reload_policy})
         threading.Thread(target=controller.serve_forever, daemon=True).start()
+    threading.Thread(target=keep_pruning, args=(server, threading.Event()), daemon=True).start()
     # Exit 0 on docker stop. A container that exits non-zero when Docker
     # shuts down is started again by an on-failure restart policy at boot.
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())

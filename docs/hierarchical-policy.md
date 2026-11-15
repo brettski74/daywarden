@@ -131,7 +131,7 @@ The measuring rules already built stay in force for whatever the rule set accept
 
 - The day is cut into buckets of `bucket_length`. The default is five minutes. The length divides a 24-hour day and is aligned to local midnight. The length is household-wide.
 - Time accrued is the sum of ended buckets. An open bucket does not add its length yet. A bucket keeps the length it was opened with. Changing the bucket length does not resize a quota or rewrite ended buckets.
-- Bytes accrued include a bucket that has not ended. There is one byte meter, the bytes on the observation.
+- Bytes accrued include a bucket that has not ended. The proxy meters the request body, sent up, and the response body, sent down, apart. Each observation carries `bytes_up` and `bytes_down`, and `bytes`, their total, is what accrues. A report from an older proxy with only `bytes` is filed as downloaded.
 - Yesterday's usage is not counted today. Another client group's usage is not counted.
 - School and any other traffic that no quota accepts is still stored against its client group and site group. The usage graph does not depend on a quota existing.
 - `time_remaining` and `volume_remaining` use the limits above. Grace is not added to either test. A new transfer is refused once the limit is reached, while the balance is still inside the grace. A zero limit refuses the new transfer immediately.
@@ -678,6 +678,8 @@ timezone: America/Toronto
 hostname: policy.home
 # Set port when a reverse proxy changes the port. The default is the published policy port.
 bucket_length: 5m
+# How long the usage graph's drill-down to hosts is kept, in whole days. The default is 30d.
+host_retention: 30d
 time_grace: 5m
 volume_grace: 1M
 
@@ -851,7 +853,7 @@ A load that fails lists every error it can find, not only the first, so every mi
 
 ## Applying an edit
 
-`dw reload` applies an edit to the running decisions, observations, and autoconfig services, without restarting a container. It checks the policy first, with the same code the services run, and changes nothing while there is an error. A good policy is used for the next request through the proxy, and the next fetch of the proxy auto-configuration file. That covers every setting in the policy files: time windows, rules, site group patterns, client group addresses, quotas, tasks, `hostname`, `timezone`, `bucket_length`, and `proxy_configuration`. A reload keeps:
+`dw reload` applies an edit to the running decisions, observations, and autoconfig services, without restarting a container. It checks the policy first, with the same code the services run, and changes nothing while there is an error. A good policy is used for the next request through the proxy, and the next fetch of the proxy auto-configuration file. That covers every setting in the policy files: time windows, rules, site group patterns, client group addresses, quotas, tasks, `hostname`, `timezone`, `bucket_length`, `host_retention`, and `proxy_configuration`. A reload keeps:
 
 - **Attempts in progress.** A quiz run keeps the questions, words, deadlines, and tries it started with, and it is scored and recorded as it would be after `dw down` and `dw up` with the same edit. The next attempt that starts uses the new task settings. A task the edit adds can be started, and one it removes is no longer offered.
 - **Transfers already running.** A download or video keeps the deadline and byte ceiling recorded when it was allowed. A reload does not make it walk the rules early. When it reaches them, it is walked again with the reloaded policy, using the client group and site group from its approval.
@@ -867,6 +869,8 @@ Apply policy changes and upgrades overnight, while the child is not using the co
 # Usage graph
 
 The parent portal's usage graph reads both ledgers. With no quota in play it counts the site-group rows, so traffic that no quota accepts is included. With a quota chosen, or grouped by quota, it counts the quota rows. A quota row keeps its client group but not its site group, so site groups and quotas are never used together. [S030.1](../stories/S030.1-usage-graph.md) describes the graph.
+
+Each observation is also filed under its host, beside the site group and beside each quota, with its bytes down and up apart. The host is the host name of the URL, with the port only when it is not the scheme's default. A host gains a bucket's length once, however many requests it served in that bucket. These rows are what a drill-down from a line on the graph reads, as [S030.2](../stories/S030.2-usage-by-host.md) describes. They are much larger than the others, so they are kept for `host_retention`, a whole number of days, 30 when it is left out. The observations service deletes older ones when it starts, after each reload, and every hour. The site-group and quota rows, and so the graph, are kept for good.
 
 `default` is a real slice for both kinds of group. Traffic that matched no configured group is visible there. An observation still answers success when the policy service is only recording it. Metering does not turn into a refusal.
 

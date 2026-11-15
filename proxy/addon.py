@@ -151,7 +151,7 @@ class DecisionEnforcer:
         """
         if not self._armed(flow) or flow.response is None:
             return
-        flow.response.stream = self._watch(flow.id)
+        flow.response.stream = self._watch(flow.id, observe.DOWN)
 
     def response(self, flow: http.HTTPFlow) -> None:
         self._close(flow)
@@ -179,18 +179,18 @@ class DecisionEnforcer:
         # A request body is streamed only when we are forwarding. A deny or a
         # redirect also sets flow.response, and mitmproxy refuses that pair.
         if _request_has_body(flow):
-            flow.request.stream = self._watch(flow.id)
+            flow.request.stream = self._watch(flow.id, observe.UP)
 
     def _disarm(self, flow: http.HTTPFlow) -> None:
         with self._lock:
             self._accounts.pop(flow.id, None)
         flow.request.stream = False
 
-    def _watch(self, flow_id: str):
+    def _watch(self, flow_id: str, direction: str):
         def watch(data: bytes) -> bytes:
             try:
                 if data and not self._is_stopped(flow_id):
-                    self._note(flow_id, len(data))
+                    self._note(flow_id, len(data), direction)
             except Exception as exc:
                 print(f"observation failed: {exc}", flush=True)
             if self._is_stopped(flow_id):
@@ -199,28 +199,28 @@ class DecisionEnforcer:
 
         return watch
 
-    def _note(self, flow_id: str, nbytes: int) -> None:
+    def _note(self, flow_id: str, nbytes: int, direction: str) -> None:
         with self._lock:
             account = self._accounts.get(flow_id)
             if account is None or account.stopped:
                 return
-            count = account.meter.add(nbytes, time.monotonic())
-        if count:
-            self._post(account, count)
+            counts = account.meter.add(nbytes, time.monotonic(), direction)
+        if any(counts):
+            self._post(account, counts)
 
     def _close(self, flow: http.HTTPFlow) -> None:
         try:
             with self._lock:
                 account = self._accounts.pop(flow.id, None)
-                count = (
+                counts = (
                     account.meter.finish(time.monotonic())
                     if account and not account.stopped
-                    else 0
+                    else (0, 0)
                 )
             # The body has already been delivered. Filing the remainder must
             # not tear the transfer down on its way out.
-            if account and count:
-                self._post(account, count, live=False)
+            if account and any(counts):
+                self._post(account, counts, live=False)
         except Exception as exc:
             print(f"observation failed: {exc}", flush=True)
 
@@ -233,23 +233,25 @@ class DecisionEnforcer:
 
     def _flush_due(self) -> None:
         now = time.monotonic()
-        ready: list[tuple[_Account, int]] = []
+        ready: list[tuple[_Account, tuple[int, int]]] = []
         with self._lock:
             for account in self._accounts.values():
                 if account.stopped:
                     continue
-                count = account.meter.due(now)
-                if count:
-                    ready.append((account, count))
-        for account, count in ready:
-            self._post(account, count)
+                counts = account.meter.due(now)
+                if any(counts):
+                    ready.append((account, counts))
+        for account, counts in ready:
+            self._post(account, counts)
 
     def _is_stopped(self, flow_id: str) -> bool:
         with self._lock:
             account = self._accounts.get(flow_id)
             return account is not None and account.stopped
 
-    def _post(self, account: _Account, nbytes: int, *, live: bool = True) -> None:
+    def _post(self, account: _Account, counts: tuple[int, int], *, live: bool = True) -> None:
+        up, down = counts
+        nbytes = up + down
         if nbytes <= 0:
             return
         payload = {
@@ -257,6 +259,8 @@ class DecisionEnforcer:
             "url": account.url,
             "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "bytes": nbytes,
+            "bytes_up": up,
+            "bytes_down": down,
             "flow_id": account.flow.id,
         }
         request = urllib.request.Request(

@@ -122,12 +122,14 @@ After sign-in, the parent always lands on a portal page with the full frame. The
 
 ## Charts
 
-Charts are built from the small kit in `src/components/charts/`, not from a charting library. `ChartFrame.tsx` holds the parts every chart shares: the plot beside its legend, the axes, and the readout of what the pointer is on. `LineChart.tsx` is the line chart on it. A later chart type, such as bars or a donut, is another component on the same frame.
+Charts are built from the small kit in `src/components/charts/`, not from a charting library. `ChartFrame.tsx` holds the parts every chart shares: the plot beside its legend, the axes, and the readout of what the pointer is on. `LineChart.tsx` is the line chart on it, and `BarChart.tsx` the horizontal bar chart, with each bar's segments stacked. A later chart type, such as a donut, is another component on the same frame.
 
-- Scales and tick values come from `d3-scale`, and paths from `d3-shape`. React draws the SVG. Nothing draws on a canvas.
-- Series colours are the role properties `--chart-series-1` to `--chart-series-8`, applied by the classes `chart-series-1` to `chart-series-8`, which set `color`. Lines, dots, and legend swatches draw in `currentColor`. A ninth series and beyond reuse the colours with a dashed line.
+- Scales and tick values come from `d3-scale`, and paths and stacks from `d3-shape`. React draws the SVG. Nothing draws on a canvas.
+- Series colours are the role properties `--chart-series-1` to `--chart-series-8`, applied by the classes `chart-series-1` to `chart-series-8`, which set `color`. Lines, dots, bars, and legend swatches draw in `currentColor`. A ninth series and beyond reuse the colours with a dashed line.
 - Labels along a time axis are text the service formats in household-local time. The browser's timezone is never used to label a chart.
-- Lines and legend entries are DOM elements. Each line is focusable, with an `aria-label` naming it and its total, and the arrow keys, Home, and End move the readout along it, so the keyboard reaches everything the pointer does.
+- Lines, bars, and legend entries are DOM elements. Each line is focusable, with an `aria-label` naming it and its total, and the arrow keys, Home, and End move the readout along it, so the keyboard reaches everything the pointer does. Each bar is a list item whose `aria-label` names it and the value at its end.
+- A chart whose series can be opened, as a usage graph line opens its top hosts, opens one on a double-click of its line, Enter on its focused line, or its legend entry, which is then a `<button>`. What is open is in the page address, as every choice is.
+- A line chart fills the space its page gives it. A bar chart is as tall as its rows, and measures its labels so the names and the values at the bar ends fit.
 - The plot measures its own box with a `ResizeObserver` and draws at that size, so a chart fills whatever space its page gives it.
 
 ## Icons and controls

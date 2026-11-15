@@ -19,7 +19,7 @@ export const SERIES_COLOURS = 8;
 export type Tick = { at: number; label: string };
 /** A labelled mark up the vertical axis. */
 export type AxisTick = { value: number; label: string };
-export type LegendEntry = { name: string; total: string };
+export type LegendEntry = { name: string; total?: string };
 export type Scale = ScaleLinear<number, number>;
 
 /** The class that colours series index. More series than colours reuse them, dashed. */
@@ -41,24 +41,57 @@ export function plotScales(size: Size, xLength: number, yMax: number): { x: Scal
   };
 }
 
+type FrameProps = {
+  plotRef: Ref<HTMLDivElement>;
+  legend: LegendEntry[];
+  legendLabel: string;
+  /** A line swatch for a line chart, a box for bars. */
+  swatch?: "line" | "box";
+  /** With this, each legend entry is a button that picks its series, and ``pickTitle`` says what picking does. */
+  onPick?: (name: string) => void;
+  pickTitle?: (name: string) => string;
+  /** ``lines`` fills its space, ``bars`` is as tall as its rows. */
+  kind?: "lines" | "bars";
+  children: ReactNode;
+};
+
 /** The plot, which the chart measures and draws into, with its legend beside it. */
-export function ChartFrame({ plotRef, legend, legendLabel, children }: { plotRef: Ref<HTMLDivElement>; legend: LegendEntry[]; legendLabel: string; children: ReactNode }) {
+export function ChartFrame({ plotRef, legend, legendLabel, swatch = "line", onPick, pickTitle, kind = "lines", children }: FrameProps) {
   return (
-    <div className="chart">
+    <div className="chart" data-kind={kind}>
       <div className="chart-plot" ref={plotRef}>
         {children}
       </div>
       {legend.length > 0 && (
         <ul className="chart-legend" aria-label={legendLabel}>
-          {legend.map((entry, index) => (
-            <li key={entry.name} className={seriesClass(index)} data-dashed={dashed(index) || undefined}>
-              <svg className="chart-swatch" viewBox="0 0 24 12" aria-hidden="true">
-                <line x1="1" y1="6" x2="23" y2="6" />
-              </svg>
-              <span className="chart-legend-name">{entry.name}</span>
-              <span className="chart-legend-total">{entry.total}</span>
-            </li>
-          ))}
+          {legend.map((entry, index) => {
+            const parts = (
+              <>
+                <svg className="chart-swatch" viewBox="0 0 24 12" aria-hidden="true">
+                  {swatch === "line" ? <line x1="1" y1="6" x2="23" y2="6" /> : <rect x="1" y="1" width="22" height="10" />}
+                </svg>
+                <span className="chart-legend-name">{entry.name}</span>
+                {entry.total !== undefined && <span className="chart-legend-total">{entry.total}</span>}
+              </>
+            );
+            return (
+              <li key={entry.name} className={seriesClass(index)} data-dashed={dashed(index) || undefined}>
+                {onPick ? (
+                  <button
+                    type="button"
+                    className="chart-legend-pick"
+                    aria-label={entry.total === undefined ? entry.name : `${entry.name}, ${entry.total}`}
+                    title={pickTitle?.(entry.name)}
+                    onClick={() => onPick(entry.name)}
+                  >
+                    {parts}
+                  </button>
+                ) : (
+                  parts
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

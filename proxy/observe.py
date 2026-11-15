@@ -1,6 +1,7 @@
 """How many body bytes to report for one flow, and when.
 
-Bytes are a delta since the previous report. An idle stretch, with nothing
+Bytes are a delta since the previous report, counted apart for the request
+body, sent up, and the response body, sent down. An idle stretch, with nothing
 new since that report, produces no observation. The flow end reports whatever
 is still unreported, even when the interval has not elapsed.
 
@@ -70,34 +71,49 @@ def _close_connection(handler, transports, conn) -> None:
     handler.close_connection(conn)
 
 
+UP = "up"
+DOWN = "down"
+
+
 class TrafficMeter:
+    """One meter per direction: up is the request body, down the response body.
+
+    Both directions share the interval and are reported together, as
+    ``(up, down)``. ``(0, 0)`` means there is nothing to send.
+    """
+
     def __init__(self, interval: float, started_at: float) -> None:
         if interval <= 0:
             raise ValueError("interval must be positive")
         self.interval = interval
-        self.pending = 0
+        self.pending = {UP: 0, DOWN: 0}
         self.last_report = started_at
 
-    def add(self, nbytes: int, now: float) -> int:
-        """Record bytes that just arrived. Return a count to send now, or 0."""
+    def add(self, nbytes: int, now: float, direction: str = DOWN) -> tuple[int, int]:
+        """Record bytes that just moved one way. Return counts to send now."""
+        if direction not in self.pending:
+            raise ValueError(f"unknown direction {direction!r}")
         if nbytes:
-            self.pending += nbytes
+            self.pending[direction] += nbytes
         return self.due(now)
 
-    def due(self, now: float) -> int:
-        """Return a count when the interval has passed and bytes are waiting."""
-        if self.pending <= 0 or now - self.last_report < self.interval:
-            return 0
+    def due(self, now: float) -> tuple[int, int]:
+        """Return the counts when the interval has passed and bytes are waiting."""
+        if not self._waiting() or now - self.last_report < self.interval:
+            return 0, 0
         return self._take(now)
 
-    def finish(self, now: float) -> int:
-        """Return any bytes not yet reported. Zero when the flow is idle."""
-        if self.pending <= 0:
-            return 0
+    def finish(self, now: float) -> tuple[int, int]:
+        """Return any bytes not yet reported. Both zero when the flow is idle."""
+        if not self._waiting():
+            return 0, 0
         return self._take(now)
 
-    def _take(self, now: float) -> int:
-        count = self.pending
-        self.pending = 0
+    def _waiting(self) -> bool:
+        return self.pending[UP] > 0 or self.pending[DOWN] > 0
+
+    def _take(self, now: float) -> tuple[int, int]:
+        counts = self.pending[UP], self.pending[DOWN]
+        self.pending = {UP: 0, DOWN: 0}
         self.last_report = now
-        return count
+        return counts

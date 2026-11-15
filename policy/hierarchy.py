@@ -58,6 +58,7 @@ REVISION_TASK = "revision_task"
 DEFAULT_BUCKET_SECONDS = 300
 DEFAULT_TIME_GRACE = 5 * 60
 DEFAULT_VOLUME_GRACE = 1024**2
+DEFAULT_HOST_RETENTION_DAYS = 30
 # A task passed today is never offered again today, so 1 is the same as 0.
 DEFAULT_PASS_COOLDOWN = 1
 
@@ -99,6 +100,7 @@ _TOP_KEYS = {
     "hostname",
     "port",
     "bucket_length",
+    "host_retention",
     "time_grace",
     "volume_grace",
     "include",
@@ -110,7 +112,9 @@ _TOP_KEYS = {
     "tasks",
     "proxy_configuration",
 }
-_SCALARS = {"entry", "timezone", "hostname", "port", "bucket_length", "time_grace", "volume_grace"}
+_SCALARS = {"entry", "timezone", "hostname", "port", "bucket_length", "host_retention", "time_grace", "volume_grace"}
+_RETENTION = re.compile(r"^(\d+)([dhms])$")
+_DAY_SECONDS = 24 * 60 * 60
 _PORT_TEXT = re.compile(r"[1-9][0-9]*")
 _SECTIONS = {"client_groups", "site_groups", "time_windows", "quotas", "rule_sets", "tasks"}
 _TASK_KEYS = {
@@ -268,6 +272,8 @@ class Policy:
     tasks: tuple[Task, ...] = ()
     # Which hosts the proxy auto-config file sends direct, not to the proxy.
     proxy_configuration: DirectEntries = DirectEntries()
+    # How many days the usage by host is kept.
+    host_retention: int = DEFAULT_HOST_RETENTION_DAYS
 
     def rule_set(self, name: str) -> tuple[Rule, ...] | None:
         for found, rules in self.rule_sets:
@@ -587,6 +593,8 @@ def _scalar(key: str, node: yaml.Node, where: str) -> object:
                 "with nothing left over, so the buckets meet midnight"
             )
         return length
+    if key == "host_retention":
+        return _retention_days(node, where)
     if key == "time_grace":
         return _non_negative(_duration(node, where), where)
     return _non_negative(_size(node, where), where)
@@ -1172,6 +1180,11 @@ def _finish(
         quotas,
         tuple(build.tasks.values()),
         build.proxy_configuration,
+        host_retention=(
+            int(build.scalars["host_retention"][0])
+            if "host_retention" in build.scalars
+            else DEFAULT_HOST_RETENTION_DAYS
+        ),
     )
 
 
@@ -1496,6 +1509,21 @@ def _duration(node: yaml.Node, where: str) -> int:
     if match is None:
         raise ConfigError(f"{where} must be a duration like 2h, 120m, or 7200s, not a bare number")
     return int(match.group(1)) * _DURATION_SCALE[match.group(2)]
+
+
+def _retention_days(node: yaml.Node, where: str) -> int:
+    """Return host_retention in days. It is a whole number of days, at least one, such as 30d."""
+    problem = f"{where}: host_retention must be a whole number of days, at least one, such as 30d"
+    if not isinstance(node, yaml.ScalarNode) or node.tag != _STR:
+        raise ConfigError(problem)
+    match = _RETENTION.fullmatch(str(node.value).strip())
+    if match is None:
+        raise ConfigError(problem)
+    scale = _DAY_SECONDS if match.group(2) == "d" else _DURATION_SCALE[match.group(2)]
+    seconds = int(match.group(1)) * scale
+    if seconds < _DAY_SECONDS or seconds % _DAY_SECONDS:
+        raise ConfigError(problem)
+    return seconds // _DAY_SECONDS
 
 
 def _size(node: yaml.Node, where: str) -> int:

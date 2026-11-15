@@ -1955,9 +1955,56 @@ select[aria-invalid] {
   color: var(--chart-series-8);
 }
 
-.usage-graph {
+.usage-page {
   height: calc(100% - 1rem);
+}
+
+/* The graph gives up half its height to the top hosts, which run on below it as the content pane scrolls. */
+.usage-graph {
+  height: 100%;
   min-height: 18rem;
+  transition: height var(--expand-duration) var(--expand-easing);
+}
+
+.usage-page[data-hosts] .usage-graph {
+  height: 50%;
+}
+
+@keyframes usage-hosts-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+
+.usage-hosts {
+  display: grid;
+  grid-template-rows: 0fr;
+  padding-bottom: 1.5rem;
+  transition: grid-template-rows var(--expand-duration) var(--expand-easing);
+}
+
+.usage-hosts[data-open] {
+  grid-template-rows: 1fr;
+}
+
+.usage-hosts[data-open][data-moving] {
+  animation: usage-hosts-open var(--expand-duration) var(--expand-easing);
+}
+
+.usage-hosts-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.usage-hosts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.usage-hosts-kept {
+  margin: 0 0 0.5rem;
 }
 
 .chart {
@@ -1997,6 +2044,33 @@ select[aria-invalid] {
 
 .chart-hit {
   fill: transparent;
+}
+
+.chart-hit[data-openable] {
+  cursor: pointer;
+}
+
+/* A bar chart is as tall as its rows, and its key sits beside it. */
+.chart[data-kind="bars"] {
+  height: auto;
+}
+
+.chart[data-kind="bars"] .chart-plot {
+  min-height: 0;
+}
+
+.chart[data-kind="bars"] .chart-svg {
+  position: static;
+}
+
+.chart[data-kind="bars"] .chart-empty {
+  position: static;
+  text-align: left;
+  font-weight: normal;
+}
+
+.chart-bar {
+  fill: currentColor;
 }
 
 .chart-line {
@@ -2092,4 +2166,29 @@ select[aria-invalid] {
 .chart-swatch line {
   stroke: currentColor;
   stroke-width: 3;
+}
+
+.chart-swatch rect {
+  fill: currentColor;
+}
+
+/* A legend entry that opens its series. It keeps the entry's columns. */
+.chart-legend-pick {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  margin: 0 -0.3rem;
+  padding: 0.1rem 0.3rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chart-legend-pick:hover {
+  background: var(--row-hover);
 }
