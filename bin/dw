@@ -42,7 +42,8 @@ Commands:
            every service is healthy. Applies changes to .env, such as
            PORT_BASE. restart --keep keeps each container whose settings
            did not change, and what it logged
-  check    check the policy and list every error. Changes nothing
+  check    check the policy and list every error. Changes nothing, except
+           rewriting leftover parts-of-speech inline sentences into pools
   status   show the version, whether daywarden starts at boot, the proxy
            configuration URL, and the health of each service. Exits 0 only
            when all are healthy

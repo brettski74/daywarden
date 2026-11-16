@@ -10,10 +10,12 @@ its name together, so two tasks may share a name when their types differ.
 Their bodies are opaque here, except that an ``arithmetic`` body is checked by
 ``policy.arithmetic``, a ``parts_of_speech`` body by
 ``policy.parts_of_speech``, a ``skip_counting`` body by
-``policy.skip_counting``, and a ``spelling`` body and its word directories by
+``policy.skip_counting``, a ``parts_of_speech`` body and its sentence pools by
+``policy.parts_of_speech``, and a ``spelling`` body and its word directories by
 ``policy.spelling``, so a bad quiz body fails the load. A body keeps its keys
 in the order written, so a parts of speech table keeps its rows in order.
-S003.1 is the catalogue that reads them.
+Inline ``sentences`` on a parts-of-speech task are rewritten into pools before
+those checks run. S003.1 is the catalogue that reads them.
 
 ``load`` returns a new policy only when the whole configuration is valid.
 A missing root file returns the previous policy unchanged. Any other problem
@@ -45,7 +47,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from policy import arithmetic, parts_of_speech, skip_counting, spelling
+from policy import arithmetic, parts_of_speech, sentence_pools, skip_counting, spelling
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, normalize_ip, resolve_address
 from policy.clock import named_zone
@@ -458,10 +460,16 @@ def load(
     root = require_yaml(path)
     if not root.is_file():
         return previous
-    build = _Build(task_data=task_data, overrides=dict(overrides or {}))
-    seen: set[Path] = set()
-    _load_file(root, root.resolve(), seen, build)
-    return _finish(build, previous, lookup, warn)
+    token = sentence_pools.use_config_root(root.parent)
+    try:
+        if task_data and not overrides:
+            sentence_pools.migrate_policy(root)
+        build = _Build(task_data=task_data, overrides=dict(overrides or {}))
+        seen: set[Path] = set()
+        _load_file(root, root.resolve(), seen, build)
+        return _finish(build, previous, lookup, warn)
+    finally:
+        sentence_pools.reset_config_root(token)
 
 
 def task_files(path: str | Path) -> dict[TaskKey, Path]:
@@ -734,13 +742,14 @@ def _take_proxy_configuration(node: yaml.Node, build: _Build) -> None:
 
 _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
     arithmetic.ARITHMETIC: arithmetic.parse_settings,
-    parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.parse_settings,
+    parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.check_body,
     skip_counting.SKIP_COUNTING: skip_counting.parse_settings,
     spelling.SPELLING: spelling.check_body,
 }
 
 _QUIZ_FIELDS: dict[str, Callable[[Mapping], object]] = {
     **_QUIZ_BODIES,
+    parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.parse_settings,
     spelling.SPELLING: spelling.parse_settings,
 }
 
@@ -1150,6 +1159,11 @@ def _finish(
     root = build.files[0]
     if "entry" not in build.scalars:
         build.fail(f"{root}: entry is required")
+    if build.task_data:
+        try:
+            sentence_pools.index_names()
+        except ValueError as error:
+            build.fail(str(error))
     _check_references(build)
     _check_cycles(build)
     clients = _resolve_clients(build, previous, lookup, warn)

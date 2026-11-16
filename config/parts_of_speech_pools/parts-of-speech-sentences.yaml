@@ -1,0 +1,39 @@
+name: Parts of Speech sentences
+sentences:
+- sentence: The quick, brown fox jumps over the lazy dog.
+  parts:
+    noun:
+    - fox
+    - dog
+    verb:
+    - jumps
+    adjective:
+    - quick
+    - brown
+    - lazy
+- sentence: Dry the dishes with a dry towel.
+  parts:
+    noun:
+    - dishes
+    - towel
+    verb:
+    - dry
+    adjective:
+    - dry[2]
+- sentence: The cat sat on the mat.
+  parts:
+    noun:
+    - cat
+    - mat
+    verb:
+    - sat
+    adjective: []
+- sentence: The sentence must contain some words.
+  parts:
+    noun:
+    - sentence
+    - words
+    verb:
+    - contain
+    adjective:
+    - some

@@ -5,10 +5,12 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from conftest import write_alphabet, write_wav
 from policy import check
 from policy.hierarchy import ConfigError, load
+from policy.sentence_pools import pools_directory, write_pool
 
 GOOD = """\
 entry: household
@@ -149,16 +151,33 @@ tasks:
 
 
 def test_a_parts_of_speech_task_lists_a_mistake_in_each_sentence(tmp_path):
-    body = {
-        "sentences": [
-            {"sentence": "The fox ran.", "parts": {"noun": ["cat"]}},
-            {"sentence": "A dog sat.", "parts": {"verb": ["sat"]}},
-            {"sentence": "The hen.", "parts": {"noun": ["hen"]}, "colour": "red"},
-        ],
-    }
+    sentences = [
+        {"sentence": "The fox ran.", "parts": {"noun": ["cat"]}},
+        {"sentence": "A dog sat.", "parts": {"verb": ["sat"]}},
+        {"sentence": "The hen.", "parts": {"noun": ["hen"]}, "colour": "red"},
+    ]
+    write_pool(pools_directory(tmp_path), "bad", "bad sentences", sentences)
+    body = {"pools": ["bad sentences"]}
     text = GOOD + f"tasks:\n  parts_of_speech:\n    parts:\n      group: younger\n      pass_cooldown: 0\n      body: {json.dumps(body)}\n"
     problems = _problems(_write(tmp_path, "policy.yaml", text))
-    _assert_listed(problems, ["body.sentences entry 1: parts.noun", "body.sentences entry 3: colour: unknown setting"])
+    _assert_listed(
+        problems,
+        [
+            "body.pool 'bad sentences' sentences entry 1: parts.noun",
+            "body.pool 'bad sentences' sentences entry 3: colour: unknown setting",
+        ],
+    )
+
+
+def test_inline_sentences_are_moved_into_a_pool_before_they_are_checked(tmp_path):
+    body = {"sentences": [{"sentence": "The fox ran.", "parts": {"noun": ["cat"]}}]}
+    text = GOOD + f"tasks:\n  parts_of_speech:\n    parts:\n      group: younger\n      pass_cooldown: 0\n      body: {json.dumps(body)}\n"
+    root = _write(tmp_path, "policy.yaml", text)
+    problems = _problems(root)
+    _assert_listed(problems, ["body.pool 'parts sentences' sentences entry 1: parts.noun"])
+    written = yaml.safe_load(root.read_text(encoding="utf-8"))["tasks"]["parts_of_speech"]["parts"]["body"]
+    assert written == {"pools": ["parts sentences"]}
+    assert [path.name for path in pools_directory(tmp_path).iterdir()] == ["parts-sentences.yaml"]
 
 
 def test_errors_in_included_files_do_not_hide_each_other_and_name_their_file(tmp_path):

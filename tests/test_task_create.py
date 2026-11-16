@@ -287,12 +287,19 @@ def test_with_tasks_d_already_included_only_the_new_file_is_written_and_numbered
     assert _git(kept.config, "show", "--name-only", "--no-renames", "--format=", "HEAD").split() == ["tasks.d/adding.3.yaml"]
 
 
-def test_each_type_can_be_created_from_its_page(house):
+def test_a_parts_of_speech_task_cannot_be_created_with_inline_sentences_until_the_pool_editor_exists(house):
+    """S031.1: sentences live in pools. The portal's old sentence editor is replaced in S031.2 and S031.3."""
     sentence = {"text": "The cat sat.", "timeout": "", "parts": [{"name": "noun", "words": [1]}, {"name": "verb", "words": [2]}]}
-    assert house.create("parts_of_speech", "pos", groups=["younger"], settings={"timeout": "40s"}, sentences=[sentence])[0] == 200
+    status, body = house.create("parts_of_speech", "pos", groups=["younger"], settings={"timeout": "40s"}, sentences=[sentence])
+    assert status == 400
+    assert any("body.sentences: use pools" in problem for problem in body["errors"]), body
+    assert any("body.pools: required" in problem for problem in body["errors"]), body
+    assert house.tasks_d() == []
+
+
+def test_each_type_can_be_created_from_its_page(house):
     assert house.create("skip_counting", "skips", groups=["younger"], settings={"sequence_length": "6"}, lists={"difference": "default"})[0] == 200
     assert house.create("spelling", "words", groups=["younger"], settings={"revision_required": "1"}, moves={"cat": "revision"})[0] == 200
-    assert house.task("parts_of_speech/pos").document()["sentences"][0]["sentence"] == "The cat sat."
     assert house.task("skip_counting/skips").document() == {"sequence_length": 6}
     assert house.files("revision") == ["cat.wav", "fish.wav"]
     assert "body:\n        revision_required: 1\n" in (house.config / "tasks.d" / "words.yaml").read_text()

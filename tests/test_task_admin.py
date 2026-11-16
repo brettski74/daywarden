@@ -81,7 +81,7 @@ def _git(directory: Path, *args: str) -> str:
 class House:
     """The decisions app over a config directory and a data directory, with a signed-in parent."""
 
-    def __init__(self, tmp_path: Path, monkeypatch, *, history: bool = False, text: str = HOUSE):
+    def __init__(self, tmp_path: Path, monkeypatch, *, history: bool = False, text: str = HOUSE, before=None):
         from policy.app import create_app
 
         self.config = tmp_path / "config"
@@ -89,6 +89,8 @@ class House:
         self.policy = self.config / "policy.yaml"
         self.policy.write_text(text, encoding="utf-8")
         (self.config / "extra.yaml").write_text(EXTRA, encoding="utf-8")
+        if before is not None:
+            before(self.config)
         self.data = tmp_path / "data"
         write_alphabet(self.data / "spelling/alphabet")
         for name in ("rope", "cat", "dog"):

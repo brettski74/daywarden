@@ -237,19 +237,29 @@ def _conclude(
     return {"result": verdict, **ending(policy, store, attempt.client_group, now, verdict, back)}
 
 
+def _questions_label(number: int, minimum: int, maximum: int) -> str:
+    next_question = min(number + 1, maximum)
+    if minimum == maximum:
+        return f"Question {next_question} of {maximum}"
+    return f"Question {next_question} · {minimum} minimum · {maximum} maximum"
+
+
 def _progress(session: Session) -> dict:
+    settings = session.settings
     return {
         "points": session.points,
-        "required": session.settings.required,
+        "required": settings.required,
         "number": session.number,
-        "total": session.total,
+        "minimum": settings.minimum_questions,
+        "maximum": settings.maximum_questions,
+        "total": settings.maximum_questions,
     }
 
 
 def _document(session: Session, config: Mapping, note: str, line: str) -> str:
     progress = _progress(session)
-    points = f"{format_points(progress['points'])} / {progress['total']} points"
-    upcoming = f"Sentence {min(progress['number'] + 1, progress['total'])} of {progress['total']}"
+    points = f"{format_points(progress['points'])} / {progress['required']} points"
+    upcoming = _questions_label(progress["number"], progress["minimum"], progress["maximum"])
     return document(
         title=LABEL,
         config=config,
@@ -350,12 +360,17 @@ _MODEL = """\
       parts.push("Try again.");
       return parts.join(" ");
     },
-    pointsText(points, total) {
-      return points + " / " + total + " points";
+    pointsText(points, required) {
+      return points + " / " + required + " points";
+    },
+    questionsText(number, minimum, maximum) {
+      const next = Math.min(number + 1, maximum);
+      if (minimum === maximum) return "Question " + next + " of " + maximum;
+      return "Question " + next + " · " + minimum + " minimum · " + maximum + " maximum";
     },
     progressText(now) {
-      return model.pointsText(now.points, now.total) + " \\u00b7 " + now.required + " to pass \\u00b7 Sentence "
-        + Math.min(now.number + 1, now.total) + " of " + now.total;
+      return model.pointsText(now.points, now.required) + " \\u00b7 " + now.required + " to pass \\u00b7 "
+        + model.questionsText(now.number, now.minimum, now.maximum);
     },
   };
   if (typeof window !== "undefined") window.partsOfSpeech = model;
@@ -437,7 +452,7 @@ _SCRIPT = """\
       return;
     }
     $("failed-points").textContent =
-      model.pointsText(result.points, result.total) + ". You needed " + result.required + " to pass.";
+      model.pointsText(result.points, result.required) + ". You needed " + result.required + " to pass.";
     finish(result, $("failed"));
   }
 
@@ -449,9 +464,9 @@ _SCRIPT = """\
           end(now);
           return null;
         }
-        $("start-points").textContent = model.pointsText(now.points, now.total);
+        $("start-points").textContent = model.pointsText(now.points, now.required);
         $("start-required").textContent = now.required + " points to pass";
-        $("start-number").textContent = "Sentence " + (now.number + 1) + " of " + now.total;
+        $("start-number").textContent = model.questionsText(now.number, now.minimum, now.maximum);
         counts(now);
         return now;
       });

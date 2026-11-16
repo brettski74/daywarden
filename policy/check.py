@@ -3,8 +3,10 @@
 ``dw check``, ``dw reload``, ``dw restart``, ``dw up``, and the start at boot
 run this in the policy image, so the check is made by the code the services
 run. It loads POLICY_FILE the way the decisions service does, including the
-spelling word lists under DAYWARDEN_DATA_DIR, with no previous policy, and
-changes nothing.
+spelling word lists under DAYWARDEN_DATA_DIR and the parts-of-speech sentence
+pools beside the policy, with no previous policy. A parts-of-speech task that
+still has inline ``sentences`` is rewritten into a pool file before the new
+rules run; other than that migration, the check changes nothing.
 
 A good policy prints the summary the decisions service logs when it loads
 one, then any warnings, and exits 0. A policy with errors prints a count

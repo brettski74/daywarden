@@ -1,4 +1,4 @@
-"""S006.2: the parts of speech quiz, judged and timed by the server."""
+"""S006.2 and S031.1: the parts of speech quiz, drawn from sentence pools, judged and timed by the server."""
 
 import html
 import json
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from conftest import merge_task_types  # noqa: E402
-from policy import parts_of_speech_page  # noqa: E402
+from policy import parts_of_speech_page, sentence_pools  # noqa: E402
 from policy.hierarchy import load  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
@@ -33,26 +33,39 @@ DRY = "Dry the dishes with a dry towel."
 FOX_RIGHT = {"noun": [3, 8], "verb": [4], "adjective": [1, 2, 7]}
 DRY_RIGHT = {"verb": [0], "noun": [2, 6], "adjective": [5]}
 RIGHT = {FOX: FOX_RIGHT, DRY: DRY_RIGHT}
+POOL = "words sentences"
+# The dry sentence is twice as hard as the pool, so with a 45s task timeout it gets 90s.
 EXAMPLE = {
     "timeout": "45s",
     "sentences": [
         {"sentence": FOX, "parts": {"noun": ["fox", "dog"], "verb": ["jumped"], "adjective": ["quick", "brown", "lazy"]}},
         {
             "sentence": DRY,
-            "timeout": "60s",
+            "level_of_difficulty": 2,
             "parts": {"verb": ["dry[1]"], "noun": ["dishes", "towel"], "adjective": ["dry[2]"]},
         },
     ],
 }
 
 
-def _ten(required: int | None = None) -> dict:
+def _ten(required: int | None = None, minimum: int | None = None, maximum: int | None = None) -> dict:
     body: dict = {
         "sentences": [{"sentence": f"The cat number {number} sat.", "parts": {"noun": ["cat"]}} for number in range(10)]
     }
-    if required is not None:
-        body["correct_answers_required"] = required
+    for field, value in (
+        ("correct_answers_required", required),
+        ("minimum_questions", minimum),
+        ("maximum_questions", maximum),
+    ):
+        if value is not None:
+            body[field] = value
     return body
+
+
+def _write_pool(directory: Path, name: str, sentences: list[dict], difficulty: float | None = None) -> None:
+    """Write one pool file under ``directory``'s pools folder, the way the policy finds it."""
+    pool_id = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+    sentence_pools.write_pool(sentence_pools.pools_directory(directory), pool_id, name, sentences, difficulty=difficulty)
 
 
 def _house(body: dict, *, due: str | None = None, failure_cooldown: int = 0, extra: str = "") -> str:
@@ -87,11 +100,22 @@ def _sound_dir(root: Path) -> Path:
 class Quiz:
     """One child working through the words task, on a clock the test sets."""
 
-    def __init__(self, directory: Path, body: dict = EXAMPLE, *, seed: int = 1, **house):
+    def __init__(self, directory: Path, body: dict = EXAMPLE, *, seed: int = 1, pool_difficulty: float | None = None, **house):
+        """Start a quiz on ``body``.
+
+        A body with ``pools`` names pool files the caller has already written
+        under ``directory``. A body with ``sentences`` has them written to the
+        pool ``words sentences``, and names it in ``pools``.
+        """
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / "policy.yaml"
-        path.write_text(_house(body, **house), encoding="utf-8")
-        self.policy = load(path)
+        self.directory = directory
+        if "sentences" in body:
+            body = dict(body)
+            _write_pool(directory, POOL, body.pop("sentences"), pool_difficulty)
+            body["pools"] = [POOL]
+        self.path = directory / "policy.yaml"
+        self.path.write_text(_house(body, **house), encoding="utf-8")
+        self.policy = load(self.path)
         self.saved = PolicyStore(":memory:")
         self.store = AttemptStore(connection=self.saved.connection)
         self.sounds = load_sounds(_sound_dir(directory / "sounds"), warn=lambda message: None)
@@ -102,6 +126,7 @@ class Quiz:
     def _respond(self, now, method, query=None, body=b""):
         saved = parts_of_speech_page._RNG
         parts_of_speech_page._RNG = self.rng
+        token = sentence_pools.use_config_root(self.directory)
         try:
             return respond_task(
                 self.policy,
@@ -116,7 +141,12 @@ class Quiz:
                 back=self.back,
             )
         finally:
+            sentence_pools.reset_config_root(token)
             parts_of_speech_page._RNG = saved
+
+    def reload(self):
+        """Load the policy again from the files, as a reload after an edit does."""
+        self.policy = load(self.path)
 
     def open(self, now):
         """Load the page in a browser tab: the GET, then the script's visit."""
@@ -176,13 +206,23 @@ def _fox_first(directory: Path, **house) -> tuple[Quiz, dict]:
 # Start screen and what the page is told
 
 
-def test_the_start_screen_shows_points_out_of_the_sentences_and_the_pass_mark(tmp_path):
-    quiz = Quiz(tmp_path, _ten(7))
-    page = quiz.open(START)
+@pytest.mark.parametrize(
+    ("body", "question"),
+    [
+        (_ten(7), "Question 1 \u00b7 7 minimum \u00b7 10 maximum"),
+        (_ten(7, minimum=10), "Question 1 of 10"),
+        (_ten(5, minimum=6, maximum=8), "Question 1 \u00b7 6 minimum \u00b7 8 maximum"),
+    ],
+    ids=["defaults", "minimum-equals-maximum", "minimum-and-maximum-set"],
+)
+def test_the_start_screen_shows_points_toward_the_pass_mark_and_the_question_range(tmp_path, body, question):
+    page = Quiz(tmp_path, body).open(START)
+    required = body["correct_answers_required"]
     assert "<h1>Parts of speech</h1>" in page.body
-    assert "0 / 10 points" in page.body
-    assert "7 points to pass" in page.body
-    assert "Sentence 1 of 10" in page.body
+    assert f"0 / {required} points" in page.body
+    assert f"{required} points to pass" in page.body
+    assert question in page.body
+    assert "Sentence 1 of" not in page.body
     assert "Sort the words into the table" in page.body
 
 
@@ -311,6 +351,7 @@ def test_the_question_has_words_punctuation_and_parts_but_never_the_answer(tmp_p
     assert question["try"] == 1
     assert (question["allowed_ms"], question["left_ms"]) == (45_000, 45_000)
     assert (question["points"], question["required"], question["number"], question["total"]) == (0, 2, 0, 2)
+    assert (question["minimum"], question["maximum"]) == (2, 2)
     assert question["table"] is None
     hidden = json.dumps(question)
     assert '"part"' not in hidden and "expected" not in hidden and "jumped\", \"verb" not in hidden
@@ -488,7 +529,7 @@ def test_a_try_after_the_deadline_is_a_timeout_and_is_still_recorded(tmp_path):
     assert stored[-1]["received_ms"] == 45_501
 
 
-def test_a_sentence_with_its_own_timeout_gets_it_and_a_wrong_try_does_not_refill_it(tmp_path):
+def test_a_harder_sentence_gets_the_task_timeout_times_its_difficulty_and_a_wrong_try_does_not_refill_it(tmp_path):
     quiz = Quiz(tmp_path, {"timeout": "30s", "sentences": EXAMPLE["sentences"]})
     quiz.open(START)
     allowed = {}
@@ -503,6 +544,52 @@ def test_a_sentence_with_its_own_timeout_gets_it_and_a_wrong_try_does_not_refill
     assert allowed == {FOX: 30_000, DRY: 60_000}
 
 
+@pytest.mark.parametrize(
+    ("difficulty", "expected"),
+    [(1, 45_000), (1.5, 68_000), (0.5, 23_000), (2, 90_000), (1.01, 46_000)],
+)
+def test_the_time_is_the_task_timeout_times_difficulty_rounded_up_to_whole_seconds(tmp_path, difficulty, expected):
+    quiz = Quiz(tmp_path, {"timeout": "45s", "sentences": [EXAMPLE["sentences"][0]]}, pool_difficulty=difficulty)
+    quiz.open(START)
+    question = quiz.ask(START)
+    assert (question["allowed_ms"], question["left_ms"]) == (expected, expected)
+
+
+def test_a_sentence_level_of_difficulty_overrides_the_pool_and_each_pool_keeps_its_own(tmp_path):
+    plain = {"sentence": FOX, "parts": EXAMPLE["sentences"][0]["parts"]}
+    easy = {"sentence": DRY, "level_of_difficulty": 0.5, "parts": EXAMPLE["sentences"][1]["parts"]}
+    _write_pool(tmp_path, "first pool", [plain, easy], difficulty=1.5)
+    _write_pool(tmp_path, "second pool", [{"sentence": "A cat ran.", "parts": {"noun": ["cat"]}}], difficulty=3)
+    body = {"timeout": "45s", "pools": ["first pool", "second pool"], "minimum_questions": 3}
+    quiz = Quiz(tmp_path, body)
+    quiz.open(START)
+    allowed = {}
+    for _ in range(3):
+        question = quiz.ask(quiz.now)
+        allowed[quiz.text(question)] = question["allowed_ms"]
+        quiz.answer(quiz.now, question["id"], {"noun": [1]} if "cat" in quiz.text(question) else quiz.right(question))
+        quiz.now += timedelta(seconds=2)
+    assert allowed == {FOX: 68_000, DRY: 23_000, "A cat ran.": 135_000}
+
+
+def test_a_run_keeps_the_sentences_it_started_with_when_the_pool_is_edited_and_a_new_run_picks_up_the_edit(tmp_path):
+    quiz, question = _fox_first(tmp_path)
+    quiz.answer(START + timedelta(seconds=2), question["id"], FOX_RIGHT)
+    _write_pool(tmp_path, POOL, [{"sentence": "Edited sentence.", "parts": {"noun": ["sentence"]}}], difficulty=5)
+    quiz.reload()
+    following = quiz.ask(START + timedelta(seconds=5))
+    assert quiz.text(following) == DRY
+    assert following["allowed_ms"] == 90_000
+    assert [item["sentence"] for item in quiz.detail()["settings"]["sentences"]] == [FOX, DRY]
+    later = START + timedelta(hours=2)
+    quiz.open(later)
+    fresh = quiz.ask(later)
+    assert quiz.text(fresh) == "Edited sentence."
+    assert fresh["allowed_ms"] == 225_000
+    assert [item["sentence"] for item in quiz.detail()["settings"]["sentences"]] == ["Edited sentence."]
+    assert [run["run"] for run in quiz.detail()["runs"]] == [1, 2]
+
+
 # Reload, leaving, give-up
 
 
@@ -512,7 +599,7 @@ def test_a_reload_before_the_deadline_brings_back_the_same_sentence(tmp_path):
     quiz.answer(START + timedelta(seconds=5), question["id"], wrong)
     for seconds in (8, 20):
         page = quiz.open(START + timedelta(seconds=seconds))
-        assert "Sentence 1 of 2" in page.body
+        assert "Question 1 of 2" in page.body
         again = quiz.ask(START + timedelta(seconds=seconds))
         assert again["id"] == question["id"]
         assert again["try"] == 2
@@ -530,6 +617,7 @@ def test_coming_back_after_the_deadline_closes_the_sentence_and_asks_the_next(tm
     following = quiz.ask(START + timedelta(minutes=5))
     assert quiz.text(following) == DRY
     assert following["number"] == 1
+    assert quiz.detail()["runs"][0]["asked"] == [0, 1]
 
 
 def test_a_last_sentence_closed_by_its_deadline_finishes_the_run(tmp_path):
@@ -542,7 +630,7 @@ def test_a_last_sentence_closed_by_its_deadline_finishes_the_run(tmp_path):
     assert quiz.attempt().outcome == "failure"
 
 
-def test_coming_back_after_an_hour_starts_a_new_run_in_a_new_order(tmp_path):
+def test_coming_back_after_an_hour_starts_a_new_run_with_nothing_asked_yet(tmp_path):
     quiz = Quiz(tmp_path, _ten())
     quiz.open(START)
     first = quiz.ask(START)
@@ -550,17 +638,18 @@ def test_coming_back_after_an_hour_starts_a_new_run_in_a_new_order(tmp_path):
     quiz.ask(START + timedelta(seconds=5))
     later = START + timedelta(hours=2)
     page = quiz.open(later)
-    assert "0 / 10 points" in page.body and "Sentence 1 of 10" in page.body
+    assert "0 / 7 points" in page.body and "Question 1 \u00b7 7 minimum \u00b7 10 maximum" in page.body
     runs = quiz.detail()["runs"]
     assert [run["run"] for run in runs] == [1, 2]
-    assert sorted(runs[1]["order"]) == list(range(10)) and runs[1]["order"] != runs[0]["order"]
+    assert len(runs[0]["asked"]) == 2 and runs[1]["asked"] == []
+    assert "order" not in runs[0]
     assert [item["run"] for item in quiz.detail()["questions"]] == [1, 1]
     assert quiz.detail()["questions"][1]["outcome"] == "timeout"
     assert "expired" in runs[0]
 
 
-def test_every_sentence_is_asked_once_per_run_in_the_shuffled_order(tmp_path):
-    quiz = Quiz(tmp_path, _ten())
+def test_every_sentence_is_asked_once_per_run_and_the_asked_indexes_are_stored(tmp_path):
+    quiz = Quiz(tmp_path, _ten(minimum=10))
     quiz.open(START)
     asked = []
     for _ in range(10):
@@ -568,9 +657,30 @@ def test_every_sentence_is_asked_once_per_run_in_the_shuffled_order(tmp_path):
         asked.append(quiz.text(question))
         quiz.answer(quiz.now, question["id"], {"noun": [1]})
         quiz.now += timedelta(seconds=2)
-    order = quiz.detail()["runs"][0]["order"]
-    assert asked == [f"The cat number {index} sat." for index in order]
-    assert sorted(order) == list(range(10)) and order != list(range(10))
+        assert quiz.detail()["runs"][0]["asked"] == [int(re.search(r"\d+", text)[0]) for text in asked]
+    assert sorted(asked) == [f"The cat number {index} sat." for index in range(10)]
+    assert asked != sorted(asked)
+    assert [item["index"] for item in quiz.detail()["questions"]] == quiz.detail()["runs"][0]["asked"]
+
+
+def test_each_new_question_is_drawn_uniformly_from_the_unseen_sentences(tmp_path):
+    first = []
+    for seed in range(40):
+        quiz = Quiz(tmp_path / str(seed), _ten(), seed=seed)
+        quiz.open(START)
+        first.append(quiz.text(quiz.ask(START)))
+    assert len(set(first)) >= 7
+    assert max(first.count(text) for text in set(first)) <= 10
+
+
+def test_a_sentence_in_progress_counts_as_seen_so_a_reload_does_not_draw_another(tmp_path):
+    quiz = Quiz(tmp_path, _ten())
+    quiz.open(START)
+    question = quiz.ask(START)
+    for seconds in (3, 6):
+        assert quiz.ask(START + timedelta(seconds=seconds))["id"] == question["id"]
+    assert len(quiz.detail()["runs"][-1]["asked"]) == 1
+    assert len(quiz.detail()["questions"]) == 1
 
 
 def test_giving_up_an_optional_task_abandons_and_closes_the_open_sentence(tmp_path):
@@ -602,7 +712,7 @@ def test_a_refused_give_up_leaves_the_open_sentence_alone(tmp_path):
     assert quiz.detail()["questions"][-1]["outcome"] is None
     again = quiz.ask(START + timedelta(seconds=12))
     assert (again["id"], again["try"], again["table"]) == (last["id"], 2, wrong)
-    assert again["left_ms"] == 60_000 - 7_000
+    assert again["left_ms"] == 90_000 - 7_000
 
 
 # Finishing
@@ -629,13 +739,14 @@ def _play(quiz: Quiz, plan: list[str]) -> list[dict]:
     [(["x"] * 4 + ["1"] * 6, 6), (["x"] * 2 + ["1"] * 6 + ["2", "3"], 6.75)],
     ids=["nothing-after-four", "six-and-three-quarters"],
 )
-def test_every_sentence_is_asked_and_too_few_points_fail(tmp_path, plan, points):
-    quiz = Quiz(tmp_path, _ten(7), failure_cooldown=2)
+def test_when_the_minimum_is_every_sentence_all_are_asked_and_too_few_points_fail(tmp_path, plan, points):
+    quiz = Quiz(tmp_path, _ten(7, minimum=10), failure_cooldown=2)
     quiz.open(START)
     results = _play(quiz, plan)
     assert [result["finished"] for result in results] == [False] * 9 + [True]
     final = results[-1]
     assert (final["points"], final["required"], final["total"], final["result"]) == (points, 7, 10, "failure")
+    assert (final["number"], final["minimum"], final["maximum"]) == (10, 10, 10)
     assert quiz.attempt().outcome == "failure"
     assert len(skip_days(TaskKey("parts_of_speech", "words"), "younger", quiz.store.attempts("younger"))) == 1
     task = quiz.policy.task(TaskKey("parts_of_speech", "words"))
@@ -644,20 +755,93 @@ def test_every_sentence_is_asked_and_too_few_points_fail(tmp_path, plan, points)
     assert quiz.store.passes_on("younger", household_day(START)) == 0
 
 
-def test_finishing_with_the_pass_mark_passes_and_counts_toward_today(tmp_path):
+def test_reaching_the_pass_mark_at_the_minimum_passes_without_asking_the_rest(tmp_path):
     quiz = Quiz(tmp_path, _ten(7))
     quiz.open(START)
-    final = _play(quiz, ["1"] * 7 + ["x"] * 3)[-1]
-    assert (final["finished"], final["result"], final["points"]) == (True, "pass", 7)
+    results = _play(quiz, ["1"] * 7)
+    assert [result["finished"] for result in results] == [False] * 6 + [True]
+    final = results[-1]
+    assert (final["result"], final["points"], final["number"]) == ("pass", 7, 7)
     assert quiz.attempt().outcome == "pass"
+    assert len(quiz.detail()["questions"]) == 7
     assert quiz.store.passes_on("younger", household_day(START)) == 1
+
+
+def test_enough_points_do_not_pass_until_the_minimum_number_of_questions_is_finished(tmp_path):
+    quiz = Quiz(tmp_path, _ten(3, minimum=5))
+    quiz.open(START)
+    results = _play(quiz, ["1"] * 3 + ["x"] * 2)
+    assert [(result["finished"], result["points"]) for result in results] == [(False, 1), (False, 2), (False, 3), (False, 3), (True, 3)]
+    assert results[-1]["result"] == "pass"
+    assert quiz.attempt().outcome == "pass"
+
+
+@pytest.mark.parametrize(
+    ("body", "plan", "points"),
+    [
+        (_ten(7), ["x"] * 7, 0),
+        (_ten(7), ["x"] * 4 + ["1"] * 3, 3),
+        (_ten(7, maximum=8), ["x"] * 2 + ["1"] * 5, 5),
+        (_ten(7, minimum=5), ["x"] * 4 + ["1"], 1),
+    ],
+    ids=["nothing-right", "three-right", "maximum-limits-what-is-left", "lower-minimum"],
+)
+def test_the_run_fails_as_soon_as_the_pass_mark_is_out_of_reach_after_the_minimum(tmp_path, body, plan, points):
+    quiz = Quiz(tmp_path, body, failure_cooldown=1)
+    quiz.open(START)
+    results = _play(quiz, plan)
+    assert [result["finished"] for result in results] == [False] * (len(plan) - 1) + [True]
+    assert (results[-1]["result"], results[-1]["points"]) == ("failure", points)
+    assert len(quiz.detail()["questions"]) == len(plan) < 10
+    assert quiz.attempt().outcome == "failure"
+    assert quiz.store.passes_on("younger", household_day(START)) == 0
+
+
+def test_the_pass_mark_stays_in_reach_so_the_run_goes_on_until_the_maximum_is_asked(tmp_path):
+    quiz = Quiz(tmp_path, _ten(7, maximum=8))
+    quiz.open(START)
+    results = _play(quiz, ["1"] * 6 + ["3", "x"])
+    assert [result["finished"] for result in results] == [False] * 7 + [True]
+    assert (results[-1]["result"], results[-1]["points"], results[-1]["number"]) == ("failure", 6.25, 8)
+    with pytest.raises(AssertionError):
+        quiz.ask(quiz.now)
+
+
+def test_a_reload_while_the_last_unseen_sentence_is_open_does_not_end_the_run(tmp_path):
+    quiz, question = _fox_first(tmp_path)
+    quiz.answer(START + timedelta(seconds=2), question["id"], FOX_RIGHT)
+    last = quiz.ask(START + timedelta(seconds=5))
+    quiz.answer(START + timedelta(seconds=7), last["id"], {"noun": [2], "verb": [0]})
+    status, payload = quiz.post(START + timedelta(seconds=9), "visit", {})
+    assert (status, payload["finished"]) == (200, False)
+    assert quiz.ask(START + timedelta(seconds=10))["id"] == last["id"]
+    assert quiz.attempt().outcome == "in_progress"
+
+
+def test_a_reload_while_a_sentence_is_open_still_counts_it_toward_what_can_be_earned(tmp_path):
+    quiz = Quiz(tmp_path, _ten(7))
+    quiz.open(START)
+    results = _play(quiz, ["x"] * 3 + ["1"] * 4)
+    assert results[-1]["finished"] is False
+    question = quiz.ask(quiz.now)
+    for seconds in (1, 2):
+        status, payload = quiz.post(quiz.now + timedelta(seconds=seconds), "visit", {})
+        assert (status, payload["finished"]) == (200, False)
+    assert quiz.answer(quiz.now + timedelta(seconds=3), question["id"], {"noun": [1]})["finished"] is False
+
+
+def test_a_late_pass_still_counts_when_the_last_allowed_question_earns_it(tmp_path):
+    quiz = Quiz(tmp_path, _ten(7, maximum=8))
+    quiz.open(START)
+    final = _play(quiz, ["1"] * 6 + ["3", "1"])[-1]
+    assert (final["finished"], final["result"], final["points"]) == (True, "pass", 7.25)
 
 
 BACK = "https://www.youtube.com/watch?v=abc123"
 
 
 def test_a_pass_carries_the_page_to_go_back_to_and_a_failure_does_not(tmp_path):
-    for name, plan, verdict, back in (("a", ["1"] * 10, "pass", BACK), ("b", ["x"] * 10, "failure", None)):
+    for name, plan, verdict, back in (("a", ["1"] * 7, "pass", BACK), ("b", ["x"] * 7, "failure", None)):
         quiz = Quiz(tmp_path / name, _ten(7))
         quiz.back = lambda: BACK
         quiz.open(START)
@@ -670,7 +854,7 @@ def test_a_pass_carries_the_page_to_go_back_to_and_a_failure_does_not(tmp_path):
 def test_well_done_after_a_pass_counts_down_to_the_page_and_a_failure_does_not(tmp_path, verdict, gone):
     quiz = Quiz(tmp_path, _ten(7))
     page = quiz.open(START).body
-    ended = {"points": 7, "total": 10, "required": 7, "number": 10, "finished": True}
+    ended = {"points": 7, "total": 10, "required": 7, "number": 7, "minimum": 7, "maximum": 10, "finished": True}
     replies = {"visit": [{**ended, "result": verdict, "next": None, "back": BACK if verdict == "pass" else None}]}
     events = _harness(page, replies, steps=[{"snap": ["going-back", "back-host"]}, {"wait": 10_000}])
     snap = next(event["elements"] for event in events if event["kind"] == "snap")
@@ -769,6 +953,8 @@ def _ended(outcome: str, *, finished: bool = False) -> dict:
         "points": 1 if outcome == "correct" else 0,
         "required": 2,
         "number": 1,
+        "minimum": 2,
+        "maximum": 2,
         "total": 2,
         "finished": finished,
         "result": None,
@@ -811,7 +997,11 @@ def test_the_table_functions_place_move_and_compare_words(tmp_path):
         ["wrongText", 2, 1],
         ["wrongText", 0, 2],
         ["wrongText", 1, 0],
-        ["progressText", {"points": 2.5, "total": 10, "required": 7, "number": 3}],
+        ["progressText", {"points": 2.5, "total": 10, "required": 7, "number": 3, "minimum": 7, "maximum": 10}],
+        ["progressText", {"points": 2.5, "total": 10, "required": 7, "number": 3, "minimum": 10, "maximum": 10}],
+        ["progressText", {"points": 9, "total": 10, "required": 7, "number": 10, "minimum": 10, "maximum": 10}],
+        ["pointsText", 0, 7],
+        ["questionsText", 0, 2, 2],
     ]
     events = _harness(page, {}, calls=calls, steps=[])
     results = [event["result"] for event in events if event["kind"] == "call"]
@@ -842,7 +1032,11 @@ def test_the_table_functions_place_move_and_compare_words(tmp_path):
         "2 words are in the wrong row. You missed 1 word. Try again.",
         "You missed 2 words. Try again.",
         "1 word is in the wrong row. Try again.",
-        "2.5 / 10 points \u00b7 7 to pass \u00b7 Sentence 4 of 10",
+        "2.5 / 7 points \u00b7 7 to pass \u00b7 Question 4 \u00b7 7 minimum \u00b7 10 maximum",
+        "2.5 / 7 points \u00b7 7 to pass \u00b7 Question 4 of 10",
+        "9 / 7 points \u00b7 7 to pass \u00b7 Question 10 of 10",
+        "0 / 7 points",
+        "Question 1 of 2",
     ]
 
 
@@ -869,7 +1063,7 @@ def test_an_empty_table_cannot_be_submitted_and_the_timer_sends_it_anyway(tmp_pa
     events = _harness(page, replies, steps=steps, bodies=True)
     snaps = _snaps(events)
     assert snaps["asking"]["submit"]["disabled"] is True
-    assert snaps["asking"]["progress"]["text"] == "0 / 2 points \u00b7 2 to pass \u00b7 Sentence 1 of 2"
+    assert snaps["asking"]["progress"]["text"] == "0 / 2 points \u00b7 2 to pass \u00b7 Question 1 of 2"
     posts = _posts(events)
     answers = [post for post in posts if post["what"] == "answer"]
     assert len(answers) == 1

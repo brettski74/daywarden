@@ -3,13 +3,4 @@ tasks:
     Parts of Speech (Verbs):
       groups: [younger, default]
       body:
-        sentences:
-          - sentence: The weather outside is frightening.
-            parts:
-              verb: [is]
-          - sentence: The dog chased after the red car.
-            parts:
-              verb: [chased]
-          - sentence: We all live in a yellow submarine.
-            parts:
-              verb: [live]
+        pools: ['Parts of Speech (Verbs) sentences']

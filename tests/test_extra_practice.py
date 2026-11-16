@@ -18,6 +18,7 @@ from policy.child_page import FAVICON_FILE, PRACTICE_LINE, WAITING_LINE  # noqa:
 from policy.hierarchy import load  # noqa: E402
 from policy.report import _e  # noqa: E402
 from policy.review import QUIZ_PAGE  # noqa: E402
+from policy.sentence_pools import pools_directory, write_pool  # noqa: E402
 from policy.task_page import NOTHING, respond_task  # noqa: E402
 from policy.selection import task_page_path  # noqa: E402
 from policy.tasks import AttemptStore, TaskKey  # noqa: E402
@@ -37,7 +38,8 @@ SUMS = {
     "first": [{"value": 6, "weight": 1}],
     "operands": [{"value": 7, "weight": 1}],
 }
-SENTENCES = {"sentences": [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}]}
+POOL = "words sentences"
+SENTENCES = {"pools": [POOL]}
 
 
 def _at(month: int, day: int, hour: int = 16, minute: int = 0) -> datetime:
@@ -47,8 +49,15 @@ def _at(month: int, day: int, hour: int = 16, minute: int = 0) -> datetime:
 NOW = _at(10, 31)
 
 
+@pytest.fixture(autouse=True)
+def _config_directory(tmp_path, monkeypatch):
+    """Quiz pages find sentence pools beside the policy file the environment names."""
+    monkeypatch.setenv("POLICY_FILE", str(tmp_path / "policy.yaml"))
+
+
 def _policy(tasks: str, directory: Path):
     path = directory / "policy.yaml"
+    write_pool(pools_directory(directory), "words-sentences", POOL, [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}])
     path.write_text(
         f"""\
 entry: gate

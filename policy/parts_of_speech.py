@@ -1,10 +1,11 @@
-"""Parts of speech quiz: sentences, their words, and the parts table.
+"""Parts of speech quiz: sentence pools, the parts table, and the run.
 
 A task of type ``parts_of_speech`` keeps its fields in ``body``. The body
-lists sentences, and each sentence maps part of speech names, chosen by the
-parent, to words from that sentence. They are checked when the policy is
-loaded, so a typo fails the load, the error names the sentence, the part,
-and the entry, and the previous policy stays in force.
+names one or more sentence pools. Each pool is a YAML file under
+``parts_of_speech_pools/`` beside the policy. Pools and sentences are checked
+when the policy is loaded, so a typo fails the load, the error names the
+task, the pool or sentence, the part, and the entry, and the previous policy
+stays in force.
 
 A word is a run of letters and digits. An apostrophe or a hyphen with a
 letter or digit on both sides joins the runs either side into one word.
@@ -14,14 +15,15 @@ word and, in square brackets, which of its occurrences: ``dry``,
 ``dry[2]``, or ``dry[2,3]``. Without brackets it is the first.
 
 The parts keep the order and spelling they were written in. Each is a row
-of the child's table.
+of the child's table. A task may set ``parts_of_speech`` to fix the rows for
+every sentence in the run.
 
-A run asks every sentence once, in an order shuffled when the run starts.
-He has three tries per sentence, worth 1, 0.5, and 0.25 points. The server
-judges every try and fixes each sentence's deadline when it issues it. A
-page load does not close the open sentence. Only its deadline, an expired
-run, or a give-up does. The run ends after the last sentence, and its
-points decide a pass or a failure.
+A run never asks the same sentence twice. Each new question is chosen
+uniformly from the unseen runnable sentences. He has three tries per
+sentence, worth 1, 0.5, and 0.25 points. The server judges every try and
+fixes each sentence's deadline when it issues it. Pass and fail follow the
+skip-counting model: points against ``correct_answers_required``, with
+``minimum_questions`` and ``maximum_questions``.
 """
 
 from __future__ import annotations
@@ -33,7 +35,9 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
+from policy import sentence_pools
 from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
@@ -55,9 +59,20 @@ TRIES = 3
 POINTS = (1, 0.5, 0.25)
 DEFAULT_TIMEOUT = "90s"
 LONGEST_PART = 20
+DEFAULT_REQUIRED_CAP = 7
 
-_BODY_KEYS = frozenset({"sentences", "timeout", "correct_answers_required"})
-_SENTENCE_KEYS = frozenset({"sentence", "parts", "timeout"})
+_BODY_KEYS = frozenset(
+    {
+        "pools",
+        "timeout",
+        "parts_of_speech",
+        "correct_answers_required",
+        "minimum_questions",
+        "maximum_questions",
+        "sentences",  # snapshotted runs only; refused on a policy body
+    }
+)
+_SENTENCE_KEYS = frozenset({"sentence", "parts", "level_of_difficulty", "timeout"})
 _JOINERS = frozenset("'\u2019-")
 _ENTRY = re.compile(r"(?P<word>[^\[\]]*)\[(?P<numbers>[^\[\]]*)\]")
 _NUMBER = re.compile(r"[0-9]+")
@@ -93,12 +108,12 @@ class Part:
 
 @dataclass(frozen=True)
 class Sentence:
-    """A sentence, its words in order, its parts in the order written, and its timeout in milliseconds."""
+    """A sentence, its words, its effective parts for the run, and its difficulty."""
 
     text: str
     words: tuple[Word, ...]
     parts: tuple[Part, ...]
-    timeout: int
+    difficulty: float
 
     def part_of(self, position: int) -> str | None:
         """Return the name of the part the word at ``position`` belongs in, or None for a word in no row."""
@@ -115,6 +130,10 @@ class Settings:
     sentences: tuple[Sentence, ...]
     timeout: int
     required: int
+    minimum_questions: int
+    maximum_questions: int
+    parts_filter: tuple[str, ...] | None = None
+    pool_names: tuple[str, ...] = ()
 
 
 def word_key(text: str) -> str:
@@ -150,52 +169,294 @@ def split_words(text: str) -> tuple[Word, ...]:
 
 
 def default_required(count: int) -> int:
-    """Return 70% of ``count``, rounded up, in whole numbers so 10 gives 7."""
-    return -(-7 * count // 10)
+    """Return min(7, 70% of ``count`` rounded up), at least 1 when ``count`` ≥ 1."""
+    if count < 1:
+        return 0
+    return min(DEFAULT_REQUIRED_CAP, -(-7 * count // 10))
 
 
-def parse_settings(body: Mapping) -> Settings:
-    """Check a parts of speech task body and return its settings.
+def parse_settings(body: Mapping, root: Path | None = None) -> Settings:
+    """Check a parts of speech task body without reading pool files.
 
-    Each field, and each sentence, is checked, and every problem is raised
-    together as ``Problems``, a ``ValueError``. Each message starts with the
-    field.
+    Pool names and the field shape are checked. Counts that need the runnable
+    size are only type-checked here; ``check_body`` finishes them against the
+    pools. A snapshotted run body (pools plus resolved sentences) is parsed
+    fully.
     """
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
-    fields = Collector()
-    for key in sorted(set(body) - _BODY_KEYS):
-        fields.add(f"{key}: unknown setting")
-    timeout = fields.take(duration, body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    if _is_snapshot(body):
+        return _parse_snapshot(body)
+    return _parse_fields(body, pools=None, root=root)
+
+
+def check_body(body: Mapping, root: Path | None = None) -> Settings:
+    """Check a parts of speech task body and its named pools, as the policy load does."""
+    if not isinstance(body, Mapping):
+        raise ValueError("body must be a mapping")
+    if _is_snapshot(body):
+        return _parse_snapshot(body)
+    return _parse_fields(body, pools=_resolve_pools(body, root), root=root)
+
+
+def _is_snapshot(body: Mapping) -> bool:
+    """Return whether ``body`` is a run snapshot (pools plus resolved sentence positions).
+
+    A hand-written or portal body that still has word-entry ``sentences`` beside
+    ``pools`` is not a snapshot: those sentences are refused by ``check_body``.
+    """
+    if "pools" not in body:
+        return False
     listed = body.get("sentences")
-    if "sentences" not in body:
-        fields.add("sentences: required; list one or more sentences, each with sentence and parts")
-    elif not isinstance(listed, list) or not listed:
-        fields.add("sentences: must be a list of one or more sentences, each with sentence and parts")
     if not isinstance(listed, list) or not listed:
+        return False
+    for item in listed:
+        if not isinstance(item, Mapping):
+            return False
+        parts = item.get("parts")
+        if not isinstance(parts, Mapping):
+            return False
+        for entries in parts.values():
+            if not isinstance(entries, list):
+                return False
+            for entry in entries:
+                if isinstance(entry, str):
+                    return False
+                if not is_whole(entry):
+                    return False
+    return True
+
+
+def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, root: Path | None) -> Settings:
+    fields = Collector()
+    unknown = set(body) - _BODY_KEYS
+    inline = "sentences" in body and not _is_snapshot(body)
+    if inline and pools is not None:
+        fields.add("sentences: use pools; inline sentences are no longer allowed")
+        unknown.discard("sentences")
+    elif inline:
+        unknown.discard("sentences")
+    for key in sorted(unknown):
+        fields.add(f"{key}: unknown setting")
+
+    timeout = fields.take(duration, body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    names = body.get("pools")
+    if "pools" not in body:
+        if pools is not None or not inline:
+            fields.add("pools: required; list one or more pool names")
+        names = None
+    elif not isinstance(names, list) or not names:
+        fields.add("pools: must be a list of one or more pool names")
+        names = None
+    else:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for number, item in enumerate(names, 1):
+            if not isinstance(item, str) or not item.strip():
+                fields.add(f"pools entry {number}: must be a non-empty pool name")
+                continue
+            name = item.strip()
+            if name.casefold() in {other.casefold() for other in seen}:
+                fields.add(f"pools: {name!r} is listed more than once")
+                continue
+            seen.add(name)
+            cleaned.append(name)
+        names = cleaned or None
+
+    parts_filter = None
+    if "parts_of_speech" in body:
+        parts_filter = fields.take(_parts_filter, body["parts_of_speech"], "parts_of_speech")
+
+    for field in ("correct_answers_required", "minimum_questions", "maximum_questions"):
+        if field in body:
+            fields.take(_count_value, body[field], field)
+
+    if pools is None:
+        # Field-only check: no pool directory. Finish shape errors and return a stub.
         fields.finish()
-    sentences = tuple(
-        fields.take(_sentence, item, timeout or 0, f"sentences entry {number}")
-        for number, item in enumerate(listed, 1)
-    )
-    required = default_required(len(sentences))
+        assert timeout is not None
+        size = 1
+        required = body["correct_answers_required"] if "correct_answers_required" in body else default_required(size)
+        least = body["minimum_questions"] if "minimum_questions" in body else required
+        most = body["maximum_questions"] if "maximum_questions" in body else size
+        return Settings(
+            (),
+            timeout,
+            int(required),
+            int(least),
+            int(most),
+            parts_filter,
+            tuple(names or ()),
+        )
+
+    if names is None:
+        fields.finish()
+        raise AssertionError("unreachable")
+
+    sentences: list[Sentence] = []
+    for name in names:
+        pool = pools.get(name)
+        if pool is None:
+            fields.add(f"pools: unknown pool {name!r}")
+            continue
+        if not pool.sentences:
+            fields.add(f"pools: pool {name!r} has no sentences")
+            continue
+        for number, item in enumerate(pool.sentences, 1):
+            where = f"pool {name!r} sentences entry {number}"
+            sentence = fields.take(_pool_sentence, item, pool.difficulty, parts_filter, where)
+            if sentence is not None:
+                sentences.append(sentence)
+
+    size = len(sentences)
+    required = default_required(size) if size else 1
     if "correct_answers_required" in body:
         required = body["correct_answers_required"]
-        if not is_whole(required) or not 1 <= required <= len(sentences):
+        if not is_whole(required) or size < 1 or not 1 <= required <= size:
             fields.add(
-                f"correct_answers_required: must be a whole number from 1 to {len(sentences)}, "
-                "the number of sentences"
+                f"correct_answers_required: must be a whole number from 1 to {max(size, 1)}, "
+                "the number of runnable sentences"
             )
+            required = default_required(size) if size else 1
+    least = required
+    if "minimum_questions" in body:
+        least = body["minimum_questions"]
+        if not is_whole(least) or size < 1 or not 1 <= least <= size:
+            fields.add(f"minimum_questions: must be a whole number from 1 to {max(size, 1)}")
+            least = required
+    most = size if size else 1
+    if "maximum_questions" in body:
+        most = body["maximum_questions"]
+        floor = max(least if is_whole(least) else 1, required if is_whole(required) else 1)
+        if not is_whole(most) or size < 1 or not floor <= most <= size:
+            fields.add(
+                f"maximum_questions: must be a whole number from {floor} to {max(size, 1)}"
+            )
+            most = size if size else 1
+    elif size:
+        most = size
+
+    if size and is_whole(required) and is_whole(least) and is_whole(most):
+        if least > most:
+            fields.add("minimum_questions: must be no more than maximum_questions")
+        if required > most:
+            fields.add("correct_answers_required: must be no more than maximum_questions, or he could never pass")
+
     fields.finish()
-    return Settings(sentences, timeout, required)
+    assert timeout is not None
+    return Settings(
+        tuple(sentences),
+        timeout,
+        int(required),
+        int(least),
+        int(most),
+        parts_filter,
+        tuple(names),
+    )
 
 
-def _sentence(item: object, body_timeout: int, where: str) -> Sentence:
+def _resolve_pools(body: Mapping, root: Path | None) -> dict[str, sentence_pools.Pool]:
+    names = body.get("pools")
+    if not isinstance(names, list):
+        return {}
+    wanted = [item.strip() for item in names if isinstance(item, str) and item.strip()]
+    # Duplicate names across pool files are a load error even for unused pools.
+    sentence_pools.index_names(root)
+    return sentence_pools.load_named(wanted, root)
+
+
+def _parse_snapshot(body: Mapping) -> Settings:
+    fields = Collector()
+    timeout = fields.take(duration, body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    parts_filter = None
+    if "parts_of_speech" in body:
+        raw = body["parts_of_speech"]
+        if isinstance(raw, list):
+            parts_filter = tuple(str(item) for item in raw)
+    listed = body.get("sentences")
+    assert isinstance(listed, list)
+    sentences = tuple(
+        fields.take(_snapshot_sentence, item, f"sentences entry {number}")
+        for number, item in enumerate(listed, 1)
+    )
+    size = len(sentences)
+    required = body.get("correct_answers_required", default_required(size))
+    least = body.get("minimum_questions", required)
+    most = body.get("maximum_questions", size)
+    for field, value in (
+        ("correct_answers_required", required),
+        ("minimum_questions", least),
+        ("maximum_questions", most),
+    ):
+        if not is_whole(value) or (size and not 1 <= value <= size):
+            fields.add(f"{field}: must be a whole number from 1 to {max(size, 1)}")
+    pools = body.get("pools")
+    pool_names = tuple(str(item) for item in pools) if isinstance(pools, list) else ()
+    fields.finish()
+    assert timeout is not None
+    return Settings(sentences, timeout, int(required), int(least), int(most), parts_filter, pool_names)
+
+
+def _snapshot_sentence(item: object, where: str) -> Sentence:
+    if not isinstance(item, Mapping):
+        raise ValueError(f"{where}: must be a mapping with sentence and parts")
+    text = item.get("sentence")
+    if not isinstance(text, str):
+        raise ValueError(f"{where}: sentence: required")
+    words = split_words(text)
+    parts_table = item.get("parts")
+    if not isinstance(parts_table, Mapping):
+        raise ValueError(f"{where}: parts: required")
+    parts = tuple(Part(str(name), tuple(int(at) for at in entries)) for name, entries in parts_table.items())
+    difficulty = float(item.get("level_of_difficulty", sentence_pools.DEFAULT_DIFFICULTY))
+    return Sentence(text, words, parts, difficulty)
+
+
+def _count_value(value: object, field: str) -> int:
+    if not is_whole(value) or value < 1:
+        raise ValueError(f"{field}: must be a whole number from 1")
+    return int(value)
+
+
+def _parts_filter(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{where}: must be a list of one or more part names")
+    names: dict[str, str] = {}
+    result: list[str] = []
+    for number, item in enumerate(value, 1):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{where} entry {number}: a part name must not be empty")
+        name = item.strip()
+        if len(name) > LONGEST_PART:
+            raise ValueError(
+                f"{where} entry {number}: a part name is at most {LONGEST_PART} characters, so the table stays narrow"
+            )
+        folded = name.casefold()
+        if folded in names:
+            raise ValueError(
+                f"{where} entry {number}: {name!r} is the same as {names[folded]!r}; "
+                "part names must differ by more than case"
+            )
+        names[folded] = name
+        result.append(name)
+    return tuple(result)
+
+
+def _pool_sentence(
+    item: object, pool_difficulty: float, parts_filter: tuple[str, ...] | None, where: str
+) -> Sentence:
+    parsed = _sentence(item, pool_difficulty, where)
+    return _apply_filter(parsed, parts_filter)
+
+
+def _sentence(item: object, default_difficulty: float, where: str) -> Sentence:
     if not isinstance(item, Mapping):
         raise ValueError(f"{where}: must be a mapping with sentence and parts")
     unknown = sorted(set(item) - _SENTENCE_KEYS)
     if unknown:
         raise ValueError(f"{where}: {unknown[0]}: unknown setting")
+    if "timeout" in item:
+        raise ValueError(f"{where}: timeout: use level_of_difficulty; per-sentence timeout is no longer allowed")
     if "sentence" not in item:
         raise ValueError(f"{where}: sentence: required")
     text = item["sentence"]
@@ -204,7 +465,9 @@ def _sentence(item: object, body_timeout: int, where: str) -> Sentence:
     words = split_words(text)
     if not words:
         raise ValueError(f"{where}: sentence: must contain at least one word")
-    timeout = body_timeout if "timeout" not in item else duration(item["timeout"], f"{where}: timeout")
+    difficulty = default_difficulty
+    if "level_of_difficulty" in item:
+        difficulty = sentence_pools.parse_difficulty(item["level_of_difficulty"], f"{where}: level_of_difficulty")
     if "parts" not in item:
         raise ValueError(f"{where}: parts: required")
     table = item["parts"]
@@ -246,7 +509,18 @@ def _sentence(item: object, body_timeout: int, where: str) -> Sentence:
                 f"{where}: parts: {shown} is listed under {_joined(distinct)}; "
                 "each word in the sentence may be in only one part"
             )
-    return Sentence(text, words, tuple(parts), timeout)
+    return Sentence(text, words, tuple(parts), difficulty)
+
+
+def _apply_filter(sentence: Sentence, parts_filter: tuple[str, ...] | None) -> Sentence:
+    if parts_filter is None:
+        return sentence
+    by_fold = {part.name.casefold(): part for part in sentence.parts}
+    parts = []
+    for name in parts_filter:
+        found = by_fold.get(name.casefold())
+        parts.append(Part(name, found.words if found is not None else ()))
+    return Sentence(sentence.text, sentence.words, tuple(parts), sentence.difficulty)
 
 
 def _part_name(written: object, seen: dict[str, str], where: str) -> str:
@@ -357,6 +631,31 @@ def format_points(points: float) -> str:
     return f"{points:g}"
 
 
+def snapshot_settings(settings: Settings, body: Mapping) -> dict:
+    """Return the settings stored on a run: resolved sentences and targets."""
+    timeout = body.get("timeout", DEFAULT_TIMEOUT)
+    document: dict = {
+        "timeout": timeout if isinstance(timeout, str) else DEFAULT_TIMEOUT,
+        "pools": list(settings.pool_names),
+        "correct_answers_required": settings.required,
+        "minimum_questions": settings.minimum_questions,
+        "maximum_questions": settings.maximum_questions,
+        "sentences": [
+            {
+                "sentence": sentence.text,
+                "level_of_difficulty": sentence.difficulty,
+                "parts": {part.name: list(part.words) for part in sentence.parts},
+            }
+            for sentence in settings.sentences
+        ],
+    }
+    if settings.parts_filter is not None:
+        document["parts_of_speech"] = list(settings.parts_filter)
+    elif "parts_of_speech" in body:
+        document["parts_of_speech"] = body["parts_of_speech"]
+    return document
+
+
 @dataclass(frozen=True)
 class Judged:
     """What the server decided about one try.
@@ -376,13 +675,20 @@ class Judged:
 class Session(QuizRecord):
     """The parts of speech record on one attempt."""
 
-    def __init__(self, detail: Mapping, body: Mapping, rng: random.Random | None = None) -> None:
+    def __init__(
+        self, detail: Mapping, body: Mapping, rng: random.Random | None = None, root: Path | None = None
+    ) -> None:
         super().__init__(detail, body)
         self.rng = rng or random.Random()
+        self.root = root
         self._parsed: tuple[object, Settings] | None = None
 
     def parse(self, body: object) -> Settings:
-        return parse_settings(body)
+        if not isinstance(body, Mapping):
+            raise ValueError("body must be a mapping")
+        if _is_snapshot(body):
+            return _parse_snapshot(body)
+        return check_body(body, self.root)
 
     @property
     def settings(self) -> Settings:
@@ -395,15 +701,16 @@ class Session(QuizRecord):
         question.update(outcome=TIMEOUT, correct_try=None, points=0)
 
     def _start_run(self, now: datetime) -> None:
+        resolved = self.parse(self.body)
         super()._start_run(now)
-        order = list(range(len(self.settings.sentences)))
-        self.rng.shuffle(order)
-        self.detail["runs"][-1]["order"] = order
+        self.detail["settings"] = snapshot_settings(resolved, self.body)
+        self._parsed = None
+        self.detail["runs"][-1]["asked"] = []
 
     @property
     def total(self) -> int:
-        """Return how many sentences the current run asks."""
-        return len(self.detail["runs"][-1]["order"])
+        """Return how many sentences this run may ask at most."""
+        return self.settings.maximum_questions
 
     def finished(self) -> list[dict]:
         """Return the finished sentences of the current run."""
@@ -418,11 +725,26 @@ class Session(QuizRecord):
         """Return how many sentences of the current run are finished."""
         return len(self.finished())
 
+    def remaining(self) -> list[int]:
+        """Return the indexes of runnable sentences not yet asked in this run."""
+        asked = set(self.detail["runs"][-1].get("asked") or [])
+        return [index for index in range(len(self.settings.sentences)) if index not in asked]
+
     def verdict(self) -> str | None:
-        """Return ``pass`` or ``failure`` once every sentence of the current run is finished."""
-        if self.number < self.total:
-            return None
-        return PASS if self.points >= self.settings.required else FAILURE
+        """Return ``pass`` or ``failure`` once the current run has decided the attempt."""
+        settings = self.settings
+        done = self.number
+        points = self.points
+        if points >= settings.required and done >= settings.minimum_questions:
+            return PASS
+        # A sentence that is open now can still earn points, so it is not yet "asked and gone".
+        left = len(self.remaining()) + (1 if self.pending is not None else 0)
+        if done >= settings.maximum_questions or left == 0:
+            return FAILURE
+        room = min(left, settings.maximum_questions - done)
+        if done >= settings.minimum_questions and points + room < settings.required:
+            return FAILURE
+        return None
 
     def visit(self, now: datetime) -> None:
         """Record a page load. The open sentence stays open until its deadline."""
@@ -441,14 +763,19 @@ class Session(QuizRecord):
         return max(0, question["allowed_ms"] - self.taken_ms(question, now))
 
     def issue(self, now: datetime) -> dict:
-        """Return the open sentence, or issue the next one in the run's order and start its time now."""
+        """Return the open sentence, or issue the next one chosen uniformly from those not yet asked."""
         self.visit(now)
         pending = self.pending
         if pending is not None:
             return pending
         if self.verdict() is not None:
-            raise ValueError("every sentence of this run is finished")
-        index = self.detail["runs"][-1]["order"][self.number]
+            raise ValueError("this run is finished")
+        remaining = self.remaining()
+        if not remaining:
+            raise ValueError("this run is finished")
+        # Uniform among unseen; a later per-pool weight can replace this pick.
+        index = remaining[self.rng.randrange(len(remaining))]
+        self.detail["runs"][-1].setdefault("asked", []).append(index)
         sentence = self.settings.sentences[index]
         question = {
             "run": self.run,
@@ -463,7 +790,7 @@ class Session(QuizRecord):
             "outcome": None,
             "correct_try": None,
             "points": None,
-            "allowed_ms": sentence.timeout,
+            "allowed_ms": sentence_pools.allowed_ms(sentence.difficulty, self.settings.timeout),
             "issued": stamp(now),
         }
         self.questions.append(question)

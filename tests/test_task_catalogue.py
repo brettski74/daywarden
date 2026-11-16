@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from policy.engine import classify_client, decide  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
+from policy.sentence_pools import pools_directory, write_pool  # noqa: E402
 from policy.tasks import AttemptStore, Task, TaskKey  # noqa: E402
 from policy.usage import UsageStore  # noqa: E402
 
@@ -74,17 +75,13 @@ tasks:
       pass_cooldown: 21
       failure_cooldown: 1
       body:
-        sentences:
-          - sentence: "The cat sat."
-            parts: { noun: [cat] }
+        pools: [cats]
     parts-of-speech-2:
       groups: [younger, older]
       pass_cooldown: 21
       due_date: 2026-11-09
       body:
-        sentences:
-          - sentence: "A dog ran."
-            parts: { verb: [ran] }
+        pools: [dogs]
 rule_sets:
   gate:
     - condition: tasks_required
@@ -94,11 +91,19 @@ rule_sets:
 """
 
 
+def _house_policy(directory: Path, text: str = HOUSE):
+    """Load ``text`` after writing the two sentence pools the house tasks name."""
+    folder = pools_directory(directory)
+    write_pool(folder, "cats", "cats", [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}])
+    write_pool(folder, "dogs", "dogs", [{"sentence": "A dog ran.", "parts": {"verb": ["ran"]}}])
+    return _policy(text, directory)
+
+
 def test_a_task_is_only_eligible_for_an_assigned_group(tmp_path):
-    policy = _policy(HOUSE, tmp_path)
+    policy = _house_policy(tmp_path)
     task = policy.task(TaskKey("parts_of_speech", "parts-of-speech-1"))
     assert task is not None
-    assert task.document() == {"sentences": [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}]}
+    assert task.document() == {"pools": ["cats"]}
     assert classify_client(policy, YOUNGER) == "younger"
     assert classify_client(policy, TABLET) == "younger"
     assert classify_client(policy, OLDER) == "older"
@@ -163,10 +168,7 @@ def test_coming_back_returns_the_attempt_already_in_progress():
 
 
 def test_todays_pass_count_is_the_passes_finished_on_this_household_day(tmp_path):
-    policy = _policy(
-        HOUSE.replace("required: 1", "required: 2"),
-        tmp_path,
-    )
+    policy = _house_policy(tmp_path, HOUSE.replace("required: 1", "required: 2"))
     with UsageStore(":memory:") as usage:
         store = AttemptStore(connection=usage.connection)
         moment = _at(2, 16)
@@ -192,7 +194,7 @@ def test_todays_pass_count_is_the_passes_finished_on_this_household_day(tmp_path
 
 
 def test_a_pass_at_the_first_minutes_of_the_day_counts_for_the_new_day(tmp_path):
-    policy = _policy(HOUSE, tmp_path)
+    policy = _house_policy(tmp_path)
     early = datetime(2026, 11, 3, 0, 10, tzinfo=ZONE)
     late = datetime(2026, 11, 2, 23, 50, tzinfo=ZONE)
     with UsageStore(":memory:") as usage:
