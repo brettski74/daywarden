@@ -814,7 +814,10 @@ const boxes = [...document.querySelectorAll(".box")].map((box) => {
   return {
     value: box.value,
     text: text.measureText(box.value).width,
-    room: box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    // The border box less padding and borders. Chromium 157 and later report an input's clientWidth without its
+    // padding, unlike other elements, so clientWidth cannot be used here.
+    room: box.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth),
   };
 });
 const row = document.getElementById("row").getBoundingClientRect();

@@ -51,7 +51,8 @@ rule_sets:
         ("/parent/api", "/parent/"),
         ("/parent/api/attempts?client=younger", "/parent/"),
         ("/parent/%61pi/attempts", "/parent/"),
-        ("/parent/assets/index-abc123.js", "/parent/"),
+        ("/parent/build/index-abc123.js", "/parent/"),
+        ("/parent/assets/parts-of-speech-pools", "/parent/assets/parts-of-speech-pools"),
         ("/parent/favicon.png", "/parent/"),
         ("/parent/logo.webp", "/parent/"),
         ("/parent/login", "/parent/"),
@@ -74,9 +75,9 @@ def portal(tmp_path, monkeypatch):
     from policy.app import create_app
 
     built = tmp_path / "dist"
-    (built / "assets").mkdir(parents=True)
+    (built / "build").mkdir(parents=True)
     (built / "index.html").write_text(INDEX, encoding="utf-8")
-    (built / "assets" / "index-abc123.js").write_text("console.log('portal')", encoding="utf-8")
+    (built / "build" / "index-abc123.js").write_text("console.log('portal')", encoding="utf-8")
     (built / "favicon.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     policy = tmp_path / "policy.yaml"
     policy.write_text(HOUSE, encoding="utf-8")
@@ -135,7 +136,10 @@ def test_sign_out_ends_the_session_on_the_service(portal):
 
 
 def test_every_portal_page_address_returns_the_shell_without_a_session(portal):
-    for path in ("/parent/", "/parent/attempts", "/parent/attempts/42", "/parent/usage", "/parent/login", "/parent/nothing-here"):
+    for path in (
+        "/parent/", "/parent/attempts", "/parent/attempts/42", "/parent/usage", "/parent/login", "/parent/nothing-here",
+        "/parent/assets/parts-of-speech-pools", "/parent/assets/parts-of-speech-pools/year-3-basics",
+    ):
         status, body, headers = call(portal, "GET", path, query="client=younger")
         assert status == 200, path
         assert body == INDEX
@@ -144,14 +148,14 @@ def test_every_portal_page_address_returns_the_shell_without_a_session(portal):
 
 
 def test_built_files_are_served_and_hashed_assets_may_be_cached(portal):
-    status, body, headers = call(portal, "GET", "/parent/assets/index-abc123.js")
+    status, body, headers = call(portal, "GET", "/parent/build/index-abc123.js")
     assert status == 200
     assert body == "console.log('portal')"
     assert "immutable" in headers["cache-control"][0]
     status, _body, headers = call(portal, "GET", "/parent/favicon.png")
     assert status == 200
     assert headers["content-type"] == ["image/png"]
-    status, body, _headers = call(portal, "GET", "/parent/assets/missing.js")
+    status, body, _headers = call(portal, "GET", "/parent/build/missing.js")
     assert status == 404
     assert body != INDEX
     status, body, _headers = call(portal, "GET", "/parent/../policy.yaml")

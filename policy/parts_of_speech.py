@@ -442,6 +442,11 @@ def _parts_filter(value: object, where: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def check_pool_sentence(item: object, pool_difficulty: float, where: str) -> Sentence:
+    """Check one sentence of a pool as the policy load does, with no parts filter."""
+    return _sentence(item, pool_difficulty, where)
+
+
 def _pool_sentence(
     item: object, pool_difficulty: float, parts_filter: tuple[str, ...] | None, where: str
 ) -> Sentence:

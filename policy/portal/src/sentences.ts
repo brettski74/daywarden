@@ -1,7 +1,7 @@
 import { sortModel, type Cells } from "./wordSort";
 
 /**
- * A parts of speech task's sentences as the editor holds them, and what the page says about them.
+ * A parts of speech pool's sentences as the editor holds them, and what the page says about them.
  *
  * Words are split as the loader splits them in policy/parts_of_speech.py: a run of letters and digits,
  * with an apostrophe or a hyphen between two of them joining the runs. Words compare without regard to
@@ -12,18 +12,31 @@ export type Word = { text: string; start: number; end: number; key: string; occu
 export type Segment = { text: string; word?: number };
 
 export type PosPart = { name: string; words: number[] };
-export type PosSentence = { text: string; timeout: string; parts: PosPart[] };
-export type PosData = { settings: Record<string, string>; sentences: PosSentence[]; problems: string[] };
+export type PosSentence = { text: string; level_of_difficulty: string; parts: PosPart[] };
+/** A parts of speech pool's page, as the service sends it. */
+export type PoolData = {
+  id: string;
+  name: string;
+  file: string;
+  version: string;
+  level_of_difficulty: string;
+  sentences: PosSentence[];
+  problems: string[];
+  /** The parts of speech tasks that list the pool. */
+  tasks: string[];
+};
 
 /** One row of a sentence's table. ``origin`` is its place in the sentence as loaded, or null for a new row. */
 export type Row = { id: string; origin: number | null; name: string; words: number[] };
 /**
- * One sentence on the page. ``origin`` is its place in the file, or null for a new sentence.
- * ``removed`` names the sorted words an edit of the text took out of the table.
+ * One sentence on the page. ``origin`` is its place in the file, or null for a new sentence. ``level`` is its own
+ * level of difficulty as typed, empty for the pool's. ``removed`` names the sorted words an edit of the text took out
+ * of the table.
  */
-export type Block = { id: string; origin: number | null; text: string; timeout: string; rows: Row[]; removed: string[] };
+export type Block = { id: string; origin: number | null; text: string; level: string; rows: Row[]; removed: string[] };
 
-export const DEFAULT_TIMEOUT = "90s";
+/** The level of difficulty a pool has when it sets none. */
+export const DEFAULT_LEVEL = "1";
 export const LONGEST_NAME = 20;
 export const RECOGNIZED = [
   "noun",
@@ -46,6 +59,7 @@ export const NO_NAME = "Every row needs a name.";
 export const NONE_SORTED = "No word is sorted into the table.";
 export const NO_SENTENCES = "There are no sentences. Add at least one.";
 export const FIX_FIRST = "Fix the problems marked under the sentences first.";
+export const LEVEL_RANGE = "Level of difficulty must be a number from 0.5 through 10.";
 
 const LETTER = /^[\p{L}\p{N}\p{M}]$/u;
 const JOINERS = new Set(["'", "\u2019", "-"]);
@@ -106,9 +120,13 @@ export function ordinal(number: number): string {
   return `${number}${suffix}`;
 }
 
-/** 70% of the sentences, rounded up, as the loader's default for correct_answers_required. */
-export function defaultRequired(count: number): number {
-  return Math.floor((7 * count + 9) / 10);
+/** Why a level of difficulty as typed cannot be saved, or null. Empty is allowed: it means the default. */
+export function levelProblem(text: string): string | null {
+  const typed = text.trim();
+  if (typed === "") return null;
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(typed)) return LEVEL_RANGE;
+  const level = Number(typed);
+  return level >= 0.5 && level <= 10 ? null : LEVEL_RANGE;
 }
 
 /** Whether a row name is a part of speech the page knows: ignoring case and spaces at the ends, one listed, or one with s added. */
@@ -127,12 +145,12 @@ export function newRow(name = ""): Row {
   return { id: newId("r"), origin: null, name, words: [] };
 }
 
-export function loaded(data: PosData): Block[] {
+export function loaded(data: Pick<PoolData, "sentences">): Block[] {
   return data.sentences.map((sentence, index) => ({
     id: `s${index}`,
     origin: index,
     text: sentence.text,
-    timeout: sentence.timeout,
+    level: sentence.level_of_difficulty,
     rows: sentence.parts.map((part, row) => ({ id: `s${index}r${row}`, origin: row, name: part.name, words: [...part.words] })),
     removed: [],
   }));
@@ -196,6 +214,8 @@ export function problems(block: Block): string[] {
   const found: string[] = [];
   if (words === 0) found.push(NO_WORDS);
   if (block.rows.some((row) => row.name.trim() === "")) found.push(NO_NAME);
+  const level = levelProblem(block.level);
+  if (level) found.push(level);
   if (words > 0 && !block.rows.some((row) => row.words.length > 0)) found.push(NONE_SORTED);
   return found;
 }
@@ -239,7 +259,7 @@ export function rowChanged(original: PosSentence | undefined, block: Block, row:
 
 export function blockChanged(original: PosSentence | undefined, block: Block): boolean {
   if (original === undefined) return true;
-  if (block.text !== original.text || block.timeout.trim() !== original.timeout.trim()) return true;
+  if (block.text !== original.text || block.level.trim() !== original.level_of_difficulty.trim()) return true;
   if (block.rows.length !== original.parts.length || block.rows.some((row, index) => row.origin !== index)) return true;
   return block.rows.some((row) => {
     const changed = rowChanged(original, block, row);
@@ -247,7 +267,7 @@ export function blockChanged(original: PosSentence | undefined, block: Block): b
   });
 }
 
-export function blocksChanged(data: PosData, blocks: Block[]): boolean {
+export function blocksChanged(data: Pick<PoolData, "sentences">, blocks: Block[]): boolean {
   if (blocks.length !== data.sentences.length || blocks.some((block, index) => block.origin !== index)) return true;
   return blocks.some((block) => blockChanged(data.sentences[block.origin ?? -1], block));
 }
@@ -257,7 +277,7 @@ export function toRequest(blocks: Block[]) {
   return blocks.map((block) => ({
     origin: block.origin,
     text: block.text,
-    timeout: block.timeout,
+    level_of_difficulty: block.level,
     parts: block.rows.map((row) => ({ name: row.name, words: row.words })),
   }));
 }

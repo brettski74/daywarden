@@ -461,6 +461,7 @@ def load(
     if not root.is_file():
         return previous
     token = sentence_pools.use_config_root(root.parent)
+    pooled = sentence_pools.use_overrides(overrides or {})
     try:
         if task_data and not overrides:
             sentence_pools.migrate_policy(root)
@@ -469,6 +470,7 @@ def load(
         _load_file(root, root.resolve(), seen, build)
         return _finish(build, previous, lookup, warn)
     finally:
+        sentence_pools.reset_overrides(pooled)
         sentence_pools.reset_config_root(token)
 
 

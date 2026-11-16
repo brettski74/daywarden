@@ -2,6 +2,7 @@ import {
   ChartColumn,
   ChevronRight,
   ClipboardCheck,
+  Library,
   ListChecks,
   LogOut,
   PanelLeftClose,
@@ -13,7 +14,8 @@ import { useCallback, type KeyboardEvent, type PointerEvent, type ReactNode } fr
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
-import { KEY_STEP, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
+import { POOLS } from "../pools";
+import { ASSETS_KEY, KEY_STEP, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
@@ -101,6 +103,19 @@ function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
   );
 }
 
+/** Asset Administration: what tasks draw on, such as the parts of speech pools. */
+function AssetGroup() {
+  const { pathname } = useLocation();
+  const onAssetPage = pathname === POOLS || pathname.startsWith(`${POOLS}/`);
+  return (
+    <NavGroup id="asset-list" label="Asset Administration" icon={Library} storageKey={ASSETS_KEY} onItsPage={onAssetPage} hint="The asset list stays open while an asset page is open">
+      <li>
+        <NavLink to={POOLS}>Parts of Speech Pools</NavLink>
+      </li>
+    </NavGroup>
+  );
+}
+
 export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[] }) {
   const { width, limits, collapsed, resize, setCollapsed } = useSidebar();
   const setExpanded = useCallback((value: boolean) => setCollapsed(!value), [setCollapsed]);
@@ -167,6 +182,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
                 ))}
                 <UsageGroup />
                 <TaskGroup tasks={tasks} />
+                <AssetGroup />
               </ul>
             </nav>
           </>

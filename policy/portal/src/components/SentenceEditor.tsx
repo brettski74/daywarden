@@ -11,15 +11,14 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { Dialog } from "../components/Dialog";
+import { Dialog } from "./Dialog";
 import { label } from "../labels";
 import { useExpander } from "../motion";
 import {
-  DEFAULT_TIMEOUT,
   LONGEST_NAME,
   NO_SENTENCES,
-  defaultRequired,
   newId,
+  levelProblem,
   newRow,
   place,
   problems,
@@ -30,21 +29,21 @@ import {
   unsort,
   warnings,
   type Block,
-  type PosData,
+  type PoolData,
   type PosSentence,
   type Row,
 } from "../sentences";
 import { wordSort } from "../wordSort";
 
 const FLIGHT_MS = 600;
-const SETTINGS = ["timeout", "correct_answers_required"];
 export const ADD_TITLE = "Add sentence (Alt+N)";
 
 type Props = {
-  data: PosData;
+  /** The pool as saved: each block's ``origin`` names one of its sentences. */
+  data: Pick<PoolData, "sentences" | "problems">;
   blocks: Block[];
-  settings: Record<string, string>;
-  onSetting: (key: string, text: string) => void;
+  /** The pool's level of difficulty as the page shows it, the placeholder of each sentence's own. */
+  poolLevel: string;
   onBlocks: (change: (blocks: Block[]) => Block[]) => void;
 };
 
@@ -58,8 +57,8 @@ function update(blocks: Block[], id: string, change: (block: Block) => Block): B
   return blocks.map((block) => (block.id === id ? change(block) : block));
 }
 
-/** A parts of speech task's own settings and its sentences, each sorted as on the child's page. */
-export function PartsOfSpeechAdmin({ data, blocks, settings, onSetting, onBlocks }: Props) {
+/** A parts of speech pool's sentences, each sorted as on the child's page. */
+export function SentenceEditor({ data, blocks, poolLevel, onBlocks }: Props) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [, setTick] = useState(0);
@@ -148,7 +147,7 @@ export function PartsOfSpeechAdmin({ data, blocks, settings, onSetting, onBlocks
     onBlocks((current) => {
       const above = current[current.length - 1];
       const rows = above ? above.rows.map((row) => newRow(row.name)) : [newRow()];
-      return [...current, { id, origin: null, text: "", timeout: "", rows, removed: [] }];
+      return [...current, { id, origin: null, text: "", level: "", rows, removed: [] }];
     });
     closed.current = null;
     setEditing({ id, before: "", draft: "" });
@@ -204,37 +203,10 @@ export function PartsOfSpeechAdmin({ data, blocks, settings, onSetting, onBlocks
     focusOn(`word:${blockId}:${id}`);
   };
 
-  const taskTimeout = (settings.timeout ?? data.settings.timeout ?? "").trim() || DEFAULT_TIMEOUT;
   const asked = asking && blocks.find((block) => block.id === asking.block);
 
   return (
-    <section className="parts-of-speech" aria-label="Parts of speech" ref={root}>
-      <div className="task-common">
-        <fieldset>
-          <legend>Parts of speech settings</legend>
-          <div className="settings">
-            {SETTINGS.map((key) => {
-              const written = data.settings[key] ?? "";
-              const shown = settings[key] ?? written;
-              const placeholder = key === "timeout" ? DEFAULT_TIMEOUT : String(defaultRequired(blocks.length));
-              return (
-                <label key={key} className="setting">
-                  <span title={key}>{label(key)}</span>
-                  <input
-                    type="text"
-                    inputMode={key === "timeout" ? undefined : "numeric"}
-                    value={shown}
-                    placeholder={placeholder}
-                    data-changed={shown.trim() !== written.trim() || undefined}
-                    onChange={(event) => onSetting(key, event.target.value)}
-                  />
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
-      </div>
-
+    <section className="parts-of-speech" aria-label="Sentences" ref={root}>
       {data.problems.map((problem) => (
         <p key={problem} className="problem">
           {problem}
@@ -248,7 +220,7 @@ export function PartsOfSpeechAdmin({ data, blocks, settings, onSetting, onBlocks
           number={index + 1}
           original={block.origin === null ? undefined : data.sentences[block.origin]}
           editing={editing?.id === block.id ? editing : null}
-          taskTimeout={taskTimeout}
+          poolLevel={poolLevel}
           onEdit={() => startEdit(block)}
           onDraft={(draft) => setEditing((current) => (current && current.id === block.id ? { ...current, draft } : current))}
           onLeave={(how) => leave(block.id, how)}
@@ -333,7 +305,7 @@ type BlockProps = {
   number: number;
   original: PosSentence | undefined;
   editing: Editing | null;
-  taskTimeout: string;
+  poolLevel: string;
   onEdit: () => void;
   onDraft: (text: string) => void;
   onLeave: (how: Leaving) => boolean;
@@ -347,7 +319,7 @@ type BlockProps = {
 
 /** One sentence: its text above a two-column table of its rows, laid out like the child's. */
 function SentenceBlock(props: BlockProps) {
-  const { block, number, original, editing, taskTimeout } = props;
+  const { block, number, original, editing, poolLevel } = props;
   const rootRef = useRef<HTMLElement>(null);
   const latest = useRef(props);
   latest.current = props;
@@ -387,7 +359,7 @@ function SentenceBlock(props: BlockProps) {
   }, []);
 
   const textChanged = original !== undefined && block.text !== original.text;
-  const timeoutChanged = original !== undefined && block.timeout.trim() !== original.timeout.trim();
+  const levelChanged = original !== undefined && block.level.trim() !== original.level_of_difficulty.trim();
   const found = problems(block);
   const notes = warnings(block);
   const choicesFor = (row: Row | null) => [
@@ -510,16 +482,20 @@ function SentenceBlock(props: BlockProps) {
         <IconButton label="Add row" focus={`addrow:${block.id}`} onClick={props.onAddRow}>
           <SquarePlus aria-hidden="true" />
         </IconButton>
-        <label className="pos-timeout">
-          <span title="timeout">{label("timeout")}</span>
+        <label className="pos-level">
+          <span title="level_of_difficulty">{label("level_of_difficulty")}</span>
           <input
-            type="text"
-            value={block.timeout}
-            placeholder={taskTimeout}
-            data-changed={timeoutChanged || undefined}
+            type="number"
+            min="0.5"
+            max="10"
+            step="any"
+            value={block.level}
+            placeholder={poolLevel}
+            data-changed={levelChanged || undefined}
+            aria-invalid={levelProblem(block.level) !== null || undefined}
             onChange={(event) => {
-              const timeout = event.target.value;
-              props.onChange((current) => ({ ...current, timeout }));
+              const level = event.target.value;
+              props.onChange((current) => ({ ...current, level }));
             }}
           />
         </label>

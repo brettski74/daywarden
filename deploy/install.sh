@@ -6,8 +6,9 @@
 # cut-clips are linked into ~/bin. Every dependency is checked first, and
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
-# The files in config/tasks.d are created only along with a new policy.yaml.
-# The package's copies are always installed beside them as .sample files.
+# The files in config/tasks.d and config/parts_of_speech_pools are created
+# only along with a new policy.yaml. The package's copies are always installed
+# beside them as .sample files.
 # A config directory with no git history gets one, with what is there as
 # its first version.
 set -euo pipefail
@@ -464,6 +465,17 @@ if [ -d "$package/config/tasks.d" ]; then
     for sample in "$package/config/tasks.d"/*; do
         [ -f "$sample" ] || continue
         target="$root/config/tasks.d/$(basename -- "$sample")"
+        install_file "$sample" "$target.sample" 644
+        [ "$new_policy" -eq 0 ] || keep_or_create "$target.sample" "$target"
+    done
+fi
+# The sample tasks name the sample sentence pools, so the pools go with them.
+# A pool file's .sample copy is not loaded: only .yaml and .yml files are.
+if [ -d "$package/config/parts_of_speech_pools" ]; then
+    mkdir -p -- "$root/config/parts_of_speech_pools"
+    for sample in "$package/config/parts_of_speech_pools"/*; do
+        [ -f "$sample" ] || continue
+        target="$root/config/parts_of_speech_pools/$(basename -- "$sample")"
         install_file "$sample" "$target.sample" 644
         [ "$new_policy" -eq 0 ] || keep_or_create "$target.sample" "$target"
     done

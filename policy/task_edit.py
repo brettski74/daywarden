@@ -106,6 +106,11 @@ def name_list(names: tuple[str, ...] | list[str]) -> str:
     return "[" + ", ".join(scalar(name, name=True) for name in names) + "]"
 
 
+def text_value(value: str) -> str:
+    """Return text as YAML that reads back as the same text, quoted only where it must be, such as a pool's name."""
+    return _value(value)
+
+
 def read_task(text: str, source: Path, key: TaskKey) -> WrittenTask:
     """Return how the file writes the task ``key``, under ``tasks``, its type, and its name."""
     _name_node, node = _task_node(text, source, key)
@@ -146,6 +151,34 @@ def rewrite_task(text: str, source: Path, key: TaskKey, changes: Mapping[str, ob
         raise EditError(f"{key} is not written as a mapping in {source}")
     step = max(2, _indent(node) - name_node.start_mark.column) if not node.flow_style else 2
     return _apply(text, _edit_mapping(text, node, changes, step))
+
+
+def rewrite_root(text: str, source: Path, changes: Mapping[str, object]) -> str:
+    """Return ``text`` with the file's own top-level mapping changed, as ``rewrite_task`` changes a task.
+
+    A parts of speech pool file is changed this way: its ``name``, its
+    ``level_of_difficulty``, and its ``sentences`` list.
+    """
+    root = _root(text, source)
+    if root is None:
+        raise EditError(f"{source} is empty")
+    return _apply(text, _edit_mapping(text, root, changes, 2))
+
+
+def add_root_entry_after(text: str, source: Path, after: str, key: str, value: str) -> str:
+    """Return ``text`` with ``key: value`` added to the top-level mapping on the line after the entry ``after``.
+
+    Where ``after`` is not a block entry of the file, the new entry goes at the end, as ``rewrite_root`` adds one.
+    """
+    root = _root(text, source)
+    if root is None or root.flow_style:
+        return rewrite_root(text, source, {key: value})
+    for name, key_node, node in _entries(root):
+        if name == after and key_node.start_mark.column == 0:
+            at = _line_end(text, max(_last_end(text, node), key_node.end_mark.index))
+            prefix = "" if at == 0 or text[at - 1] == "\n" else "\n"
+            return text[:at] + prefix + f"{key}: {value}\n" + text[at:]
+    return rewrite_root(text, source, {key: value})
 
 
 def rename_task(text: str, source: Path, key: TaskKey, name: str) -> str:

@@ -7,6 +7,7 @@ export const WIDTH_KEY = "daywarden.portal.sidebarWidth";
 export const COLLAPSED_KEY = "daywarden.portal.sidebarCollapsed";
 export const TASKS_KEY = "daywarden.portal.tasksExpanded";
 export const USAGE_KEY = "daywarden.portal.usageExpanded";
+export const ASSETS_KEY = "daywarden.portal.assetsExpanded";
 
 /** Return the narrowest and widest the sidebar may be in this window, in pixels. */
 export function widthLimits(windowWidth: number, remPx: number): { min: number; max: number } {

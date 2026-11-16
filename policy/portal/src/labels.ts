@@ -16,6 +16,7 @@ export const LABELS: Record<string, string> = {
   letter_pause: "Letter Pause",
   word_pause: "Word Pause",
   correct_answers_required: "Correct Answers Required",
+  level_of_difficulty: "Level of Difficulty",
   current_dir: "Current Pool Directory",
   revision_dir: "Revision Pool Directory",
   attic_dir: "Attic Directory",

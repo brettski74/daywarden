@@ -627,9 +627,8 @@ def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, obj
         body.update(directory_changes(written, request.get("directories")))
     elif kind == PARTS_OF_SPEECH:
         _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
-        sentences = parts_of_speech_admin.sentences_edit(written, request.get("sentences"))
-        if sentences is not None:
-            body["sentences"] = sentences
+        if request.get("sentences") is not None:
+            raise ValueError("Sentences are edited on a parts of speech pool's page under Asset Administration.")
     elif kind == SKIP_COUNTING:
         _diff(body, written.body, request.get("settings"), number_lists_admin.SKIP_COUNTING_SETTINGS)
         body.update(number_lists_admin.list_changes(written, number_lists_admin.SKIP_COUNTING_TABLES, request.get("lists")))

@@ -9,9 +9,16 @@ directory, daywarden-<version>/, holding:
     VERSION, ARCH         the version, and the CPU architecture of the images
     images.tar            both images, for docker load
     docker-compose.yml    the repository's compose file, set to those images
-    env.sample            the repository's .env, with paths under ~/daywarden
-    config/               the repository's policy.yaml and bypass.txt, and the YAML
-                          files in its tasks.d/, which policy.yaml includes
+    env.sample            the repository's .env, with paths under ~/daywarden, the
+                          default ports, and a stand-in policy server name
+    config/               the repository's policy.yaml and bypass.txt, the YAML
+                          files in its tasks.d/, which policy.yaml includes, and
+                          the sentence pools in its parts_of_speech_pools/
+
+The repository's .env and bypass.txt are this machine's development settings.
+The package never carries them: its ports are the defaults, and its policy
+server is SAMPLE_SERVER, which install.sh replaces with the installing
+machine's names.
     bin/                  the host commands
     lib/policy/           the Python source cut-clips runs, with requirements.txt,
                           and not the parent portal, which is built into the image
@@ -43,6 +50,13 @@ SAMPLE_ENV = {
     "CA_VOLUME_PATH": "${HOME}/daywarden/ca",
     "DAYWARDEN_DATA_DIR": "${HOME}/daywarden/data",
 }
+# The policy server's name in the package. install.sh replaces it with this machine's names.
+SAMPLE_SERVER = "daywarden-server"
+# Set in the package whatever the development .env says.
+SAMPLE_DEFAULTS = {"PORT_BASE": "8080", "PARENT_NAMES": f"{SAMPLE_SERVER},localhost,127.0.0.1"}
+# A port set on its own wins over PORT_BASE, so the package sets none.
+SINGLE_PORTS = ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT")
+POOLS_DIR = "parts_of_speech_pools"
 COMPOSE_HEADER = """\
 # daywarden {version}. install.sh replaces this file on every upgrade.
 # Change .env and config/ instead. Start with: dw up
@@ -85,15 +99,60 @@ def proxy_base_image(text: str) -> str:
 
 
 def sample_env(text: str) -> str:
-    """Return the repository's .env with the CA and data directories under ~/daywarden."""
-    lines = text.splitlines()
+    """Return the repository's .env as the package's sample.
+
+    The CA and data directories go under ~/daywarden. PORT_BASE is the default
+    and PARENT_NAMES names SAMPLE_SERVER, whatever this machine's .env says, and
+    a port set on its own is left out, so the sample is the same on every
+    build machine. The comments are kept.
+    """
+    lines = [line for line in text.splitlines() if not line.startswith(tuple(f"{key}=" for key in SINGLE_PORTS))]
     for key, value in SAMPLE_ENV.items():
         found = [index for index, line in enumerate(lines) if line.startswith(f"{key}=")]
         if not found:
             raise ValueError(f".env does not set {key}")
         for index in found:
             lines[index] = f"{key}={value}"
+    for key, value in SAMPLE_DEFAULTS.items():
+        found = [index for index, line in enumerate(lines) if line.startswith(f"{key}=")]
+        for index in found:
+            lines[index] = f"{key}={value}"
+        if not found:
+            lines.append(f"{key}={value}")
     return "\n".join(lines) + "\n"
+
+
+def sample_bypass(text: str, parent_names: str) -> str:
+    """Return the repository's bypass.txt with this machine's policy server names as SAMPLE_SERVER.
+
+    A server line is one in the block under a ``# Policy server`` comment, or
+    one that names a PARENT_NAMES entry of this machine's .env. The first
+    becomes SAMPLE_SERVER and the rest are dropped, so install.sh finds the one
+    line it replaces with the installing machine's names.
+    """
+    names = {name.strip().lower() for name in parent_names.split(",")} - {"", "localhost", "127.0.0.1", "::1"}
+    out: list[str] = []
+    in_block = False
+    placed = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("# policy server"):
+            in_block = True
+        elif not stripped:
+            in_block = False
+        server = bool(stripped) and not stripped.startswith("#") and (in_block or stripped.lower() in names)
+        if server:
+            if not placed:
+                out.append(SAMPLE_SERVER)
+                placed = True
+            continue
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def env_value(text: str, key: str) -> str:
+    found = [line.split("=", 1)[1] for line in text.splitlines() if line.startswith(f"{key}=")]
+    return found[-1] if found else ""
 
 
 def _run(*command: str) -> str:
@@ -120,16 +179,23 @@ def stage(package: Path, version: str, arch: str) -> None:
     shutil.copy2(ROOT / "deploy" / "install.sh", package / "install.sh")
     for command in COMMANDS:
         shutil.copy2(ROOT / "bin" / command, package / "bin" / command)
-    for config in ("policy.yaml", "bypass.txt"):
-        shutil.copy2(ROOT / "config" / config, package / "config" / config)
+    env = (ROOT / ".env").read_text(encoding="utf-8")
+    shutil.copy2(ROOT / "config" / "policy.yaml", package / "config" / "policy.yaml")
+    bypass = sample_bypass((ROOT / "config" / "bypass.txt").read_text(encoding="utf-8"), env_value(env, "PARENT_NAMES"))
+    (package / "config" / "bypass.txt").write_text(bypass, encoding="utf-8")
     tasks = sorted(path for path in (ROOT / "config" / "tasks.d").glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
     if tasks:
         (package / "config" / "tasks.d").mkdir()
         for path in tasks:
             shutil.copy2(path, package / "config" / "tasks.d" / path.name)
+    pools = sorted(path for path in (ROOT / "config" / POOLS_DIR).glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
+    if pools:
+        (package / "config" / POOLS_DIR).mkdir()
+        for path in pools:
+            shutil.copy2(path, package / "config" / POOLS_DIR / path.name)
     _copy_policy(package / "lib" / "policy")
     (package / "docker-compose.yml").write_text(installed_compose(compose, version), encoding="utf-8")
-    (package / "env.sample").write_text(sample_env((ROOT / ".env").read_text(encoding="utf-8")), encoding="utf-8")
+    (package / "env.sample").write_text(sample_env(env), encoding="utf-8")
     (package / "VERSION").write_text(version + "\n", encoding="utf-8")
     (package / "ARCH").write_text(arch + "\n", encoding="utf-8")
 

@@ -1,9 +1,8 @@
-"""S007.3 and S031.1: the parts of speech area of a task page, and saving its settings to the policy file.
+"""S007.3, S031.1, and S031.2: the parts of speech area of a task page, and the sentence editor's helpers.
 
-Since S031.1 a task's sentences live in a pool file named by ``body.pools``. The portal's sentence editor is replaced
-in S031.2 and S031.3, so these tests keep the helpers' own behaviour on a task that still lists inline ``sentences``
-(``sentences_edit``, ``page``), and show that a save through the page keeps the settings working but cannot write
-inline sentences back.
+Since S031.1 a task's sentences live in a pool file named by ``body.pools``, and since S031.2 they are edited on the
+pool's page (``tests/test_pool_admin.py``). The task page keeps the task's own settings. These tests cover that page,
+and the helpers that turn the editor's sentences into a pool's ``sentences`` list.
 """
 
 import sys
@@ -18,9 +17,8 @@ sys.path.insert(0, str(ROOT))
 from test_task_admin import HOUSE, House, _git  # noqa: E402
 
 from policy import check  # noqa: E402
-from policy.parts_of_speech_admin import page, sentences_edit, tidy  # noqa: E402
+from policy.parts_of_speech_admin import sentences_edit, shown_sentences, tidy  # noqa: E402
 from policy.sentence_pools import pools_directory, write_pool  # noqa: E402
-from policy.task_edit import WrittenTask  # noqa: E402
 
 FOX = "The quick, brown fox jumped over the lazy dog."
 DRY = "Dry the dishes with a dry towel."
@@ -61,31 +59,9 @@ def _body(house) -> dict:
     return yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["parts_of_speech"]["words"]["body"]
 
 
-def _inline(timeout: str | None = None, sentences: list | None = None) -> WrittenTask:
-    """A task as a hand-written file with inline sentences would give it to the page helpers."""
-    data: dict[str, object] = {"sentences": [dict(sentence) for sentence in (sentences or _OLD)]}
-    body = {}
-    if timeout:
-        data["timeout"] = body["timeout"] = timeout
-    return WrittenTask(fields={}, groups=(), body=body, body_data=data)
-
-
-_OLD = [
-    {
-        "sentence": FOX,
-        "parts": {"noun": ["dog", "fox"], "verb": ["jumped"], "Adjectives": ["quick", "brown", "lazy"]},
-    },
-    {
-        "sentence": DRY,
-        "timeout": "2m",
-        "parts": {"verb": ["dry[1]"], "noun": ["dishes", "towel"], "adjective": ["dry[2]"]},
-    },
-]
-
-
-def _shown(written: WrittenTask) -> list[dict]:
+def _shown(listed: list) -> list[dict]:
     """Return the sentences as the page has them, in the form a save sends them back."""
-    return [{"origin": index, **sentence} for index, sentence in enumerate(page(written)["sentences"])]
+    return [{"origin": index, **sentence} for index, sentence in enumerate(shown_sentences(listed)[0])]
 
 
 # The page and a save of settings, for a task whose sentences are in a pool
@@ -93,12 +69,12 @@ def _shown(written: WrittenTask) -> list[dict]:
 
 def test_the_page_shows_the_settings_and_no_inline_sentences_for_a_task_with_pools(house):
     shown = house.page("parts_of_speech/words")["parts_of_speech"]
-    assert shown == {"settings": {"timeout": "45s", "correct_answers_required": ""}, "sentences": [], "problems": []}
+    assert shown == {"settings": {"timeout": "45s", "correct_answers_required": ""}}
     assert "spelling" not in house.page("parts_of_speech/words")
 
 
 def test_a_save_with_nothing_changed_writes_nothing(house):
-    status, body = house.save("parts_of_speech/words", sentences=[], settings={"timeout": "45s"})
+    status, body = house.save("parts_of_speech/words", settings={"timeout": "45s"})
     assert (status, body["message"]) == (200, "Nothing has changed, so nothing was saved.")
     assert house.policy.read_text(encoding="utf-8") == TEXT
 
@@ -120,13 +96,12 @@ def test_more_correct_answers_than_sentences_is_refused_naming_the_field(house):
     assert house.policy.read_text(encoding="utf-8") == TEXT
 
 
-def test_a_save_that_writes_inline_sentences_is_refused_and_writes_nothing(house):
-    """The old sentence editor cannot write back: the policy refuses sentences beside pools until S031.2 and S031.3."""
-    sentence = {"origin": None, "text": "The cat sat.", "timeout": "", "parts": [{"name": "noun", "words": [1]}]}
+def test_a_task_save_that_sends_sentences_is_refused_and_writes_nothing(house):
+    """Sentences are edited on a pool's page, so the task page never sends them."""
+    sentence = {"origin": None, "text": "The cat sat.", "level_of_difficulty": "", "parts": [{"name": "noun", "words": [1]}]}
     status, body = house.save("parts_of_speech/words", sentences=[sentence])
     assert status == 400
-    assert body["error"] == "This save would leave the policy unable to load, so nothing was saved."
-    assert body["errors"]
+    assert "Asset Administration" in body["error"]
     assert house.policy.read_text(encoding="utf-8") == TEXT
     assert check.main(["--quiet"]) == 0
 
@@ -145,16 +120,15 @@ def test_the_next_run_uses_the_saved_settings_and_the_pool(house):
     assert (document["timeout"], document["pools"]) == ("60s", [POOL])
 
 
-# The helpers on a task that still lists inline sentences
+# The sentence editor's helpers, on a pool's sentences list
 
 
-def test_the_page_helper_shows_each_inline_sentence_with_its_rows_in_order():
-    assert page(_inline("45s")) == {
-        "settings": {"timeout": "45s", "correct_answers_required": ""},
-        "sentences": [
+def test_each_sentence_is_shown_with_its_level_and_rows_in_order():
+    assert shown_sentences(SENTENCES) == (
+        [
             {
                 "text": FOX,
-                "timeout": "",
+                "level_of_difficulty": "",
                 "parts": [
                     {"name": "noun", "words": [3, 8]},
                     {"name": "verb", "words": [4]},
@@ -163,7 +137,7 @@ def test_the_page_helper_shows_each_inline_sentence_with_its_rows_in_order():
             },
             {
                 "text": DRY,
-                "timeout": "2m",
+                "level_of_difficulty": "2",
                 "parts": [
                     {"name": "verb", "words": [0]},
                     {"name": "noun", "words": [2, 6]},
@@ -171,19 +145,24 @@ def test_the_page_helper_shows_each_inline_sentence_with_its_rows_in_order():
                 ],
             },
         ],
-        "problems": [],
-    }
+        [],
+    )
+
+
+def test_a_word_the_sentence_does_not_have_is_a_problem_shown_on_the_page():
+    listed = [{"sentence": "The cat sat.", "parts": {"noun": ["dog"]}}]
+    sentences, problems = shown_sentences(listed)
+    assert sentences[0]["parts"] == [{"name": "noun", "words": []}]
+    assert problems and "dog" in problems[0]
 
 
 def test_sentences_sent_back_as_loaded_are_no_change():
-    written = _inline()
-    assert sentences_edit(written, _shown(written)) is None
-    assert sentences_edit(written, None) is None
+    assert sentences_edit(SENTENCES, _shown(SENTENCES), 1.0) is None
+    assert sentences_edit(SENTENCES, None, 1.0) is None
 
 
 def test_only_the_changed_sentence_is_written_again_with_tidied_names_and_merged_rows():
-    written = _inline()
-    sentences = _shown(written)
+    sentences = _shown(SENTENCES)
     sentences[1]["parts"] = [
         {"name": "Verbs", "words": [0]},
         {"name": "Nouns", "words": [6]},
@@ -191,10 +170,10 @@ def test_only_the_changed_sentence_is_written_again_with_tidied_names_and_merged
         {"name": "noun", "words": [2]},
         {"name": "Proper Nouns", "words": [5]},
     ]
-    sentences[1]["timeout"] = ""
-    edit = sentences_edit(written, sentences)
+    sentences[1]["level_of_difficulty"] = ""
+    edit = sentences_edit(SENTENCES, sentences, 1.0)
     assert [(item.origin, item.changed) for item in edit.items] == [(0, False), (1, True)]
-    assert edit.items[0].data == _OLD[0]
+    assert edit.items[0].data == SENTENCES[0]
     assert edit.items[1].data == {
         "sentence": DRY,
         "parts": {"verb": ["Dry"], "noun": ["dishes", "towel"], "subject": [], "proper noun": ["dry[2]"]},
@@ -202,20 +181,26 @@ def test_only_the_changed_sentence_is_written_again_with_tidied_names_and_merged
 
 
 def test_a_new_sentence_is_added_at_the_end_and_a_deleted_one_is_dropped():
-    written = _inline()
-    sentences = _shown(written)[1:] + [
-        {"origin": None, "text": "Yes, the cat sat on the mat.", "timeout": "30s", "parts": [
+    sentences = _shown(SENTENCES)[1:] + [
+        {"origin": None, "text": "Yes, the cat sat on the mat.", "level_of_difficulty": "0.5", "parts": [
             {"name": "interjection", "words": [0]},
             {"name": "noun", "words": [2, 6]},
         ]},
     ]
-    edit = sentences_edit(written, sentences)
+    edit = sentences_edit(SENTENCES, sentences, 1.0)
     assert [(item.origin, item.changed) for item in edit.items] == [(1, False), (None, True)]
     assert edit.items[1].data == {
         "sentence": "Yes, the cat sat on the mat.",
+        "level_of_difficulty": 0.5,
         "parts": {"interjection": ["Yes"], "noun": ["cat", "mat"]},
-        "timeout": "30s",
     }
+
+
+def test_a_sentence_at_the_pools_level_is_written_without_its_own():
+    sentences = _shown(SENTENCES)
+    sentences[0]["level_of_difficulty"] = "2"
+    edit = sentences_edit(SENTENCES, sentences, 2.0)
+    assert "level_of_difficulty" not in edit.items[0].data
 
 
 @pytest.mark.parametrize(
@@ -228,11 +213,10 @@ def test_a_new_sentence_is_added_at_the_end_and_a_deleted_one_is_dropped():
     ],
 )
 def test_a_request_the_page_would_never_send_is_refused(change, says):
-    written = _inline()
-    sentences = _shown(written)
+    sentences = _shown(SENTENCES)
     change(sentences)
     with pytest.raises(ValueError, match=says):
-        sentences_edit(written, sentences)
+        sentences_edit(SENTENCES, sentences, 1.0)
 
 
 @pytest.mark.parametrize(

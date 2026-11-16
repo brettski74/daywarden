@@ -1,32 +1,41 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { FIX_FIRST } from "./sentences";
-import { SUMS, fakeService, renderPortal, type Call, type Reply } from "./test/portal";
+import { FIX_FIRST, LEVEL_RANGE } from "./sentences";
+import { SUMS, fakeService, renderPortal, shown, type Call, type Reply } from "./test/portal";
 
+const DATA = "/parent/api/parts-of-speech-pools/year-3-basics";
 const WORDS = {
-  ...SUMS,
-  name: "words",
-  type: "parts_of_speech",
-  parts_of_speech: {
-    settings: { timeout: "45s", correct_answers_required: "" },
-    sentences: [
-      { text: "The cat sat on the mat.", timeout: "", parts: [{ name: "noun", words: [1, 5] }, { name: "verb", words: [2] }] },
-      { text: "Dry the dishes with a dry towel.", timeout: "2m", parts: [{ name: "verb", words: [0] }, { name: "adjective", words: [5] }] },
-    ],
-    problems: [],
-  },
+  id: "year-3-basics",
+  name: "Year 3 basics",
+  file: "/etc/daywarden/parts_of_speech_pools/year-3-basics.yaml",
+  version: "v1",
+  level_of_difficulty: "1.5",
+  sentences: [
+    { text: "The cat sat on the mat.", level_of_difficulty: "", parts: [{ name: "noun", words: [1, 5] }, { name: "verb", words: [2] }] },
+    { text: "Dry the dishes with a dry towel.", level_of_difficulty: "2", parts: [{ name: "verb", words: [0] }, { name: "adjective", words: [5] }] },
+  ],
+  problems: [],
+  tasks: ["words"],
 };
+const LIST = {
+  pools: [
+    { id: "other", name: "other", level_of_difficulty: "", sentences: 1 },
+    { id: "year-3-basics", name: "Year 3 basics", level_of_difficulty: "1.5", sentences: 2 },
+  ],
+};
+const DONE = { message: "Saved Year 3 basics. The decisions, observations, and autoconfig services are using it.", warnings: [] };
 
 async function openWords(handler?: (call: Call) => Reply | undefined, data: unknown = WORDS) {
   const calls = fakeService((call) => {
     const answered = handler?.(call);
     if (answered) return answered;
-    return call.path === "/parent/api/tasks/parts_of_speech/words" && call.method === "GET" ? { body: data } : undefined;
+    if (call.path === "/parent/api/parts-of-speech-pools" && call.method === "GET") return { body: LIST };
+    return call.path === DATA && call.method === "GET" ? { body: data } : undefined;
   });
-  renderPortal("/parent/tasks/parts_of_speech/words");
-  await screen.findByRole("heading", { name: "words" });
-  return calls;
+  const view = renderPortal("/parent/assets/parts-of-speech-pools/year-3-basics");
+  await screen.findByRole("heading", { name: "Year 3 basics" });
+  return { calls, router: view.router };
 }
 
 const sentence = (number: number) => screen.getByRole("region", { name: `Sentence ${number}` });
@@ -41,19 +50,20 @@ function selected(input: HTMLElement) {
   return box.selectionStart === 0 && box.selectionEnd === box.value.length;
 }
 
-describe("the parts of speech area of a task page", () => {
-  it("shows the settings, then each sentence with its rows, and counts them in the status bar", async () => {
+describe("a pool page", () => {
+  it("shows the name and level of difficulty, then each sentence with its rows, and counts them in the status bar", async () => {
     await openWords();
-    const settings = screen.getByRole("group", { name: "Parts of speech settings" });
-    expect(within(settings).getByRole("textbox", { name: "Timeout" })).toHaveValue("45s");
-    expect(within(settings).getByRole("textbox", { name: "Timeout" })).toHaveAttribute("placeholder", "90s");
-    expect(within(settings).getByRole("textbox", { name: "Correct Answers Required" })).toHaveAttribute("placeholder", "2");
-    expect(within(settings).getByText("Correct Answers Required")).toHaveAttribute("title", "correct_answers_required");
+    const settings = screen.getByRole("group", { name: "Pool" });
+    expect(within(settings).getByRole("textbox", { name: "Name" })).toHaveValue("Year 3 basics");
+    expect(within(settings).getByRole("textbox", { name: "Name" })).toHaveAttribute("readonly");
+    expect(within(settings).getByRole("spinbutton", { name: "Level of Difficulty" })).toHaveValue(1.5);
+    expect(within(settings).getByRole("spinbutton", { name: "Level of Difficulty" })).toHaveAttribute("placeholder", "1");
+    expect(within(settings).getByText("Level of Difficulty")).toHaveAttribute("title", "level_of_difficulty");
     expect(sentence(1)).toHaveTextContent("The cat sat on the mat.");
     expect(names(sentence(1)).map((input) => (input as HTMLInputElement).value)).toEqual(["noun", "verb"]);
     expect(cells(sentence(1))).toEqual(["cat, mat", "sat"]);
-    expect(within(sentence(2)).getByRole("textbox", { name: "Timeout" })).toHaveValue("2m");
-    expect(within(sentence(1)).getByRole("textbox", { name: "Timeout" })).toHaveAttribute("placeholder", "45s");
+    expect(within(sentence(2)).getByRole("spinbutton", { name: "Level of Difficulty" })).toHaveValue(2);
+    expect(within(sentence(1)).getByRole("spinbutton", { name: "Level of Difficulty" })).toHaveAttribute("placeholder", "1.5");
     expect(status()).toHaveTextContent("2 sentences. None with problems.");
     expect(screen.getByRole("button", { name: "Add sentence" })).toHaveAttribute("title", "Add sentence (Alt+N)");
     for (const name of ["Edit sentence", "Delete sentence", "Add row"]) {
@@ -289,7 +299,7 @@ describe("rows", () => {
 describe("adding and deleting sentences", () => {
   it("adds a sentence with Alt+N while typing elsewhere, with the rows of the one above and its text in edit mode", async () => {
     await openWords();
-    await userEvent.click(within(sentence(1)).getByRole("textbox", { name: "Timeout" }));
+    await userEvent.click(within(sentence(1)).getByRole("spinbutton", { name: "Level of Difficulty" }));
     await altN();
     const added = sentence(3);
     expect(within(added).getByRole("textbox", { name: "Sentence" })).toHaveFocus();
@@ -324,7 +334,7 @@ describe("adding and deleting sentences", () => {
   });
 
   it("says when there are no sentences at all", async () => {
-    await openWords(undefined, { ...WORDS, parts_of_speech: { ...WORDS.parts_of_speech, sentences: [] } });
+    await openWords(undefined, { ...WORDS, sentences: [] });
     expect(screen.getByText("There are no sentences. Add at least one.")).toBeInTheDocument();
   });
 });
@@ -341,7 +351,7 @@ describe("warnings, problems, and saving", () => {
   });
 
   it("will not save while a problem remains, and Ctrl+S says why", async () => {
-    const calls = await openWords();
+    const { calls } = await openWords();
     await userEvent.clear(names(sentence(1))[0]);
     expect(save()).toBeDisabled();
     expect(save()).toHaveAttribute("title", FIX_FIRST);
@@ -352,8 +362,8 @@ describe("warnings, problems, and saving", () => {
   });
 
   it("adds a sentence from the keyboard and saves it with the rest", async () => {
-    const calls = await openWords((call) =>
-      call.method === "POST" ? { body: { message: "Saved words. The decisions, observations, and autoconfig services are using it.", warnings: [] } } : undefined,
+    const { calls } = await openWords((call) =>
+      call.method === "POST" ? { body: DONE } : undefined,
     );
     await altN();
     await userEvent.keyboard("The fox ran.{Enter}");
@@ -368,16 +378,190 @@ describe("warnings, problems, and saving", () => {
     await userEvent.keyboard("{Enter}{ArrowDown}{Enter}");
     expect(cells(sentence(3))).toEqual(["fox", "ran"]);
     await userEvent.keyboard("{Control>}s{/Control}");
-    expect(await screen.findByText(/^Saved words\./)).toBeInTheDocument();
+    expect(await screen.findByText(/^Saved Year 3 basics\./)).toBeInTheDocument();
     const post = calls.find((call) => call.method === "POST");
     expect(post?.body).toMatchObject({
-      settings: { timeout: "45s", correct_answers_required: "" },
+      version: "v1",
+      level_of_difficulty: "1.5",
       sentences: [
         { origin: 0, text: "The cat sat on the mat." },
-        { origin: 1, text: "Dry the dishes with a dry towel.", timeout: "2m" },
-        { origin: null, text: "The fox ran.", timeout: "", parts: [{ name: "noun", words: [1] }, { name: "adjective", words: [2] }] },
+        { origin: 1, text: "Dry the dishes with a dry towel.", level_of_difficulty: "2" },
+        { origin: null, text: "The fox ran.", level_of_difficulty: "", parts: [{ name: "noun", words: [1] }, { name: "adjective", words: [2] }] },
       ],
     });
     await waitFor(() => expect(screen.getByRole("banner")).not.toHaveTextContent("Unsaved changes"));
+  });
+});
+
+describe("levels of difficulty", () => {
+  it("will not save a pool or sentence level outside 0.5 through 10, and says why", async () => {
+    const { calls } = await openWords();
+    const pool = within(screen.getByRole("group", { name: "Pool" })).getByRole("spinbutton", { name: "Level of Difficulty" });
+    await userEvent.clear(pool);
+    await userEvent.type(pool, "11");
+    expect(screen.getByText(LEVEL_RANGE)).toBeInTheDocument();
+    expect(save()).toBeDisabled();
+    expect(save()).toHaveAttribute("title", LEVEL_RANGE);
+    await userEvent.clear(pool);
+    expect(within(sentence(1)).getByRole("spinbutton", { name: "Level of Difficulty" })).toHaveAttribute("placeholder", "1");
+    const own = within(sentence(1)).getByRole("spinbutton", { name: "Level of Difficulty" });
+    await userEvent.type(own, "0.25");
+    expect(sentence(1)).toHaveTextContent(LEVEL_RANGE);
+    expect(save()).toBeDisabled();
+    await userEvent.clear(own);
+    await userEvent.type(own, "3");
+    expect(save()).toBeEnabled();
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+  });
+
+  it("sends the pool's level as typed with the sentences", async () => {
+    const { calls } = await openWords((call) => (call.method === "POST" ? { body: DONE } : undefined));
+    const pool = within(screen.getByRole("group", { name: "Pool" })).getByRole("spinbutton", { name: "Level of Difficulty" });
+    await userEvent.clear(pool);
+    await userEvent.type(pool, "2.5");
+    expect(pool).toHaveAttribute("data-changed");
+    await userEvent.click(save());
+    await screen.findByText(/^Saved Year 3 basics\./);
+    expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ level_of_difficulty: "2.5" });
+  });
+});
+
+describe("renaming and deleting a pool", () => {
+  it("renames the pool from the name box and Save, and Escape puts the old name back", async () => {
+    const { calls } = await openWords((call) =>
+      call.path === `${DATA}/rename` ? { body: { message: "Renamed Year 3 basics to Basics.", warnings: [], pool: { id: "year-3-basics", name: "Basics" } } } : undefined,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect(name).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(name).toHaveValue("Year 3 basics");
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await userEvent.clear(name);
+    expect(save()).toBeDisabled();
+    expect(screen.getByText("Give the pool a name.")).toBeInTheDocument();
+    await userEvent.type(name, "Basics");
+    await userEvent.keyboard("{Control>}s{/Control}");
+    expect(await screen.findByText("Renamed Year 3 basics to Basics.")).toBeInTheDocument();
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ name: "Basics", version: "v1" });
+  });
+
+  it("will not start a rename while there are unsaved changes", async () => {
+    await openWords();
+    await userEvent.click(within(sentence(2)).getByRole("button", { name: "Delete sentence" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+  });
+
+  it("asks before deleting, and shows the refusal when a task uses the pool", async () => {
+    const refusal = "Year 3 basics cannot be deleted while a task uses it: words. Take it out of those tasks first.";
+    const { calls } = await openWords((call) => (call.path === `${DATA}/delete` ? { status: 400, body: { error: refusal } } : undefined));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete this pool?" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Year 3 basics" })).toBeInTheDocument();
+  });
+
+  it("returns to the list after a delete, which no longer lists the pool", async () => {
+    let deleted = false;
+    const { router } = await openWords((call) => {
+      if (call.path === `${DATA}/delete`) {
+        deleted = true;
+        return { body: { message: "Deleted Year 3 basics.", warnings: [] } };
+      }
+      if (call.path === "/parent/api/parts-of-speech-pools" && call.method === "GET") return { body: deleted ? { pools: [LIST.pools[0]] } : LIST };
+      return undefined;
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("heading", { name: "Parts of Speech Pools" })).toBeInTheDocument();
+    expect(shown(router)).toBe("/parent/assets/parts-of-speech-pools");
+    expect(status()).toHaveTextContent("Deleted Year 3 basics.");
+    expect(screen.queryByRole("link", { name: "Year 3 basics" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the pool list", () => {
+  async function openList(handler?: (call: Call) => Reply | undefined) {
+    const calls = fakeService((call) => handler?.(call) ?? (call.path === "/parent/api/parts-of-speech-pools" ? { body: LIST } : call.path === DATA ? { body: WORDS } : undefined));
+    const view = renderPortal("/parent/assets/parts-of-speech-pools");
+    await screen.findByRole("heading", { name: "Parts of Speech Pools" });
+    return { calls, router: view.router };
+  }
+
+  it("lists every pool by name, linked to its page, with its level of difficulty and sentence count", async () => {
+    await openList();
+    const rows = screen.getAllByRole("row").slice(1).map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
+    expect(rows).toEqual([
+      ["other", "1", "1"],
+      ["Year 3 basics", "1.5", "2"],
+    ]);
+    expect(screen.getByRole("link", { name: "Year 3 basics" })).toHaveAttribute("href", "/parent/assets/parts-of-speech-pools/year-3-basics");
+    expect(status()).toHaveTextContent("2 pools.");
+  });
+
+  it("makes a pool from New pool and opens its page, and shows a refused name in the dialog", async () => {
+    const { calls, router } = await openList((call) => {
+      if (call.method !== "POST") return undefined;
+      const name = (call.body as { name: string }).name;
+      return name === "other"
+        ? { status: 400, body: { error: "A pool named other already exists." } }
+        : { body: { message: "Made the pool Year 3 basics.", warnings: [], pool: { id: "year-3-basics", name } } };
+    });
+    await userEvent.click(screen.getByRole("button", { name: "New pool" }));
+    await userEvent.keyboard("other{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("A pool named other already exists.");
+    const box = screen.getByRole("textbox", { name: "Name" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "Year 3 basics{Enter}");
+    expect(await screen.findByRole("heading", { name: "Year 3 basics" })).toBeInTheDocument();
+    expect(shown(router)).toBe("/parent/assets/parts-of-speech-pools/year-3-basics");
+    expect(status()).toHaveTextContent("Made the pool Year 3 basics.");
+    expect(calls.filter((call) => call.method === "POST").map((call) => call.body)).toEqual([{ name: "other" }, { name: "Year 3 basics" }]);
+  });
+
+  it("is reached from the Asset Administration group in the sidebar", async () => {
+    await openList();
+    const group = screen.getByRole("button", { name: "Asset Administration" });
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Parts of Speech Pools" })).toHaveAttribute("href", "/parent/assets/parts-of-speech-pools");
+  });
+
+  it("sends a signed-out parent to sign-in, returning to the pool page", async () => {
+    fakeService(() => ({ status: 401, body: { error: "Sign in to see this." } }));
+    const { router } = renderPortal("/parent/assets/parts-of-speech-pools/year-3-basics");
+    await screen.findByRole("button", { name: "Login" });
+    expect(router.state.location.pathname).toBe("/parent/login");
+    expect(new URLSearchParams(router.state.location.search).get("next")).toBe("/parent/assets/parts-of-speech-pools/year-3-basics");
+  });
+});
+
+describe("a parts of speech task page", () => {
+  it("keeps the task's own settings and sends the parent to the pools for its sentences", async () => {
+    const task = { ...SUMS, name: "words", type: "parts_of_speech", parts_of_speech: { settings: { timeout: "45s", correct_answers_required: "" } } };
+    const calls = fakeService((call) =>
+      call.path === "/parent/api/tasks/parts_of_speech/words"
+        ? call.method === "GET"
+          ? { body: task }
+          : { body: { message: "Saved words.", warnings: [] } }
+        : undefined,
+    );
+    renderPortal("/parent/tasks/parts_of_speech/words");
+    await screen.findByRole("heading", { name: "words" });
+    expect(screen.queryByRole("button", { name: "Add sentence" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Parts of Speech Pools" })).toHaveAttribute("href", "/parent/assets/parts-of-speech-pools");
+    const timeout = screen.getByRole("textbox", { name: "Timeout" });
+    await userEvent.clear(timeout);
+    await userEvent.type(timeout, "60s");
+    await userEvent.click(save());
+    await screen.findByText("Saved words.");
+    const post = calls.find((call) => call.method === "POST")?.body as Record<string, unknown>;
+    expect(post.settings).toEqual({ timeout: "60s", correct_answers_required: "" });
+    expect(post).not.toHaveProperty("sentences");
   });
 });

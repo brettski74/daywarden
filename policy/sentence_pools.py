@@ -29,6 +29,8 @@ MIN_DIFFICULTY = 0.5
 MAX_DIFFICULTY = 10.0
 
 _CONFIG_ROOT: ContextVar[Path | None] = ContextVar("sentence_pools_config_root", default=None)
+# Text to read in place of a pool file, by canonical path, while an edit is checked before it is written.
+_OVERRIDES: ContextVar[Mapping[Path, str]] = ContextVar("sentence_pools_overrides", default={})
 _POOL_KEYS = frozenset({"name", "level_of_difficulty", "sentences"})
 _ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -67,16 +69,50 @@ def reset_config_root(token) -> None:
     _CONFIG_ROOT.reset(token)
 
 
+def use_overrides(overrides: Mapping[Path, str]):
+    """Read the text in ``overrides`` in place of the pool files they name, for a check before a write."""
+    return _OVERRIDES.set(dict(overrides))
+
+
+def reset_overrides(token) -> None:
+    _OVERRIDES.reset(token)
+
+
+def read_text(path: Path) -> str:
+    """Return a pool file's text, or the text an edit being checked puts in its place."""
+    overrides = _OVERRIDES.get()
+    if overrides:
+        try:
+            canonical = path.resolve()
+        except OSError:
+            canonical = path
+        if canonical in overrides:
+            return overrides[canonical]
+    return path.read_text(encoding="utf-8")
+
+
 def list_pool_files(root: Path | None = None) -> list[Path]:
     """Return every pool YAML file, in name order. Missing directory is empty."""
     directory = pools_directory(root)
-    if not directory.is_dir():
-        return []
-    return sorted(
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in {".yaml", ".yml"} and not path.name.startswith(".")
-    )
+    found = set()
+    if directory.is_dir():
+        found = {
+            path
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() in {".yaml", ".yml"} and not path.name.startswith(".")
+        }
+    overrides = _OVERRIDES.get()
+    if overrides:
+        try:
+            canonical = directory.resolve()
+        except OSError:
+            canonical = directory
+        found |= {
+            directory / path.name
+            for path in overrides
+            if path.parent == canonical and path.suffix.lower() in {".yaml", ".yml"} and not path.exists()
+        }
+    return sorted(found)
 
 
 def index_names(root: Path | None = None) -> dict[str, Path]:
@@ -98,8 +134,8 @@ def index_names(root: Path | None = None) -> dict[str, Path]:
 def peek_name(path: Path) -> str:
     """Return the user-visible name in ``path``, or raise ``ValueError``."""
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
+        text = read_text(path)
+    except (OSError, UnicodeDecodeError) as error:
         raise ValueError(f"{path}: could not be read: {error}") from error
     try:
         data = yaml.safe_load(text)
@@ -116,8 +152,8 @@ def peek_name(path: Path) -> str:
 def load_pool(path: Path) -> Pool:
     """Load and check one pool file."""
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
+        text = read_text(path)
+    except (OSError, UnicodeDecodeError) as error:
         raise ValueError(f"{path}: could not be read: {error}") from error
     try:
         data = yaml.safe_load(text)

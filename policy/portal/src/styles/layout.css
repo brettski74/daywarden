@@ -1342,7 +1342,7 @@ select[data-changed] {
 .pos-actions,
 .pos-name,
 .pos-under,
-.pos-timeout,
+.pos-level,
 .pos-add {
   display: flex;
   align-items: center;
@@ -1358,7 +1358,7 @@ select[data-changed] {
   margin-top: 0.4rem;
 }
 
-.pos-timeout input {
+.pos-level input {
   width: 6rem;
 }
 
@@ -2268,4 +2268,10 @@ select[aria-invalid] {
 
 .chart-legend-pick:hover {
   background: var(--row-hover);
+}
+
+/* Asset Administration: the parts of speech pool list. */
+.pools-table th[scope="col"]:not(:first-child),
+.pools-number {
+  text-align: right;
 }

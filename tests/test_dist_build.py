@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from hostfakes import ROOT
-from deploy.build import installed_compose, sample_env
+from deploy.build import SAMPLE_SERVER, installed_compose, sample_bypass, sample_env
 
 DEV_COMPOSE = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
@@ -51,10 +51,34 @@ def test_a_compose_file_without_the_data_mount_is_refused():
 
 
 def test_the_sample_env_puts_the_ca_and_data_under_daywarden_and_keeps_the_rest():
-    text = "PROXY_PORT=8080\n# CA here\nCA_VOLUME_PATH=./data/ca\nPARENT_NAMES=garden,localhost\nDAYWARDEN_DATA_DIR=${HOME}/daywarden\n"
+    text = "# CA here\nCA_VOLUME_PATH=./data/ca\nPARENT_NAMES=garden,localhost\nDAYWARDEN_DATA_DIR=${HOME}/daywarden\n"
     assert sample_env(text) == (
-        "PROXY_PORT=8080\n# CA here\nCA_VOLUME_PATH=${HOME}/daywarden/ca\nPARENT_NAMES=garden,localhost\n"
-        "DAYWARDEN_DATA_DIR=${HOME}/daywarden/data\n"
+        "# CA here\nCA_VOLUME_PATH=${HOME}/daywarden/ca\nPARENT_NAMES=daywarden-server,localhost,127.0.0.1\n"
+        "DAYWARDEN_DATA_DIR=${HOME}/daywarden/data\nPORT_BASE=8080\n"
     )
     with pytest.raises(ValueError, match="CA_VOLUME_PATH"):
         sample_env("PROXY_PORT=8080\n")
+
+
+def test_the_sample_env_never_carries_the_build_machines_ports_or_names():
+    """The repository's .env is this machine's development settings, so the package is the same on any build machine."""
+    text = (
+        "# The first of a block of 10 ports.\nPORT_BASE=7070\n# PROXY_PORT=8080\nPOLICY_PORT=9999\n"
+        "PARENT_NAMES=myserver,myserver.example.net,localhost,127.0.0.1\nCA_VOLUME_PATH=./data/ca\nDAYWARDEN_DATA_DIR=x\n"
+    )
+    assert sample_env(text) == (
+        "# The first of a block of 10 ports.\nPORT_BASE=8080\n# PROXY_PORT=8080\n"
+        f"PARENT_NAMES={SAMPLE_SERVER},localhost,127.0.0.1\nCA_VOLUME_PATH=${{HOME}}/daywarden/ca\n"
+        "DAYWARDEN_DATA_DIR=${HOME}/daywarden/data\n"
+    )
+
+
+def test_the_sample_bypass_names_one_stand_in_server_in_place_of_the_build_machines():
+    text = (
+        "# Hosts.\n\n# Policy server. The proxy also forwards every name.\n# More words.\ngarden\ngarden.example.net\n\n"
+        "# School work.\nclassroom.google.com\nmyserver\n"
+    )
+    assert sample_bypass(text, "myserver,localhost,127.0.0.1") == (
+        f"# Hosts.\n\n# Policy server. The proxy also forwards every name.\n# More words.\n{SAMPLE_SERVER}\n\n"
+        "# School work.\nclassroom.google.com\n"
+    )

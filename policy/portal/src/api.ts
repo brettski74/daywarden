@@ -6,7 +6,7 @@ export const HOME = "/parent/";
 export const LOGIN = "/login";
 export const HOME_ROUTE = "/";
 
-const NOT_PAGES = new Set(["api", "assets", "login"]);
+const NOT_PAGES = new Set(["api", "build", "login"]);
 
 /** An answer from a data endpoint that the page shows instead of its data. ``data`` is the whole answer. */
 export class ApiError extends Error {
@@ -25,7 +25,7 @@ export class ApiError extends Error {
  *
  * The service makes the same check on sign-in. A page address is a path under
  * /parent/ with its query string. It is not under /parent/api/ or
- * /parent/assets/, it is not the sign-in screen, and its last segment is not
+ * /parent/build/, it is not the sign-in screen, and its last segment is not
  * a file name.
  */
 export function safeNext(value: string | null | undefined): string {

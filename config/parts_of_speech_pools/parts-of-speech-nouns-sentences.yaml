@@ -1,53 +1,58 @@
-name: Parts of Speech (Nouns) sentences
+name: Year 3 Basic
 sentences:
 - sentence: The fluffy cat slept peacefully on the warm blanket.
   parts:
-    noun:
-    - cat
-    - blanket
+    noun: [cat, blanket]
+    verb: [slept]
+    adjective: [fluffy, warm]
+    adverb: [peacefully]
 - sentence: A young boy carefully opened the wooden box.
   parts:
-    noun:
-    - boy
-    - box
+    noun: [boy, box]
+    verb: [opened]
+    adjective: [young, wooden]
+    adverb: [carefully]
 - sentence: The bright, yellow sun shone over the quiet village.
   parts:
-    noun:
-    - sun
-    - village
+    noun: [sun, village]
+    verb: [shone]
+    adjective: [bright, yellow, quiet]
 - sentence: My little brother ran quickly through the garden.
   parts:
-    noun:
-    - brother
-    - garden
+    noun: [brother, garden]
+    verb: [ran]
+    adjective: [little]
+    adverb: [quickly]
 - sentence: The hungry squirrel climbed up the tall tree beside the fence.
   parts:
-    noun:
-    - squirrel
-    - tree
-    - fence
+    noun: [squirrel, tree, fence]
+    verb: [climbed]
+    adjective: [hungry, tall]
 - sentence: A beautiful butterfly landed gently on the flower.
   parts:
-    noun:
-    - butterfly
-    - flower
+    noun: [butterfly, flower]
+    verb: [landed]
+    adjective: [beautiful]
+    adverb: [gently]
 - sentence: The tiny puppy happily played in the garden.
   parts:
-    noun:
-    - puppy
-    - garden
+    noun: [puppy, garden]
+    verb: [played]
+    adjective: [tiny]
+    adverb: [happily]
 - sentence: An old man carried a heavy bag across the busy road.
   parts:
-    noun:
-    - man
-    - bag
-    - road
+    noun: [man, bag, road]
+    verb: [carried]
+    adjective: [old, heavy, busy]
 - sentence: The cheerful girl sang loudly.
   parts:
-    noun:
-    - girl
+    noun: [girl]
+    verb: [sang]
+    adjective: [cheerful]
+    adverb: [loudly]
 - sentence: A shiny, red bicycle stood beside the old garage.
   parts:
-    noun:
-    - bicycle
-    - garage
+    noun: [bicycle, garage]
+    verb: [stood]
+    adjective: [shiny, red, old]

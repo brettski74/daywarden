@@ -97,6 +97,31 @@ def test_a_first_install_creates_the_task_files_the_sample_policy_includes(host,
         assert f"~/daywarden/config/tasks.d/{name}" in done.stdout
 
 
+def _pool_files():
+    return sorted(path.name for path in (ROOT / "config" / "parts_of_speech_pools").iterdir() if path.suffix in (".yaml", ".yml"))
+
+
+def test_a_first_install_creates_the_sentence_pools_the_sample_tasks_name(host, package):
+    """S031: the sample parts of speech tasks name pools, so a new install that lacked them would not start."""
+    done = host.install(package)
+    assert done.returncode == 0, done.stderr + done.stdout
+    pools = host.root / "config" / "parts_of_speech_pools"
+    assert _pool_files()
+    for name in _pool_files():
+        assert (pools / name).read_bytes() == (ROOT / "config" / "parts_of_speech_pools" / name).read_bytes()
+        assert (pools / f"{name}.sample").read_bytes() == (pools / name).read_bytes()
+
+
+def test_an_upgrade_that_keeps_the_policy_adds_no_pool_but_refreshes_the_samples(host, package, newer):
+    assert host.install(package).returncode == 0
+    pools = host.root / "config" / "parts_of_speech_pools"
+    dropped = _pool_files()[0]
+    (pools / dropped).unlink()
+    assert host.install(newer).returncode == 0
+    assert not (pools / dropped).exists()
+    assert (pools / f"{dropped}.sample").is_file()
+
+
 def test_an_upgrade_that_keeps_the_policy_adds_no_task_file_beside_the_households_own(host, package, newer):
     assert host.install(package).returncode == 0
     tasks = host.root / "config" / "tasks.d"

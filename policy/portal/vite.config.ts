@@ -14,6 +14,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Built files go under /parent/build/. /parent/assets/ is the Asset Administration pages.
+    assetsDir: "build",
   },
   server: {
     fs: {

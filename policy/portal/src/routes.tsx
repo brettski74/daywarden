@@ -3,6 +3,8 @@ import { Layout, layoutLoader } from "./components/Layout";
 import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Login, loginLoader } from "./pages/Login";
+import { Pool, poolAction, poolLoader, poolShouldRevalidate } from "./pages/Pool";
+import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Requests, requestsLoader } from "./pages/Requests";
@@ -43,6 +45,14 @@ export const routes: RouteObject[] = [
           { path: "tasks/:type/:name/words/:mode", element: <Week />, loader: weekLoader, action: weekAction },
           { path: "tasks/:type/:name/week", loader: oldWeekLoader },
           { path: "new-task", element: <NewTask />, loader: newTaskLoader, action: newTaskAction },
+          { path: "assets/parts-of-speech-pools", element: <Pools />, loader: poolsLoader },
+          {
+            path: "assets/parts-of-speech-pools/:id",
+            element: <Pool />,
+            loader: poolLoader,
+            action: poolAction,
+            shouldRevalidate: poolShouldRevalidate,
+          },
           { path: "*", element: <NotFound /> },
         ],
       },

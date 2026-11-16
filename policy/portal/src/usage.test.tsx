@@ -121,7 +121,8 @@ describe("a custom date range", () => {
     expect(screen.queryByRole("textbox", { name: "From" })).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Date range" }), "custom");
     await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?by=client&range=custom&from=2026-11-06&to=2026-11-13"));
-    expect(screen.getByRole("textbox", { name: "From" })).toHaveValue("2026-11-06");
+    // The address changes before the page has drawn the new range, so wait for the boxes as well.
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "From" })).toHaveValue("2026-11-06"));
     expect(screen.getByRole("textbox", { name: "To" })).toHaveValue("2026-11-13");
   });
 

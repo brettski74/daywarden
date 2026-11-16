@@ -23,7 +23,6 @@ import { THROW_AWAY_TITLE, WORDS_MODES, throwAwayQuestion, wordsPath, type Words
 import { label } from "../labels";
 import { arithmeticLists, problemsText, shownArithmetic, type ArithmeticData } from "../arithmetic";
 import type { NumberRow, ServiceRow } from "../numberTable";
-import { FIX_FIRST, blocked, blocksChanged, countsText, loaded, toRequest, type Block, type PosData } from "../sentences";
 import {
   FIX_ON_PAGE,
   differenceProblems,
@@ -36,7 +35,7 @@ import {
   type SkipData,
 } from "../skipCounting";
 import { ContextBar, StatusBar, useTitle } from "../slots";
-import { PartsOfSpeechAdmin } from "./PartsOfSpeech";
+import { PartsOfSpeechAdmin, type PosData } from "./PartsOfSpeech";
 import { ArithmeticAdmin } from "./Arithmetic";
 import { SkipCountingAdmin } from "./SkipCounting";
 import { POOL_FILTERS, SAVE_MOVES_FIRST, SpellingAdmin, listedPools, type Listing, type Pool, type SpellingData, type SpellingWord } from "./Spelling";
@@ -85,15 +84,13 @@ type Edits = {
   groups: string[] | null;
   settings: Record<string, string>;
   moves: Record<string, Pool>;
-  /** A parts of speech task's sentences, once anything in them has been touched. */
-  blocks: Block[] | null;
   /** Each weighted number list touched, such as a skip counting task's difference. */
   lists: ListEdits;
   /** A spelling task's directory fields chosen on the page, as paths from the data directory. */
   directories: Record<string, string>;
 };
 
-const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, blocks: null, lists: {}, directories: {} };
+const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, lists: {}, directories: {} };
 const ADD_WORDS = "Add words to the new directories from the Words menu. Its Apply saves the directories with the words.";
 const ADD_WORDS_NEW = "Add words to the new directories from the Words menu, then save the new task.";
 
@@ -205,7 +202,6 @@ function changed(data: TaskData, edits: Edits, words: SpellingWord[]): boolean {
   const settings = (data.spelling ?? data.parts_of_speech ?? data.skip_counting ?? data.arithmetic)?.settings ?? {};
   if (differs(data.fields, edits.fields) || differs(settings, edits.settings)) return true;
   if (edits.groups !== null && edits.groups.join("\n") !== data.groups.join("\n")) return true;
-  if (data.parts_of_speech && edits.blocks !== null && blocksChanged(data.parts_of_speech, edits.blocks)) return true;
   if (data.skip_counting && shownDifference(data.skip_counting, edits.settings, edits.lists.difference).changed) return true;
   if (data.arithmetic && Object.keys(arithmeticLists(shownArithmetic(data.arithmetic, edits.settings, edits.lists))).length > 0) return true;
   if (data.spelling && Object.keys(changedDirectories(data.spelling.directories, edits.directories)).length > 0) return true;
@@ -283,8 +279,6 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
     return otherDirty || !nextLocation.pathname.startsWith(`${taskPath(data)}/words/`);
   });
   const pos = data.parts_of_speech;
-  const shownBlocks = useMemo(() => (pos ? loaded(pos) : []), [pos]);
-  const blocks = edits.blocks ?? shownBlocks;
   const skip = data.skip_counting;
   const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
   const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
@@ -294,10 +288,9 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
     ? problem !== null || (naming && draft.type === "")
     : undated ||
       Object.keys(directoryProblems).length > 0 ||
-      (pos !== undefined && blocked(blocks)) ||
       (difference !== null && skipBlocked(difference, differenceTrouble)) ||
       (sums !== null && sums.count > 0);
-  const fixFirst = frozen ? (problem ?? CHOOSE_TYPE) : pos && !undated ? FIX_FIRST : FIX_ON_PAGE;
+  const fixFirst = frozen ? (problem ?? CHOOSE_TYPE) : FIX_ON_PAGE;
 
   const save = useCallback(
     (confirmed = false) => {
@@ -335,7 +328,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
                 ...(directoriesMoved ? { directories: unsavedDirectories } : {}),
               }
             : {}),
-          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, sentences: toRequest(blocks) } : {}),
+          ...(pos ? { settings: { ...pos.settings, ...edits.settings } } : {}),
           ...(skip ? { settings: { ...skip.settings, ...edits.settings }, lists } : {}),
           ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
           confirmed,
@@ -343,12 +336,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
         post,
       );
     },
-    [fetcher, data, edits, dirty, held, fixFirst, pos, blocks, skip, difference, sums, naming, draft, renaming, creating, frozen, name, chosen, moving, directoriesMoved, unsavedDirectories],
-  );
-
-  const changeBlocks = useCallback(
-    (change: (current: Block[]) => Block[]) => setEdits((current) => ({ ...current, blocks: change(current.blocks ?? shownBlocks) })),
-    [shownBlocks],
+    [fetcher, data, edits, dirty, held, fixFirst, pos, skip, difference, sums, naming, draft, renaming, creating, frozen, name, chosen, moving, directoriesMoved, unsavedDirectories],
   );
 
   /** Change a number list's rows. A list not yet touched, or the default list, starts from the rows on show. */
@@ -638,13 +626,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
               onMade={(message) => setResult({ intent: "record", ok: true, message, warnings: [] })}
             />
           ) : pos ? (
-            <PartsOfSpeechAdmin
-              data={pos}
-              blocks={blocks}
-              settings={edits.settings}
-              onSetting={(key, text) => setEdits((current) => ({ ...current, settings: { ...current.settings, [key]: text } }))}
-              onBlocks={changeBlocks}
-            />
+            <PartsOfSpeechAdmin data={pos} settings={edits.settings} onSetting={setSetting} />
           ) : skip && difference ? (
             <SkipCountingAdmin
               data={skip}
@@ -673,7 +655,6 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
         {result && <Outcome result={result} />}
         {result && !result.ok && result.spelling && <span className="status-refused">{creating ? ADD_WORDS_NEW : ADD_WORDS}</span>}
         {listing && <span>{counts(listing.words, pool)}</span>}
-        {pos && <span>{countsText(blocks)}</span>}
         {difference && <span>{skipCounts(difference, differenceTrouble)}</span>}
         {sums && <span>{problemsText(sums)}</span>}
       </StatusBar>

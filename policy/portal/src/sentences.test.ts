@@ -6,7 +6,8 @@ import {
   blocked,
   blocksChanged,
   countsText,
-  defaultRequired,
+  LEVEL_RANGE,
+  levelProblem,
   loaded,
   ordinal,
   place,
@@ -19,16 +20,13 @@ import {
   unsort,
   warnings,
   type Block,
-  type PosData,
 } from "./sentences";
 
-const DATA: PosData = {
-  settings: { timeout: "45s", correct_answers_required: "" },
+const DATA = {
   sentences: [
-    { text: "The cat sat on the mat.", timeout: "", parts: [{ name: "noun", words: [1, 5] }, { name: "verb", words: [2] }] },
-    { text: "Dry the dishes with a dry towel.", timeout: "2m", parts: [{ name: "verb", words: [0] }, { name: "adjective", words: [5] }] },
+    { text: "The cat sat on the mat.", level_of_difficulty: "", parts: [{ name: "noun", words: [1, 5] }, { name: "verb", words: [2] }] },
+    { text: "Dry the dishes with a dry towel.", level_of_difficulty: "2", parts: [{ name: "verb", words: [0] }, { name: "adjective", words: [5] }] },
   ],
-  problems: [],
 };
 
 describe("splitting a sentence into words", () => {
@@ -107,20 +105,25 @@ describe("problems and warnings", () => {
     ]);
   });
 
-  it("counts the sentences and those with problems, and works out the default pass mark", () => {
+  it("counts the sentences and those with problems", () => {
     expect(countsText(loaded(DATA))).toBe("2 sentences. None with problems.");
     expect(countsText([block({ text: "" })])).toBe("1 sentence. 1 with problems.");
-    expect([1, 2, 3, 5, 10].map(defaultRequired)).toEqual([1, 2, 3, 4, 7]);
+  });
+
+  it("allows an empty level of difficulty or one from 0.5 through 10, and makes anything else a problem", () => {
+    for (const typed of ["", " ", "0.5", "1", "2.25", "10", ".5"]) expect(levelProblem(typed)).toBeNull();
+    for (const typed of ["0.4", "10.01", "0", "-1", "abc", "1e1", "Infinity"]) expect(levelProblem(typed)).toBe(LEVEL_RANGE);
+    expect(problems(block({ level: "11" }))).toContain(LEVEL_RANGE);
   });
 });
 
 describe("what has changed", () => {
-  it("sees nothing changed until a word, a name, a timeout, the text, or the list changes", () => {
+  it("sees nothing changed until a word, a name, a level of difficulty, the text, or the list changes", () => {
     const blocks = loaded(DATA);
     expect(blocksChanged(DATA, blocks)).toBe(false);
     expect(blocksChanged(DATA, [place(blocks[0], 3, "s0r1"), blocks[1]])).toBe(true);
     expect(blocksChanged(DATA, [unsort(place(blocks[0], 3, "s0r1"), 3), blocks[1]])).toBe(false);
-    expect(blocksChanged(DATA, [{ ...blocks[0], timeout: "1m" }, blocks[1]])).toBe(true);
+    expect(blocksChanged(DATA, [{ ...blocks[0], level: "3" }, blocks[1]])).toBe(true);
     expect(blocksChanged(DATA, [blocks[0]])).toBe(true);
     expect(blocksChanged(DATA, [retext(blocks[0], "A cat sat on the mat."), blocks[1]])).toBe(true);
   });
@@ -129,7 +132,7 @@ describe("what has changed", () => {
     expect(toRequest(loaded(DATA))[1]).toEqual({
       origin: 1,
       text: "Dry the dishes with a dry towel.",
-      timeout: "2m",
+      level_of_difficulty: "2",
       parts: [{ name: "verb", words: [0] }, { name: "adjective", words: [5] }],
     });
   });

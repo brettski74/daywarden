@@ -316,8 +316,11 @@ def test_idle_flow_is_not_reported_again(stack):
         completed, headers, _body = box["result"]
         assert completed.returncode == 0, completed.stderr
         assert _status(headers) == 200
+        # S030.3: when the flow finishes, the proxy sends one end-of-flow report even with no bytes left, so the
+        # request table has its End. The idle connection itself was never reported again.
         after = stack.jsonl("observations", OBSERVATION_LOG)
-        assert len(after) == len(before)
+        assert after[: len(before)] == before
+        assert [(entry["bytes"], entry.get("ended")) for entry in after[len(before):]] == [(0, True)], after
         finished = _events(stack.jsonl("origin", ORIGIN_LOG), "finished")[-1]
         assert sum(entry["bytes"] for entry in after) == finished["bytes"]
     finally:

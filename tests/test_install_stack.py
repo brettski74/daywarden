@@ -191,7 +191,7 @@ def test_make_dist_builds_a_package_that_installs_and_runs(installed):
     status, _headers, shell = installed.policy_page("/parent/attempts")
     assert status == 200
     assert '<div id="root">' in shell
-    script = re.search(r'src="(/parent/assets/[^"]+\.js)"', shell)
+    script = re.search(r'src="(/parent/build/[^"]+\.js)"', shell)
     assert script is not None
     assert installed.policy_page(script.group(1))[0] == 200
 

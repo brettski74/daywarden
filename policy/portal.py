@@ -43,6 +43,7 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
+from policy.pool_admin import PoolAdmin
 from policy.task_admin import TaskAdmin, missing
 from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
@@ -53,8 +54,10 @@ from policy.week import Weeks
 
 PORTAL_DIR = Path(__file__).resolve().parent / "portal" / "dist"
 HOME = "/parent/"
+# Vite writes the hashed scripts and stylesheets under /parent/build/. /parent/assets/ is Asset Administration.
+BUILT = "build/"
 # Addresses under /parent/ that are not portal pages.
-_NOT_PAGES = frozenset({"api", "assets", "login"})
+_NOT_PAGES = frozenset({"api", "build", "login"})
 _CLOSED = "The parent portal is closed until a parent account is added."
 _SIGNED_OUT = "Sign in to see this."
 _HTTPS_ONLY = """<!DOCTYPE html>
@@ -76,7 +79,7 @@ def safe_next(value: object) -> str:
     """Return value when it is a portal page address, otherwise the portal home.
 
     A page address is a path under /parent/, with its query string. It is not
-    under /parent/api/ or /parent/assets/, it is not the sign-in screen, and
+    under /parent/api/ or /parent/build/, it is not the sign-in screen, and
     its last segment is not a file name. Another site, a scheme, a host, and
     a path that climbs out with ``..`` all return the home.
     """
@@ -128,6 +131,7 @@ def install_portal(
     weeks = Weeks(tasks) if tasks is not None else None
     changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
     presets = Presets(usage_store.connection)
+    pools = PoolAdmin(tasks) if tasks is not None else None
 
     def guard(request: Request) -> tuple[str | None, Response | None]:
         """Return the signed-in username, or the refusal to send instead."""
@@ -404,6 +408,65 @@ def install_portal(
         answer = changes.create(body, username)
         return _json(answer.status, answer.body)
 
+    no_pools = "Parts of speech pools cannot be edited here."
+
+    @app.get("/parent/api/parts-of-speech-pools")
+    async def pool_list(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        return _json(200, {"pools": []} if pools is None else pools.catalogue())
+
+    @app.post("/parent/api/parts-of-speech-pools")
+    async def pool_create(request: Request) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if pools is None:
+            return _json(404, {"error": no_pools})
+        answer = pools.create(body, username)
+        return _json(answer.status, answer.body)
+
+    @app.get("/parent/api/parts-of-speech-pools/{pool_id}")
+    async def pool_page(request: Request, pool_id: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if pools is None:
+            return _json(404, {"error": no_pools})
+        answer = pools.page(pool_id)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/parts-of-speech-pools/{pool_id}")
+    async def pool_save(request: Request, pool_id: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if pools is None:
+            return _json(404, {"error": no_pools})
+        answer = pools.save(pool_id, body, username)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/parts-of-speech-pools/{pool_id}/rename")
+    async def pool_rename(request: Request, pool_id: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if pools is None:
+            return _json(404, {"error": no_pools})
+        answer = pools.rename(pool_id, body, username)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/parts-of-speech-pools/{pool_id}/delete")
+    async def pool_delete(request: Request, pool_id: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if pools is None:
+            return _json(404, {"error": no_pools})
+        answer = pools.delete(pool_id, body, username)
+        return _json(answer.status, answer.body)
+
     @app.get("/parent/api/new-task/audio/{pool}/{file_name}")
     async def new_task_audio(request: Request, pool: str, file_name: str) -> Response:
         _username, refused = guard(request)
@@ -561,9 +624,9 @@ def install_portal(
         if path and path != "index.html":
             found = (root / path).resolve()
             if found.is_relative_to(root) and found.is_file():
-                cache = "public, max-age=31536000, immutable" if path.startswith("assets/") else "max-age=3600"
+                cache = "public, max-age=31536000, immutable" if path.startswith(BUILT) else "max-age=3600"
                 return FileResponse(found, headers={"cache-control": cache})
-            if path.startswith("assets/"):
+            if path.startswith(BUILT):
                 return PlainTextResponse("not found", status_code=404)
         index = root / "index.html"
         if not index.is_file():

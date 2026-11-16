@@ -42,7 +42,8 @@ def _tracked(host):
 def _installed(host):
     """The files a fresh install puts in the config history: none of the samples."""
     tasks = sorted(f"tasks.d/{path.name}" for path in (host.config / "tasks.d").glob("*.y*ml"))
-    return sorted([".gitignore", "bypass.txt", "policy.yaml", *tasks])
+    pools = sorted(f"parts_of_speech_pools/{path.name}" for path in (host.config / "parts_of_speech_pools").glob("*.y*ml"))
+    return sorted([".gitignore", "bypass.txt", "policy.yaml", *tasks, *pools])
 
 
 def _status(host):

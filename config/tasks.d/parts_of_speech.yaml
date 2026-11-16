@@ -10,4 +10,4 @@ tasks:
       pass_cooldown: 21
       failure_cooldown: 1
       body:
-        pools: ['Parts of Speech (Nouns) sentences']
+        pools: ["Year 3 Basic"]

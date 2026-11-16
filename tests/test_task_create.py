@@ -171,8 +171,6 @@ def test_locking_in_returns_the_page_of_a_task_with_an_empty_body_and_writes_not
 def test_an_empty_body_shows_each_types_defaults_and_no_problems(house):
     assert house.lock("parts_of_speech", "pos")[1]["parts_of_speech"] == {
         "settings": {"timeout": "", "correct_answers_required": ""},
-        "sentences": [],
-        "problems": [],
     }
     skip = house.lock("skip_counting", "skips")[1]["skip_counting"]
     assert skip["difference"] is None and skip["default"]
@@ -287,13 +285,12 @@ def test_with_tasks_d_already_included_only_the_new_file_is_written_and_numbered
     assert _git(kept.config, "show", "--name-only", "--no-renames", "--format=", "HEAD").split() == ["tasks.d/adding.3.yaml"]
 
 
-def test_a_parts_of_speech_task_cannot_be_created_with_inline_sentences_until_the_pool_editor_exists(house):
-    """S031.1: sentences live in pools. The portal's old sentence editor is replaced in S031.2 and S031.3."""
-    sentence = {"text": "The cat sat.", "timeout": "", "parts": [{"name": "noun", "words": [1]}, {"name": "verb", "words": [2]}]}
+def test_a_new_parts_of_speech_task_cannot_send_sentences(house):
+    """S031.2: sentences are edited in pools under Asset Administration, never on a task page."""
+    sentence = {"text": "The cat sat.", "level_of_difficulty": "", "parts": [{"name": "noun", "words": [1]}, {"name": "verb", "words": [2]}]}
     status, body = house.create("parts_of_speech", "pos", groups=["younger"], settings={"timeout": "40s"}, sentences=[sentence])
     assert status == 400
-    assert any("body.sentences: use pools" in problem for problem in body["errors"]), body
-    assert any("body.pools: required" in problem for problem in body["errors"]), body
+    assert "Asset Administration" in body["error"]
     assert house.tasks_d() == []
 
 
