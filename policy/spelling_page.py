@@ -89,7 +89,7 @@ def show(
     attempt, the page opens on its end screen. ``line`` says the attempt
     doesn't count right now.
     """
-    session = Session(attempt.detail, task.document(), _RNG)
+    session = Session(attempt.detail, task.document(), _RNG, figures=_figures(store, attempt))
     session.visit(now)
     ended = None
     if record:
@@ -138,7 +138,7 @@ def respond_api(
     if attempt is None:
         return reload()
     rng = rng or _RNG
-    session = Session(attempt.detail, task.document(), rng)
+    session = Session(attempt.detail, task.document(), rng, figures=_figures(store, attempt))
     if action in (VISIT, QUESTION):
         session.visit(now)
         verdict = session.verdict()
@@ -280,6 +280,11 @@ def give_up_page(detail: Mapping, location: str, line: str = "") -> PageResponse
 def _missed_list(words: list[str]) -> str:
     items = "".join(f"<li>{_e(word)}</li>" for word in words)
     return f'<ul id="missed-words" style="--columns: {min(MISSED_COLUMNS, len(words))}">{items}</ul>'
+
+
+def _figures(store: AttemptStore, attempt: Attempt):
+    """Return the lookup that gives a run this client group's figures for its revision words."""
+    return lambda keys: store.words.figures(attempt.client_group, keys)
 
 
 def _question(session: Session, task: Task, question: Mapping, rng: random.Random) -> dict:

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Show spelling word figures, from the machine running Compose.
+#   word-stats                        every client group and word
+#   word-stats --client younger --task spelling-a
+#   word-stats --help                 every option
+# Runs `python -m policy.maintenance word-stats` in the decisions container.
+# Works from any directory, including through a symlink in ~/bin.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+dw_prepare word-stats
+dw_require_running
+tty=()
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    tty=(-T)
+fi
+exec docker compose --project-directory "$root" exec "${tty[@]}" decisions \
+    python -m policy.maintenance word-stats "$@"

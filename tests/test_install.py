@@ -6,7 +6,7 @@ import pytest
 
 from hostfakes import NEWER, ROOT, Host, make_package
 
-LINKED = ("dw", "rm-attempts", "add-parent", "cut-clips")
+LINKED = ("dw", "rm-attempts", "word-stats", "add-parent", "cut-clips")
 
 
 @pytest.fixture

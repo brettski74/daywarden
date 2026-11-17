@@ -234,6 +234,14 @@ rm-attempts --client younger --task sums --yes
 rm-attempts --type arithmetic --newer-than 2h --yes
 ```
 
+`word-stats` lists the spelling word figures kept for each client group: how many tasks asked each word (`attempts`), how many it was spelled right in every time it was asked (`correct`), how many it was missed in (`incorrect`), its `run` of correct tasks in a row, and the `weight` it has as a revision word. Link it the same way, `ln -s "$PWD"/bin/word-stats ~/bin/`. It changes nothing, and `rm-attempts` leaves the figures alone. `--client GROUP` shows one client group and `--word WORD` one entry key such as `rope` or `read.1`. `--pool DIRECTORY`, named as a task's `current_dir` is, such as `spelling/revision`, shows words with a recording there, and `--task NAME` shows words in that spelling task's current, revision, or attic directories. Each may be given more than once, and with both a word must satisfy both. With either filter, every word in the pools is listed for each client group, including words not asked yet (all zeros, weight 1.000); without one, only words with figures are. `--sort COLUMN` orders the rows by `client`, `word`, `attempts`, `correct`, `incorrect`, `run`, or `weight`, smallest first. Put `-` after the name for largest first, as in `--sort weight-` (`--sort=-weight` also works). Each `--sort` adds a term after the earlier ones, and rows left level are ordered by client group, then word. A pool directory that does not exist, or a task that is not a spelling task in the policy, is an error and nothing is listed.
+
+```sh
+word-stats --client younger --pool spelling/revision
+word-stats --word necessary
+word-stats --client younger --sort weight- --sort word
+```
+
 A removed attempt is gone from `/parent/attempts`. A removed pass no longer counts toward today's `tasks_required` and no longer starts a cooldown. A removed failure or abandonment is no longer a skip day. The change takes effect on the next request, with no restart.
 
 ## Recording spelling clips
@@ -330,7 +338,7 @@ The installer checks everything first and changes nothing if something it needs 
 | `~/daywarden/data/` | Recordings, such as `data/spelling/current` |
 | `~/daywarden/bin/`, `lib/` | Always replaced. The commands, and the Python source `cut-clips` runs |
 | `~/daywarden/venv/` | The `cut-clips` environment, built from PyPI |
-| `~/bin/dw`, `rm-attempts`, `add-parent`, `cut-clips` | Links into `~/daywarden/bin` |
+| `~/bin/dw`, `rm-attempts`, `word-stats`, `add-parent`, `cut-clips` | Links into `~/daywarden/bin` |
 
 On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.homenet.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its configuration URL, or its proxy port, and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
 
@@ -352,7 +360,7 @@ add-parent ada
 
 A broken policy stops `dw up` and `dw restart` before anything is started or stopped, with `dw: the policy has 2 errors. daywarden was not started.` (or `Nothing was restarted.`) and every error. A running daywarden keeps running with the policy it had. `dw restart` on a stopped daywarden starts it, the same as `dw up`. Whether a parent stays signed in across `dw restart` is the same as across `dw down` and `dw up`.
 
-`dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts` and `add-parent` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
+`dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts`, `word-stats`, and `add-parent` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
 
 ### Start at boot
 

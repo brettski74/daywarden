@@ -42,6 +42,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
+from policy.spelling_words import SPELLING, WordStats, ensure_words, tally
+
 PARENT_CHECK = "parent_check"
 IN_PROGRESS = "in_progress"
 PASS = "pass"
@@ -468,6 +470,8 @@ class AttemptStore:
             if str(path) != ":memory:":
                 self.connection.execute("PRAGMA journal_mode = WAL").fetchone()
         ensure_attempts(self.connection)
+        ensure_words(self.connection)
+        self.words = WordStats(self.connection)
 
     def __enter__(self) -> AttemptStore:
         return self
@@ -713,7 +717,7 @@ class AttemptStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("this attempt is already finished")
-        return self._by_id(attempt_id)
+        return self._counted(self._by_id(attempt_id))
 
     def save(self, attempt_id: int, detail: Mapping) -> Attempt:
         """Replace the detail of an in-progress attempt, so a reload keeps it.
@@ -728,7 +732,7 @@ class AttemptStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("only an attempt in progress can be saved")
-        return self._by_id(attempt_id)
+        return self._counted(self._by_id(attempt_id))
 
     def record(
         self,
@@ -763,7 +767,7 @@ class AttemptStore:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (client_group, *task, started, finished, outcome, payload, task_set),
             )
-        return self._by_id(int(cursor.lastrowid))
+        return self._counted(self._by_id(int(cursor.lastrowid)))
 
     def is_eligible(self, task: Task, client_group: str, today: date) -> bool:
         return is_eligible(task, client_group, today, self.attempts(client_group, task.key))
@@ -780,6 +784,12 @@ class AttemptStore:
     def passes_on(self, client_group: str, day: date, tasks: Sequence[Task] = ()) -> int:
         """Return the revision points this client group scored on this day."""
         return pass_count(self.connection, client_group, day, tasks)
+
+    def _counted(self, attempt: Attempt) -> Attempt:
+        """Add the words a spelling attempt has asked so far to the word figures, and return the attempt."""
+        if attempt.task_type == SPELLING:
+            tally(self.connection, attempt.id, attempt.client_group, _stamp(attempt.started_at), attempt.detail)
+        return attempt
 
     def _by_id(self, attempt_id: int) -> Attempt:
         row = self.connection.execute(

@@ -44,7 +44,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_IMAGE = "daywarden-policy"
 PROXY_IMAGE = "daywarden-proxy"
-COMMANDS = ("dw", "rm-attempts", "add-parent", "cut-clips", "daywarden-service", "daywarden-lib.sh")
+COMMANDS = ("dw", "rm-attempts", "word-stats", "add-parent", "cut-clips", "daywarden-service", "daywarden-lib.sh")
 DEV_DATA_DIR = "${DAYWARDEN_DATA_DIR:-${HOME}/daywarden}"
 SAMPLE_ENV = {
     "CA_VOLUME_PATH": "${HOME}/daywarden/ca",

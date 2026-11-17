@@ -48,6 +48,7 @@ from policy.quiz import (
     stamp,
 )
 from policy.sounds import MEDIA_TYPES
+from policy.spelling_words import Figures, FigureLookup, weighted_sample
 from policy.tasks import PASS
 
 SPELLING = "spelling"
@@ -694,10 +695,25 @@ class Judged:
 class Session(QuizRecord):
     """The spelling record on one attempt."""
 
-    def __init__(self, detail: Mapping, body: Mapping, rng: random.Random | None = None, root: Path | None = None) -> None:
+    def __init__(
+        self,
+        detail: Mapping,
+        body: Mapping,
+        rng: random.Random | None = None,
+        root: Path | None = None,
+        figures: FigureLookup | None = None,
+    ) -> None:
         super().__init__(detail, body)
         self.rng = rng or random.Random()
         self.root = root
+        self.figures = figures
+
+    def _pick(self, keys: Sequence[str], count: int) -> list[str]:
+        """Pick revision keys without repeats, weighted by their figures when they are known."""
+        if self.figures is None:
+            return self.rng.sample(list(keys), count)
+        known = self.figures(keys)
+        return weighted_sample(self.rng, list(keys), [known.get(key.lower(), Figures()).weight for key in keys], count)
 
     def parse(self, body: object) -> Settings:
         return parse_settings(body)
@@ -711,7 +727,8 @@ class Session(QuizRecord):
     def _begin_run(self, now: datetime) -> Pools:
         super()._start_run(now)
         pools = current_pools(self.settings, self.root)
-        chosen = self.rng.sample(pools.revision, pools.revision_required)
+        by_key = {word.key: word for word in pools.revision}
+        chosen = [by_key[key] for key in self._pick([word.key for word in pools.revision], pools.revision_required)]
         queue = [[CURRENT, word.key] for word in pools.current] + [[REVISION, word.key] for word in chosen]
         self.rng.shuffle(queue)
         self.detail["runs"][-1].update(
@@ -908,7 +925,7 @@ class Session(QuizRecord):
             if word["key"] != key and word["key"] not in waiting and word["key"] not in right
         ]
         if others:
-            queue.append([REVISION, self.rng.choice(others)])
+            queue.append([REVISION, self._pick(others, 1)[0]])
             return False
         queue.append([REVISION, key])
         return True

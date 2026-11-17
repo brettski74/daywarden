@@ -352,14 +352,14 @@ def test_add_parent_runs_the_account_command_in_the_decisions_container(host):
     assert _compose(host) == [["exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada"]]
 
 
-@pytest.mark.parametrize("command", ["add-parent", "rm-attempts"])
+@pytest.mark.parametrize("command", ["add-parent", "rm-attempts", "word-stats"])
 def test_a_container_command_passes_help_through(host, command):
     host.all_running()
     assert host.run(host.home / "bin" / command, "--help").returncode == 0
     assert _compose(host)[-1][-1] == "--help"
 
 
-@pytest.mark.parametrize("command", ["add-parent", "rm-attempts"])
+@pytest.mark.parametrize("command", ["add-parent", "rm-attempts", "word-stats"])
 def test_a_container_command_says_when_daywarden_is_not_running(host, command):
     done = host.run(host.home / "bin" / command, "--help")
     assert done.returncode == 1

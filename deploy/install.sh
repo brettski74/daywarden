@@ -2,7 +2,7 @@
 # Install or upgrade daywarden for the user who runs it, from the unpacked
 # package made by make dist:
 #   ./install.sh
-# Everything goes under ~/daywarden. dw, rm-attempts, add-parent, and
+# Everything goes under ~/daywarden. dw, rm-attempts, word-stats, add-parent, and
 # cut-clips are linked into ~/bin. Every dependency is checked first, and
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
@@ -17,7 +17,7 @@ package=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 root="$HOME/daywarden"
 bindir="$HOME/bin"
 etc=${DAYWARDEN_ETC:-/etc}
-LINKED=(dw rm-attempts add-parent cut-clips)
+LINKED=(dw rm-attempts word-stats add-parent cut-clips)
 # shellcheck source=../bin/daywarden-lib.sh
 . "$package/bin/daywarden-lib.sh"
 
