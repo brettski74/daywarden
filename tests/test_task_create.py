@@ -169,9 +169,9 @@ def test_locking_in_returns_the_page_of_a_task_with_an_empty_body_and_writes_not
 
 
 def test_an_empty_body_shows_each_types_defaults_and_no_problems(house):
-    assert house.lock("parts_of_speech", "pos")[1]["parts_of_speech"] == {
-        "settings": {"timeout": "", "correct_answers_required": ""},
-    }
+    shown = house.lock("parts_of_speech", "pos")[1]["parts_of_speech"]
+    assert shown["settings"] == {"timeout": "", "correct_answers_required": "", "minimum_questions": "", "maximum_questions": ""}
+    assert (shown["pools"], shown["filter"]) == ([], [])
     skip = house.lock("skip_counting", "skips")[1]["skip_counting"]
     assert skip["difference"] is None and skip["default"]
     sums = house.lock("arithmetic", "adding")[1]["arithmetic"]
@@ -292,6 +292,24 @@ def test_a_new_parts_of_speech_task_cannot_send_sentences(house):
     assert status == 400
     assert "Asset Administration" in body["error"]
     assert house.tasks_d() == []
+
+
+def test_a_new_parts_of_speech_task_names_the_chosen_pools_and_filter(tmp_path, monkeypatch):
+    """S031.3: once its name and type are locked in, the page's pools, filter, and counts are written on create."""
+    from policy.sentence_pools import pools_directory, write_pool
+
+    def pool(config):
+        write_pool(pools_directory(config), "basics", "Basics", [{"sentence": "The cat sat.", "parts": {"noun": ["cat"]}}])
+
+    made = Creating(tmp_path, monkeypatch, before=pool)
+    shown = made.lock("parts_of_speech", "pos")[1]["parts_of_speech"]
+    assert [entry["name"] for entry in shown["available"]] == ["Basics"]
+    status, body = made.create("parts_of_speech", "pos", groups=["younger"], pools=["Basics"], parts_of_speech=["Nouns"], settings={"timeout": "40s"})
+    assert status == 200, body
+    assert made.task("parts_of_speech/pos").document() == {"timeout": "40s", "pools": ["Basics"], "parts_of_speech": ["noun"]}
+    status, body = made.create("parts_of_speech", "none", groups=["younger"], pools=[])
+    assert status == 400
+    assert "at least one pool" in body["error"]
 
 
 def test_each_type_can_be_created_from_its_page(house):

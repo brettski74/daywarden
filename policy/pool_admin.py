@@ -29,7 +29,7 @@ import yaml
 from policy import sentence_pools
 from policy.owned import make_directory, own_like
 from policy.parts_of_speech import PARTS_OF_SPEECH, check_pool_sentence
-from policy.parts_of_speech_admin import LEVEL, level, sentences_edit, shown_level, shown_sentences
+from policy.parts_of_speech_admin import LEVEL, level, pool_list, sentences_edit, shown_level, shown_sentences
 from policy.task_admin import BROKEN, STALE, Answer, Step, TaskAdmin, replace_text
 from policy.problems import problems_of
 from policy.task_edit import EditError, add_root_entry_after, name_list, read_task, rewrite_root, rewrite_task, text_value
@@ -73,28 +73,7 @@ class PoolAdmin:
 
     def catalogue(self) -> dict:
         """Return every pool file, by name ignoring case: its id, name, level of difficulty, and how many sentences."""
-        pools = []
-        for path in sentence_pools.list_pool_files(self.tasks.policy_file.parent):
-            entry: dict[str, object] = {"id": path.stem, "name": path.stem, LEVEL: "", "sentences": 0}
-            try:
-                data = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
-                entry["problem"] = str(error)
-                pools.append(entry)
-                continue
-            if not isinstance(data, Mapping):
-                entry["problem"] = "The file is not a mapping with name and sentences."
-                pools.append(entry)
-                continue
-            name = data.get("name")
-            if isinstance(name, str) and name.strip():
-                entry["name"] = name.strip()
-            entry[LEVEL] = shown_level(data.get(LEVEL))
-            listed = data.get("sentences")
-            entry["sentences"] = len(listed) if isinstance(listed, list) else 0
-            pools.append(entry)
-        pools.sort(key=lambda entry: (str(entry["name"]).casefold(), str(entry["name"]), str(entry["id"])))
-        return {"pools": pools}
+        return {"pools": pool_list(self.tasks.policy_file.parent)}
 
     def page(self, pool_id: str) -> Answer:
         found = self._read(pool_id)

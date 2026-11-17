@@ -3,4 +3,5 @@ tasks:
     Parts of Speech (Verbs):
       groups: [younger, default]
       body:
-        pools: ['Parts of Speech (Verbs) sentences']
+        pools: ["Year 3 Basic"]
+        parts_of_speech: [verb]

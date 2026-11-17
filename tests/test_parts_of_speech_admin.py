@@ -69,7 +69,12 @@ def _shown(listed: list) -> list[dict]:
 
 def test_the_page_shows_the_settings_and_no_inline_sentences_for_a_task_with_pools(house):
     shown = house.page("parts_of_speech/words")["parts_of_speech"]
-    assert shown == {"settings": {"timeout": "45s", "correct_answers_required": ""}}
+    assert shown == {
+        "settings": {"timeout": "45s", "correct_answers_required": "", "minimum_questions": "", "maximum_questions": ""},
+        "pools": [POOL],
+        "filter": [],
+        "available": [{"id": "words-sentences", "name": POOL, "sentences": 2}],
+    }
     assert "spelling" not in house.page("parts_of_speech/words")
 
 
@@ -112,6 +117,75 @@ def test_a_settings_save_is_committed_as_the_parent(tmp_path, monkeypatch):
     assert status == 200, body
     assert kept.log()[0].endswith(" ada: saved task parts_of_speech/words")
     assert _git(kept.config, "status", "--porcelain") == ""
+
+
+def _more_pools(config: Path) -> None:
+    _write_pool(config)
+    write_pool(pools_directory(config), "spare", "Spare", SENTENCES[:1])
+
+
+@pytest.fixture
+def spare(tmp_path, monkeypatch):
+    return House(tmp_path, monkeypatch, text=TEXT, before=_more_pools)
+
+
+def test_the_page_lists_pools_no_task_names_yet(spare):
+    shown = spare.page("parts_of_speech/words")["parts_of_speech"]
+    assert [entry["name"] for entry in shown["available"]] == ["Spare", POOL]
+    assert shown["pools"] == [POOL]
+
+
+def test_pools_filter_and_question_counts_are_written_in_the_body(spare):
+    status, body = spare.save(
+        "parts_of_speech/words",
+        settings={"minimum_questions": "2", "maximum_questions": "3", "correct_answers_required": "1"},
+        pools=[POOL, "Spare"],
+        parts_of_speech=["Nouns", "verb"],
+    )
+    assert status == 200, body
+    written = _body(spare)
+    assert written["pools"] == [POOL, "Spare"]
+    assert written["parts_of_speech"] == ["noun", "verb"]
+    assert (written["minimum_questions"], written["maximum_questions"]) == (2, 3)
+    task = spare.task("parts_of_speech/words")
+    assert task.document()["parts_of_speech"] == ["noun", "verb"]
+
+
+def test_an_empty_filter_removes_it_and_a_filter_left_alone_keeps_its_text(spare):
+    assert spare.save("parts_of_speech/words", parts_of_speech=["Noun", "verb"])[0] == 200
+    assert _body(spare)["parts_of_speech"] == ["noun", "verb"]
+    text = spare.policy.read_text(encoding="utf-8")
+    status, body = spare.save("parts_of_speech/words", parts_of_speech=["noun", "verb"], settings={"timeout": "50s"})
+    assert status == 200, body
+    assert "timeout: 50s" in spare.policy.read_text(encoding="utf-8")
+    assert _body(spare)["parts_of_speech"] == ["noun", "verb"]
+    assert spare.save("parts_of_speech/words", parts_of_speech=[])[0] == 200
+    assert "parts_of_speech" not in _body(spare)
+    assert text != spare.policy.read_text(encoding="utf-8")
+
+
+def test_a_save_with_no_pools_is_refused_and_writes_nothing(spare):
+    status, body = spare.save("parts_of_speech/words", pools=[])
+    assert status == 400
+    assert "at least one pool" in body["error"]
+    assert spare.policy.read_text(encoding="utf-8") == TEXT
+
+
+@pytest.mark.parametrize(
+    ("changes", "field"),
+    [
+        ({"pools": ["Nowhere"]}, "pools"),
+        ({"parts_of_speech": ["noun", "Noun"]}, "parts_of_speech"),
+        ({"parts_of_speech": ["a" * 21]}, "parts_of_speech"),
+        ({"settings": {"maximum_questions": "5"}}, "maximum_questions"),
+        ({"settings": {"minimum_questions": "9"}}, "minimum_questions"),
+    ],
+)
+def test_a_value_the_load_would_refuse_writes_nothing_and_says_why(spare, changes, field):
+    status, body = spare.save("parts_of_speech/words", **changes)
+    assert status == 400
+    assert any(field in problem for problem in body["errors"]), body
+    assert spare.policy.read_text(encoding="utf-8") == TEXT
 
 
 def test_the_next_run_uses_the_saved_settings_and_the_pool(house):

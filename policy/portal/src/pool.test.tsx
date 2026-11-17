@@ -543,7 +543,7 @@ describe("the pool list", () => {
 
 describe("a parts of speech task page", () => {
   it("keeps the task's own settings and sends the parent to the pools for its sentences", async () => {
-    const task = { ...SUMS, name: "words", type: "parts_of_speech", parts_of_speech: { settings: { timeout: "45s", correct_answers_required: "" } } };
+    const task = { ...SUMS, name: "words", type: "parts_of_speech", parts_of_speech: { settings: { timeout: "45s", correct_answers_required: "", minimum_questions: "", maximum_questions: "" }, pools: ["Year 3 basics"], filter: [], available: [{ id: "year-3-basics", name: "Year 3 basics", sentences: 2 }] } };
     const calls = fakeService((call) =>
       call.path === "/parent/api/tasks/parts_of_speech/words"
         ? call.method === "GET"
@@ -561,7 +561,8 @@ describe("a parts of speech task page", () => {
     await userEvent.click(save());
     await screen.findByText("Saved words.");
     const post = calls.find((call) => call.method === "POST")?.body as Record<string, unknown>;
-    expect(post.settings).toEqual({ timeout: "60s", correct_answers_required: "" });
+    expect(post.settings).toEqual({ timeout: "60s", correct_answers_required: "", minimum_questions: "", maximum_questions: "" });
+    expect(post).toMatchObject({ pools: ["Year 3 basics"], parts_of_speech: [] });
     expect(post).not.toHaveProperty("sentences");
   });
 });

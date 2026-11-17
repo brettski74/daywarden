@@ -15,7 +15,11 @@ written only when it differs from the pool's.
 The list of recognized names is a portal convention, not a loader rule. A
 hand-written file may use any name.
 
-A parts of speech task page shows only the task's own settings here.
+A parts of speech task page (S031.3) shows the task's own settings, the pools it
+names and every pool available to name, and its filter of part names. A save
+writes ``pools`` and ``parts_of_speech`` only when the page's list differs from
+the file's, so a list left alone keeps its text exactly. A filter that is
+written has every name tidied as a row name is.
 """
 
 from __future__ import annotations
@@ -23,12 +27,17 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
+import yaml
+
+from policy import sentence_pools
 from policy.parts_of_speech import Word, entry_positions, split_words
 from policy.sentence_pools import parse_difficulty
-from policy.task_edit import ListEdit, ListItem, WrittenTask
+from policy.task_edit import ListEdit, ListItem, WrittenTask, name_list
 
-SETTINGS = ("timeout", "correct_answers_required")
+SETTINGS = ("timeout", "correct_answers_required", "minimum_questions", "maximum_questions")
+NO_POOLS = "Choose at least one pool."
 RECOGNIZED = (
     "noun",
     "proper noun",
@@ -89,9 +98,82 @@ def level(text: str, where: str) -> int | float | None:
     return int(number) if number.is_integer() else number
 
 
-def page(written: WrittenTask) -> dict:
-    """Return the parts of speech area of a task page: the task's own settings."""
-    return {"settings": {key: written.body.get(key, "") for key in SETTINGS}}
+def pool_list(root: Path) -> list[dict]:
+    """Return every pool file, by name ignoring case: its id, name, level of difficulty, and how many sentences."""
+    pools = []
+    for path in sentence_pools.list_pool_files(root):
+        entry: dict[str, object] = {"id": path.stem, "name": path.stem, LEVEL: "", "sentences": 0}
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+            entry["problem"] = str(error)
+            pools.append(entry)
+            continue
+        if not isinstance(data, Mapping):
+            entry["problem"] = "The file is not a mapping with name and sentences."
+            pools.append(entry)
+            continue
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            entry["name"] = name.strip()
+        entry[LEVEL] = shown_level(data.get(LEVEL))
+        listed = data.get("sentences")
+        entry["sentences"] = len(listed) if isinstance(listed, list) else 0
+        pools.append(entry)
+    pools.sort(key=lambda entry: (str(entry["name"]).casefold(), str(entry["name"]), str(entry["id"])))
+    return pools
+
+
+def _listed(written: WrittenTask, key: str) -> list[str]:
+    """Return the names the file lists under ``key``, as text, or none when it is not a list."""
+    found = written.body_data.get(key)
+    return [str(item).strip() for item in found] if isinstance(found, list) else []
+
+
+def page(written: WrittenTask, root: Path) -> dict:
+    """Return the parts of speech area of a task page: its settings, its pools and filter, and the pools it could name."""
+    return {
+        "settings": {key: written.body.get(key, "") for key in SETTINGS},
+        "pools": _listed(written, "pools"),
+        "filter": _listed(written, "parts_of_speech"),
+        "available": [
+            {"id": entry["id"], "name": entry["name"], "sentences": entry["sentences"]}
+            for entry in pool_list(root)
+            if "problem" not in entry
+        ],
+    }
+
+
+def _names(asked: object, field: str) -> list[str]:
+    if not isinstance(asked, list) or not all(isinstance(name, str) for name in asked):
+        raise ValueError(f"{field} must be a list of names")
+    return [name.strip() for name in asked]
+
+
+def list_changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
+    """Return the body changes the page's pools and filter ask for, as ``rewrite_task`` changes.
+
+    A list that is the same as the file's is left as written. An empty filter
+    removes ``parts_of_speech``, so each sentence uses its own parts.
+    """
+    changes: dict[str, object] = {}
+    pools = request.get("pools")
+    if pools is not None:
+        names = _names(pools, "pools")
+        if not names:
+            raise ValueError(NO_POOLS)
+        if "" in names:
+            raise ValueError("A pool name must not be empty.")
+        if names != _listed(written, "pools"):
+            changes["pools"] = name_list(names)
+    asked = request.get("parts_of_speech")
+    if asked is not None:
+        names = _names(asked, "parts_of_speech")
+        if names != _listed(written, "parts_of_speech"):
+            if "" in names:
+                raise ValueError("A part of speech name must not be empty.")
+            changes["parts_of_speech"] = name_list([tidy(name) for name in names]) if names else None
+    return changes
 
 
 @dataclass(frozen=True)

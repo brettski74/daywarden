@@ -161,7 +161,7 @@ class TaskAdmin:
         if kind == spelling.SPELLING:
             body["spelling"] = self._spelling_page(written)
         elif kind == PARTS_OF_SPEECH:
-            body["parts_of_speech"] = parts_of_speech_admin.page(written)
+            body["parts_of_speech"] = parts_of_speech_admin.page(written, self.policy_file.parent)
         elif kind == SKIP_COUNTING:
             body["skip_counting"] = number_lists_admin.skip_counting_page(written)
         elif kind == ARITHMETIC:
@@ -627,6 +627,7 @@ def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, obj
         body.update(directory_changes(written, request.get("directories")))
     elif kind == PARTS_OF_SPEECH:
         _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
+        body.update(parts_of_speech_admin.list_changes(written, request))
         if request.get("sentences") is not None:
             raise ValueError("Sentences are edited on a parts of speech pool's page under Asset Administration.")
     elif kind == SKIP_COUNTING:
