@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLoaderData, useLocation, useNavigate, type LoaderFunctionArgs } from "react-router";
 import { ApiError, BASE, api, pageOf } from "../api";
 import { DateField } from "../components/DateField";
+import { FetchFilter } from "../components/FetchFilter";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { NameDialog } from "../components/NameDialog";
@@ -19,6 +20,7 @@ import {
   sitesBlocked,
   toggled,
   withTable,
+  type FetchLevel,
   type RangeName,
   type RequestsData,
   type Settings,
@@ -73,12 +75,14 @@ export function Requests() {
   const reported = location.state as Outcome | null;
   const outcome: Outcome | null = refusal !== null ? { ok: false, message: refusal } : reported;
 
-  function go(next: Settings, extras: { host?: string; outcome?: string[] } = {}) {
+  function go(next: Settings, extras: { host?: string; outcome?: string[]; fetch?: FetchLevel; hideHops?: boolean } = {}) {
     setDraft(next);
     navigate({
       search: requestsQuery(next, {
         host: extras.host ?? host,
         outcome: extras.outcome ?? data.outcome,
+        fetch: extras.fetch ?? data.fetch,
+        hideHops: extras.hideHops ?? data.hide_hops,
       }),
     });
   }
@@ -151,7 +155,7 @@ export function Requests() {
     setAsking(null);
     const done = await send("/usage/presets/delete", { name });
     if (typeof done === "string") setRefusal(done);
-    else navigate({ search: requestsQuery(data.settings, { host: data.host, outcome: data.outcome }) }, { state: { ok: true, message: done.message } satisfies Outcome });
+    else navigate({ search: requestsQuery(data.settings, { host: data.host, outcome: data.outcome, fetch: data.fetch, hideHops: data.hide_hops }) }, { state: { ok: true, message: done.message } satisfies Outcome });
   }
 
   // Group by is ignored here, so only a chosen site or quota list blocks the other.
@@ -262,6 +266,7 @@ export function Requests() {
             empty="All"
             onToggle={(name) => go(draft, { outcome: toggled(data.outcome, name) })}
           />
+          <FetchFilter level={data.fetch} hideHops={data.hide_hops} onChange={(fetch, hideHops) => go(draft, { fetch, hideHops })} />
         </div>
       </ContextBar>
 
@@ -273,7 +278,7 @@ export function Requests() {
           dir={data.dir}
           page={data.page}
           pages={data.pages}
-          href={(patch) => withTable(location.search || requestsQuery(data.settings, { host: data.host, outcome: data.outcome }), { ...patch })}
+          href={(patch) => withTable(location.search || requestsQuery(data.settings, { host: data.host, outcome: data.outcome, fetch: data.fetch, hideHops: data.hide_hops }), { ...patch })}
           empty={
             data.kept
               ? "No request rows in the part of the range that is still kept. Earlier usage still appears on Minutes and Bytes."

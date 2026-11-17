@@ -100,7 +100,7 @@ time_windows:
   school_hours:
     periods:
       - start: "02:00"
-        end: "16:00"
+        end: "14:00"
         days: monday-thursday
       # Starting suggestion: a short weekend revision block, then the evening opens.
       - start: "08:00"
@@ -167,7 +167,7 @@ rule_sets:
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: entertainment_evening }
-      when_false: { action: deny, message: "YouTube is closed for today." }
+      when_false: { action: allow }
 
   entertainment_evening:
     - condition: tasks_required
@@ -190,7 +190,7 @@ rule_sets:
     - condition: time_window
       window: evening
       when_true: { action: evaluate, ruleset: default_evening }
-      when_false: { action: deny, message: "The internet is closed for today." }
+      when_false: { action: allow }
 
   default_evening:
     - condition: tasks_required

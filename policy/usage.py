@@ -54,6 +54,7 @@ from policy.engine import (
     judge_frozen,
 )
 from policy.hierarchy import DEFAULT_BUCKET_SECONDS, Policy
+from policy.returns import is_page_load
 from policy.tasks import Task, ensure_attempts, pass_count
 
 # A quota rule set is read before the access path turns a top-level continue
@@ -66,6 +67,13 @@ _REQUESTS_SINCE = "requests_since"
 _HOST_LEDGERS = {"site": ("host_buckets", "site_group"), "quota": ("host_quota_buckets", "quota")}
 _REQUEST_OUTCOMES = {"allow": "allowed", "deny": "denied", "redirect": "redirected"}
 _ENDED_OUTCOMES = frozenset({"denied", "redirected", "cut"})
+# The Fetch Metadata request headers a request row keeps, by column, as the browser sent them.
+FETCH_COLUMNS = ("sec_fetch_dest", "sec_fetch_mode", "sec_fetch_site", "sec_fetch_user", "sec_purpose")
+# Columns added to the requests table after it was first released, with their definitions.
+_ADDED_REQUEST_COLUMNS = (
+    *((name, "TEXT") for name in FETCH_COLUMNS),
+    ("page_load", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 class UsageStore(Ledger):
@@ -260,8 +268,19 @@ class UsageStore(Ledger):
         url: str,
         outcome: str,
         status: int | None = None,
+        sec_fetch_dest: str | None = None,
+        sec_fetch_mode: str | None = None,
+        sec_fetch_site: str | None = None,
+        sec_fetch_user: str | None = None,
+        sec_purpose: str | None = None,
+        accept: str | None = None,
     ) -> None:
-        """Insert one request row for a judged flow. A later insert for the same flow replaces it."""
+        """Insert one request row for a judged flow. A later insert for the same flow replaces it.
+
+        The Fetch Metadata headers are kept as sent. ``page_load`` is whether the
+        row is a document by the Fetch filter's rule, decided now so the filter
+        does not need ``Accept`` later.
+        """
         if not flow_id or not isinstance(flow_id, str):
             raise ValueError("a flow id is required")
         if outcome not in ("allowed", "denied", "redirected", "cut"):
@@ -269,12 +288,14 @@ class UsageStore(Ledger):
         host, path, query = parts_of(url)
         start = _wall(started_at).isoformat(timespec="seconds")
         ended = start if outcome in _ENDED_OUTCOMES else None
+        page_load = is_document(method, sec_fetch_dest, sec_purpose, accept)
         with self.connection:
             self.connection.execute(
                 "INSERT INTO requests ("
                 "flow_id, started_at, ended_at, client_ip, client_group, site_group, "
-                "method, host, path, query, url, status, content_type, bytes_down, bytes_up, outcome"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?) "
+                "method, host, path, query, url, status, content_type, bytes_down, bytes_up, outcome, "
+                "sec_fetch_dest, sec_fetch_mode, sec_fetch_site, sec_fetch_user, sec_purpose, page_load"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (flow_id) DO UPDATE SET "
                 "started_at = excluded.started_at, "
                 "ended_at = excluded.ended_at, "
@@ -290,7 +311,13 @@ class UsageStore(Ledger):
                 "content_type = NULL, "
                 "bytes_down = 0, "
                 "bytes_up = 0, "
-                "outcome = excluded.outcome",
+                "outcome = excluded.outcome, "
+                "sec_fetch_dest = excluded.sec_fetch_dest, "
+                "sec_fetch_mode = excluded.sec_fetch_mode, "
+                "sec_fetch_site = excluded.sec_fetch_site, "
+                "sec_fetch_user = excluded.sec_fetch_user, "
+                "sec_purpose = excluded.sec_purpose, "
+                "page_load = excluded.page_load",
                 (
                     flow_id,
                     start,
@@ -305,6 +332,12 @@ class UsageStore(Ledger):
                     url,
                     status,
                     outcome,
+                    sec_fetch_dest,
+                    sec_fetch_mode,
+                    sec_fetch_site,
+                    sec_fetch_user,
+                    sec_purpose,
+                    1 if page_load else 0,
                 ),
             )
             self.connection.execute("DELETE FROM request_quotas WHERE flow_id = ?", (flow_id,))
@@ -634,7 +667,13 @@ class UsageStore(Ledger):
                 content_type TEXT,
                 bytes_down INTEGER NOT NULL DEFAULT 0,
                 bytes_up INTEGER NOT NULL DEFAULT 0,
-                outcome TEXT NOT NULL
+                outcome TEXT NOT NULL,
+                sec_fetch_dest TEXT,
+                sec_fetch_mode TEXT,
+                sec_fetch_site TEXT,
+                sec_fetch_user TEXT,
+                sec_purpose TEXT,
+                page_load INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS request_quotas (
                 flow_id TEXT NOT NULL,
@@ -654,7 +693,26 @@ class UsageStore(Ledger):
             );
             """
         )
+        self._add_request_columns()
+        # The Fetch filter's Documents levels scan only page loads in the range.
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS requests_by_page_load_start ON requests (page_load, started_at)"
+        )
         ensure_attempts(self.connection)
+
+    def _add_request_columns(self) -> None:
+        """Add the columns a requests table made by an earlier release lacks. Its rows keep them blank."""
+        present = {row[1] for row in self.connection.execute("PRAGMA table_info(requests)")}
+        for name, definition in _ADDED_REQUEST_COLUMNS:
+            if name in present:
+                continue
+            try:
+                with self.connection:
+                    self.connection.execute(f"ALTER TABLE requests ADD COLUMN {name} {definition}")
+            except sqlite3.OperationalError as exc:
+                # The other service sharing the file may have added it first.
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     def _end_open_buckets(self, loaded_at: datetime) -> None:
         wall = _wall(loaded_at)
@@ -897,6 +955,27 @@ def note_request(
         ended=ended or cut,
         outcome="cut" if cut else None,
     )
+
+
+def is_document(method: str, sec_fetch_dest: str | None, sec_purpose: str | None, accept: str | None) -> bool:
+    """Return whether a request is listed under the Fetch filter's Documents level.
+
+    A request with ``Sec-Fetch-Dest`` is a document when that is ``document``
+    and ``Sec-Purpose`` does not name ``prefetch``. One without it is a page
+    load by the plain ``http`` rule of ``is_page_load``.
+    """
+    if sec_fetch_dest is None:
+        return is_page_load(method, None, accept)
+    if sec_fetch_dest.strip().lower() != "document":
+        return False
+    return not _names_prefetch(sec_purpose)
+
+
+def _names_prefetch(sec_purpose: str | None) -> bool:
+    if sec_purpose is None:
+        return False
+    # A structured list such as "prefetch;prerender" or "prefetch, prerender".
+    return any(item.split(";", 1)[0].strip().lower() == "prefetch" for item in sec_purpose.split(","))
 
 
 def host_of(url: str) -> str:

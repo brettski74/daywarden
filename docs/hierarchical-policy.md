@@ -877,6 +877,33 @@ The parent portal's usage graph reads both ledgers. With no quota in play it cou
 
 Each observation is also filed under its host, beside the site group and beside each quota, with its bytes down and up apart. The host is the host name of the URL, with the port only when it is not the scheme's default. A host gains a bucket's length once, however many requests it served in that bucket. These rows are what a drill-down from a line on the graph reads, as [S030.2](../stories/S030.2-usage-by-host.md) describes. They are much larger than the others, so they are kept for `host_retention`, a whole number of days, 30 when it is left out. Each judged request is also one row keyed by the proxy's flow id, updated as reports arrive, which the request table and [S030.3](../stories/S030.3-request-table.md) read. Those rows are kept for `request_retention`, with the same form and default as `host_retention`. The observations service deletes older host and request rows when it starts, after each reload, and every hour. The site-group and quota rows, and so the graph, are kept for good.
 
+## Fetch metadata and the Fetch filter
+
+A single page load can spawn dozens of images, scripts, stylesheets, frames, ads, and scripted fetches, so a request table is mostly those. Browsers say what each request is for in Fetch Metadata request headers, and each request row keeps five of them, as the browser sent them, in the columns after Method. A header the browser did not send is a blank cell. Browsers send them only to `https` and other trustworthy addresses, so a plain `http` page, a tool such as `curl`, and every request from before [S030.4](../stories/S030.4-request-fetch-metadata.md) have all five blank.
+
+| Column | Header | Common values |
+| --- | --- | --- |
+| Dest | `Sec-Fetch-Dest` | `document` for a page in the tab, `iframe` for a page inside a page, `image`, `script`, `style`, `font`, `video`, `audio`, and `empty` for a script's own fetch. |
+| Mode | `Sec-Fetch-Mode` | `navigate` for opening a page, `no-cors` for most images and scripts, `cors` and `same-origin` for a script's fetches, and `websocket`. |
+| Site | `Sec-Fetch-Site` | `none` when the child typed the address or used a bookmark, `same-origin` and `same-site` for the same site, and `cross-site` for another. |
+| User | `Sec-Fetch-User` | `?1` when the child's own click, key, or typing opened the page. Never sent for anything else. |
+| Purpose | `Sec-Purpose` | `prefetch`, or `prefetch;prerender`, when the browser loads a page ahead in case the child opens it. |
+
+The Fetch pull-down on the Requests page, and above the table in a host drill-down, chooses one of three levels:
+
+- **All requests** lists every request.
+- **Documents (Sec-Fetch-Dest: document)** lists requests whose Dest is `document`, except those loaded ahead with a Purpose naming `prefetch`, and requests with no Dest that are a `GET` whose `Accept` includes `text/html`, which is how a plain `http` page load looks. Frames, images, scripts, stylesheets, fonts, and script fetches are left out. A refused request follows the same rule as an allowed one.
+- **User-activated documents (Sec-Fetch-User: ?1)** lists Documents that the child's own action opened. A page a script or a meta refresh moved to on its own is left out, and so is every plain `http` page, which carries no User.
+
+At either documents level, Hide redirect hops leaves out allowed requests whose site answered with a 3xx redirect, such as `www.google.com/url` when a search result is clicked, so the page it lands on is listed alone. A request the policy redirected is still listed. The level and the checkbox are in the page address, but not in a preset.
+
+The documents levels make the list much likelier to be the pages the child opened. It is not an exact address-bar history:
+
+- A single-page site such as YouTube, TikTok, or Reddit changes the address with scripted fetches after the first page load, so only the first page of such a visit is listed.
+- A page a service worker answers from its cache never reaches the proxy.
+- Chrome may prerender a page while the child types in the address bar. When the child then opens it, the prerender is the only request, and it is left out.
+- Requests from before S030.4 have no Fetch Metadata and no record of their `Accept`, so they are listed only under All requests.
+
 `default` is a real slice for both kinds of group. Traffic that matched no configured group is visible there. An observation still answers success when the policy service is only recording it. Metering does not turn into a refusal.
 
 # Other fixed rules

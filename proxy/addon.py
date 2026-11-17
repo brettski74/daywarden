@@ -382,6 +382,16 @@ def _request_has_body(flow: http.HTTPFlow) -> bool:
         return False
 
 
+_FETCH_HEADERS = (
+    ("Sec-Fetch-Dest", "sec_fetch_dest"),
+    ("Sec-Fetch-Mode", "sec_fetch_mode"),
+    ("Sec-Fetch-Site", "sec_fetch_site"),
+    ("Sec-Fetch-User", "sec_fetch_user"),
+    ("Sec-Purpose", "sec_purpose"),
+    ("Accept", "accept"),
+)
+
+
 def _ask(flow: http.HTTPFlow):
     peer = flow.client_conn.peername
     if not peer or not peer[0]:
@@ -395,7 +405,7 @@ def _ask(flow: http.HTTPFlow):
         "flow_id": flow.id,
     }
     # The policy service reads these to tell a page load from the fetches it makes.
-    for header, key in (("Sec-Fetch-Dest", "sec_fetch_dest"), ("Accept", "accept")):
+    for header, key in _FETCH_HEADERS:
         value = flow.request.headers.get(header)
         if value is not None:
             payload[key] = value

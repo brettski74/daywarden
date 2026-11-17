@@ -166,6 +166,12 @@ def create_app() -> FastAPI:
                 url=parsed.url,
                 outcome=outcome,
                 status=status,
+                sec_fetch_dest=parsed.sec_fetch_dest,
+                sec_fetch_mode=parsed.sec_fetch_mode,
+                sec_fetch_site=parsed.sec_fetch_site,
+                sec_fetch_user=parsed.sec_fetch_user,
+                sec_purpose=parsed.sec_purpose,
+                accept=parsed.accept,
             )
         if now.policy is not None:
             returns.note(

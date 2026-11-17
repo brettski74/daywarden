@@ -5,6 +5,10 @@ sorting and paging across the whole set. The drill-down from a host on the
 graph uses an exact host and the line's group; the Requests page uses a host
 fragment and optional outcomes. Group by is ignored: it is only how the graph
 draws its lines.
+
+Both views take a Fetch level, ``fetch``: every request, documents, or
+user-activated documents. At a documents level, allowed redirect hops are left
+out unless ``hops=show``.
 """
 
 from __future__ import annotations
@@ -49,7 +53,14 @@ SORTS = (
     "down",
     "up",
     "outcome",
+    "dest",
+    "mode",
+    "fetch_site",
+    "user",
+    "purpose",
 )
+# The Fetch levels, as the address names them. Documents is the rule of usage.is_document.
+FETCH_LEVELS = ("all", "documents", "user")
 _SORT_COLUMNS = {
     "start": "r.started_at",
     "end": "r.ended_at",
@@ -65,6 +76,11 @@ _SORT_COLUMNS = {
     "down": "r.bytes_down",
     "up": "r.bytes_up",
     "outcome": "r.outcome",
+    "dest": "r.sec_fetch_dest",
+    "mode": "r.sec_fetch_mode",
+    "fetch_site": "r.sec_fetch_site",
+    "user": "r.sec_fetch_user",
+    "purpose": "r.sec_purpose",
 }
 _BYTE_UNITS = (("TB", 1024**4), ("GB", 1024**3), ("MB", 1024**2), ("KB", 1024))
 
@@ -97,6 +113,11 @@ def usage_requests(
     host = (_last_value(pairs, "host") or "").strip()
     exact = (_last_value(pairs, "exact") or "").strip() in ("1", "true", "yes")
     outcomes = _chosen_outcomes(pairs)
+    level = (_last_value(pairs, "fetch") or "all").strip()
+    if level not in FETCH_LEVELS:
+        notes.append(f"{level} is not a Fetch level, so every request is listed.")
+        level = "all"
+    hide_hops = level != "all" and (_last_value(pairs, "hops") or "").strip() != "show"
     sort = (_last_value(pairs, "sort") or "start").strip()
     if sort not in SORTS:
         notes.append(f"{sort} is not a column to sort by, so the table is sorted by Start.")
@@ -140,6 +161,8 @@ def usage_requests(
         "host": host,
         "exact": exact,
         "outcome": list(outcomes),
+        "fetch": level,
+        "hide_hops": hide_hops,
         "sort": sort,
         "dir": direction,
         "page": page,
@@ -175,6 +198,8 @@ def usage_requests(
         host,
         exact,
         outcomes,
+        level,
+        hide_hops,
         max(start, kept),
         end,
     )
@@ -191,6 +216,7 @@ def usage_requests(
         "SELECT r.flow_id, r.started_at, r.ended_at, r.client_ip, r.client_group, r.site_group, "
         "r.method, r.host, r.path, r.query, r.url, r.status, r.content_type, "
         "r.bytes_down, r.bytes_up, r.outcome, "
+        "r.sec_fetch_dest, r.sec_fetch_mode, r.sec_fetch_site, r.sec_fetch_user, r.sec_purpose, "
         "(SELECT group_concat(q.quota, ', ') FROM "
         "(SELECT quota FROM request_quotas WHERE flow_id = r.flow_id ORDER BY quota) q) "
         f"FROM requests r WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
@@ -215,6 +241,8 @@ def _filters(
     host: str,
     exact: bool,
     outcomes: tuple[str, ...],
+    level: str,
+    hide_hops: bool,
     start: datetime,
     end: datetime,
 ) -> tuple[str, list]:
@@ -245,6 +273,13 @@ def _filters(
         placeholders = ",".join("?" for _ in outcomes)
         clauses.append(f"r.outcome IN ({placeholders})")
         params.extend(outcomes)
+    if level in ("documents", "user"):
+        clauses.append("r.page_load = 1")
+    if level == "user":
+        clauses.append("r.sec_fetch_user = '?1'")
+    if hide_hops:
+        # A redirect the site answered. A redirect the policy made has outcome redirected.
+        clauses.append("NOT (r.outcome = 'allowed' AND COALESCE(r.status, 0) BETWEEN 300 AND 399)")
     if line and settings.by == "client":
         clauses.append("r.client_group = ?")
         params.append(line)
@@ -279,6 +314,9 @@ def _order(sort: str, direction: str, now: datetime) -> str:
         )
         return f"{expr} {suffix} {nulls}, r.started_at DESC, r.flow_id ASC"
     column = _SORT_COLUMNS[sort]
+    if sort in ("dest", "mode", "fetch_site", "user", "purpose"):
+        # Blank cells first when ascending, which is how SQLite orders NULL.
+        return f"{column} {suffix}, r.started_at DESC, r.flow_id ASC"
     if sort in ("end", "status", "type"):
         return f"{column} {suffix} {nulls}, r.started_at DESC, r.flow_id ASC"
     return f"{column} {suffix}, r.started_at DESC, r.flow_id ASC"
@@ -302,6 +340,11 @@ def _row(row: tuple, now: datetime) -> dict:
         down,
         up,
         outcome,
+        dest,
+        mode,
+        fetch_site,
+        user,
+        purpose,
         quotas,
     ) = row
     start = datetime.fromisoformat(started_at)
@@ -327,6 +370,11 @@ def _row(row: tuple, now: datetime) -> dict:
         "down": _bytes(int(down)),
         "up": _bytes(int(up)),
         "outcome": outcome,
+        "dest": dest or "",
+        "mode": mode or "",
+        "fetch_site": fetch_site or "",
+        "user": user or "",
+        "purpose": purpose or "",
     }
 
 

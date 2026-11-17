@@ -87,7 +87,20 @@ export type RequestRow = {
   down: string;
   up: string;
   outcome: string;
+  dest: string;
+  mode: string;
+  fetch_site: string;
+  user: string;
+  purpose: string;
 };
+
+/** The Fetch levels, as the address names them, with the pull-down's labels. */
+export const FETCH_LEVELS = [
+  ["all", "All requests"],
+  ["documents", "Documents (Sec-Fetch-Dest: document)"],
+  ["user", "User-activated documents (Sec-Fetch-User: ?1)"],
+] as const;
+export type FetchLevel = (typeof FETCH_LEVELS)[number][0];
 
 export type RequestsData = {
   today: string;
@@ -98,6 +111,9 @@ export type RequestsData = {
   host: string;
   exact: boolean;
   outcome: string[];
+  fetch: FetchLevel;
+  /** Whether allowed redirect hops are left out. Only at a documents level. */
+  hide_hops: boolean;
   sort: string;
   dir: "asc" | "desc";
   page: number;
@@ -169,7 +185,7 @@ export function lineOf(search: string): string | null {
 
 /** An address's query string with its line replaced, or taken away when line is null. Everything else stays in order. */
 export function withLine(search: string, line: string | null): string {
-  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "line" && key !== "host" && key !== "exact" && key !== "sort" && key !== "dir" && key !== "page");
+  const pairs = [...new URLSearchParams(search)].filter(([key]) => !["line", "host", "exact", "sort", "dir", "page", "fetch", "hops"].includes(key));
   if (line) pairs.push(["line", line]);
   return query(pairs);
 }
@@ -179,9 +195,10 @@ export function hostOf(search: string): string | null {
   return new URLSearchParams(search).get("host") || null;
 }
 
-/** An address's query string with its host drill replaced. Opening a host is exact; closing drops sort and page too. */
+/** An address's query string with its host drill replaced. Opening a host is exact and keeps the Fetch level; closing drops sort, page, and the Fetch level too. */
 export function withHost(search: string, host: string | null): string {
-  const pairs = [...new URLSearchParams(search)].filter(([key]) => key !== "host" && key !== "exact" && key !== "sort" && key !== "dir" && key !== "page");
+  const dropped = host ? ["host", "exact", "sort", "dir", "page"] : ["host", "exact", "sort", "dir", "page", "fetch", "hops"];
+  const pairs = [...new URLSearchParams(search)].filter(([key]) => !dropped.includes(key));
   if (host) pairs.push(["host", host], ["exact", "1"]);
   return query(pairs);
 }
@@ -207,10 +224,26 @@ export function withTable(search: string, patch: { sort?: string; dir?: "asc" | 
   return query(pairs);
 }
 
-/** Settings for the Requests page: filters and range, without Group by, plus host fragment and outcomes. */
+/**
+ * An address's query string with the Fetch level and Hide redirect hops changed, back on the first page.
+ * Hops are hidden unless the address says hops=show, so choosing a documents level from All requests checks the box.
+ */
+export function withFetch(search: string, level: FetchLevel, hideHops: boolean): string {
+  const params = new URLSearchParams(search);
+  params.delete("page");
+  params.delete("fetch");
+  params.delete("hops");
+  if (level !== "all") {
+    params.set("fetch", level);
+    if (!hideHops) params.set("hops", "show");
+  }
+  return query([...params]);
+}
+
+/** Settings for the Requests page: filters and range, without Group by, plus host fragment, outcomes, and Fetch level. */
 export function requestsQuery(
   settings: Settings,
-  extras: { host?: string; outcome?: string[]; sort?: string; dir?: "asc" | "desc"; page?: number } = {},
+  extras: { host?: string; outcome?: string[]; fetch?: FetchLevel; hideHops?: boolean; sort?: string; dir?: "asc" | "desc"; page?: number } = {},
 ): string {
   const pairs: [string, string][] = [
     ...settings.client.map((name): [string, string] => ["client", name]),
@@ -221,6 +254,10 @@ export function requestsQuery(
   if (settings.range === "custom") pairs.push(["from", settings.from], ["to", settings.to]);
   if (extras.host) pairs.push(["host", extras.host]);
   for (const name of extras.outcome ?? []) pairs.push(["outcome", name]);
+  if (extras.fetch && extras.fetch !== "all") {
+    pairs.push(["fetch", extras.fetch]);
+    if (extras.hideHops === false) pairs.push(["hops", "show"]);
+  }
   if (extras.sort && extras.sort !== "start") pairs.push(["sort", extras.sort]);
   if (extras.dir && extras.dir !== "desc") pairs.push(["dir", extras.dir]);
   if (extras.page && extras.page > 1) pairs.push(["page", String(extras.page)]);

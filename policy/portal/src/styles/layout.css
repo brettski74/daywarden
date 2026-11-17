@@ -2033,6 +2033,14 @@ select[aria-invalid] {
   overflow: hidden;
 }
 
+.request-fetch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 0.5rem;
+}
+
 .requests-page {
   min-height: 0;
 }

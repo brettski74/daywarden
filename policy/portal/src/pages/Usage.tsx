@@ -6,6 +6,7 @@ import { DateField } from "../components/DateField";
 import { Dialog } from "../components/Dialog";
 import { MultiSelect } from "../components/MultiSelect";
 import { NameDialog } from "../components/NameDialog";
+import { FetchFilter } from "../components/FetchFilter";
 import { RequestTable } from "../components/RequestTable";
 import { BarChart, type Bar } from "../components/charts/BarChart";
 import { LineChart } from "../components/charts/LineChart";
@@ -28,6 +29,7 @@ import {
   settingsQuery,
   sitesBlocked,
   toggled,
+  withFetch,
   withHost,
   withLine,
   withTable,
@@ -70,6 +72,7 @@ function RequestPanel({
   onClose: () => void;
   search: string;
 }) {
+  const navigate = useNavigate();
   const heading = `${line}, ${requests.host}, ${rangeLabel(settings)}: requests`;
   return (
     <section className="usage-requests" aria-label={heading} data-open={open || undefined} data-moving={moving || undefined} inert={!open}>
@@ -79,6 +82,9 @@ function RequestPanel({
           <button type="button" className="icon-button icon-button-quiet" aria-label="Close requests" title="Close requests" onClick={onClose}>
             <X aria-hidden="true" />
           </button>
+        </div>
+        <div className="request-fetch">
+          <FetchFilter level={requests.fetch} hideHops={requests.hide_hops} onChange={(level, hideHops) => navigate({ search: withFetch(search, level, hideHops) })} />
         </div>
         {requests.kept && <p className="usage-hosts-kept">{requests.kept}</p>}
         <RequestTable

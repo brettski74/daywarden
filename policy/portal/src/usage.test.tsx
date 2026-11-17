@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { USAGE_KEY } from "./sidebar";
 import { REQUESTS, USAGE, fakeService, renderPortal, shown, type Call } from "./test/portal";
-import { bytesAxis, durationAxis, formatBytes, formatDuration, settingsQuery, type Settings } from "./usage";
+import { bytesAxis, durationAxis, formatBytes, formatDuration, settingsQuery, withFetch, withHost, withLine, type Settings } from "./usage";
 
 const DEFAULT_ADDRESS = "/parent/usage/minutes?by=client&range=past-week";
 
@@ -294,6 +294,8 @@ function drillEcho(kept: string | null = null) {
           sort: asked.get("sort") || "start",
           dir: asked.get("dir") === "asc" ? "asc" : "desc",
           page: Number(asked.get("page") || "1"),
+          fetch: asked.get("fetch") || "all",
+          hide_hops: Boolean(asked.get("fetch")) && asked.get("hops") !== "show",
           rows: host && host !== "www.youtube.com" && !host.includes("youtube") ? [] : REQUESTS.rows,
           total: host && host !== "www.youtube.com" && !host.includes("youtube") ? 0 : 1,
           status: host && host !== "www.youtube.com" && !host.includes("youtube") ? "No requests in this range." : REQUESTS.status,
@@ -431,6 +433,78 @@ describe("the request table under a host", () => {
     await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" });
     await userEvent.selectOptions(screen.getByLabelText("Date range"), "previous-month");
     await waitFor(() => expect(shown(router)).toBe("/parent/usage/minutes?by=client&range=previous-month&line=younger"));
+  });
+});
+
+describe("the Fetch filter", () => {
+  /** Answer the Requests page with the Fetch level and checkbox its address names, as the service does. */
+  function fetchEcho(call: Call) {
+    if (call.path !== "/parent/api/usage/requests") return undefined;
+    const asked = new URLSearchParams(call.search);
+    const fetch = asked.get("fetch") || "all";
+    return { body: { ...REQUESTS, host: asked.get("host") || "", outcome: asked.getAll("outcome"), fetch, hide_hops: fetch !== "all" && asked.get("hops") !== "show" } };
+  }
+
+  it("shows the five Fetch Metadata columns after Method", async () => {
+    fakeService(fetchEcho);
+    renderPortal("/parent/usage/requests?range=past-week");
+    await screen.findByRole("heading", { name: "Requests" });
+    const headings = screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim());
+    const method = headings.indexOf("Method");
+    expect(headings.slice(method + 1, method + 6)).toEqual(["Dest", "Mode", "Site", "User", "Purpose"]);
+    const cells = screen.getAllByRole("cell").map((cell) => cell.textContent);
+    expect(cells).toEqual(expect.arrayContaining(["document", "navigate", "none", "?1"]));
+  });
+
+  it("chooses a level on the Requests page, checks Hide redirect hops when first chosen, and keeps the other filters", async () => {
+    fakeService(fetchEcho);
+    const { router } = renderPortal("/parent/usage/requests?range=past-week&host=example&page=3");
+    await screen.findByRole("heading", { name: "Requests" });
+    expect(screen.queryByLabelText("Hide redirect hops")).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Fetch"), "documents");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?range=past-week&host=example&fetch=documents"));
+    expect(await screen.findByLabelText("Hide redirect hops")).toBeChecked();
+    await userEvent.click(screen.getByLabelText("Hide redirect hops"));
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?range=past-week&host=example&fetch=documents&hops=show"));
+    await waitFor(() => expect(screen.getByLabelText("Hide redirect hops")).not.toBeChecked());
+    // Moving between the documents levels keeps the checkbox as it is.
+    await userEvent.selectOptions(screen.getByLabelText("Fetch"), "user");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?range=past-week&host=example&fetch=user&hops=show"));
+    await userEvent.selectOptions(screen.getByLabelText("Fetch"), "all");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?range=past-week&host=example"));
+    await waitFor(() => expect(screen.queryByLabelText("Hide redirect hops")).not.toBeInTheDocument());
+  });
+
+  it("keeps its level when another filter changes on the Requests page, and leaves it out of a preset", async () => {
+    fakeService(fetchEcho);
+    const { router } = renderPortal("/parent/usage/requests?range=past-week&fetch=user");
+    await screen.findByRole("heading", { name: "Requests" });
+    await userEvent.selectOptions(screen.getByLabelText("Date range"), "previous-month");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?range=previous-month&fetch=user"));
+    await userEvent.selectOptions(screen.getByLabelText("Preset"), "School week");
+    await waitFor(() => expect(shown(router)).toBe("/parent/usage/requests?preset=School%20week"));
+  });
+
+  it("narrows the open drill-down table without closing it", async () => {
+    const { calls, router } = await openUsage(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1&page=2`, drillEcho());
+    const requests = await screen.findByRole("region", { name: "younger, www.youtube.com, Past week: requests" });
+    await userEvent.selectOptions(within(requests).getByLabelText("Fetch"), "documents");
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1&fetch=documents`));
+    expect(screen.getByRole("region", { name: "younger, www.youtube.com, Past week: requests" })).toBeInTheDocument();
+    await waitFor(() => expect(usageCalls(calls).some((path) => path.includes("/parent/api/usage/requests?") && path.includes("fetch=documents"))).toBe(true));
+    expect(await within(requests).findByLabelText("Hide redirect hops")).toBeChecked();
+    await userEvent.click(within(requests).getByLabelText("Hide redirect hops"));
+    await waitFor(() => expect(shown(router)).toBe(`${DEFAULT_ADDRESS}&line=younger&host=www.youtube.com&exact=1&fetch=documents&hops=show`));
+    expect(screen.getByRole("region", { name: "younger, www.youtube.com, Past week: requests" })).toBeInTheDocument();
+  });
+
+  it("is dropped from the address when the drill-down closes, and kept when another host replaces it", () => {
+    const drilled = "?by=client&range=past-week&line=younger&host=a.example&exact=1&fetch=user&hops=show";
+    expect(withHost(drilled, "b.example")).toBe("?by=client&range=past-week&line=younger&fetch=user&hops=show&host=b.example&exact=1");
+    expect(withHost(drilled, null)).toBe("?by=client&range=past-week&line=younger");
+    expect(withLine(drilled, "older")).toBe("?by=client&range=past-week&line=older");
+    expect(withFetch("?range=past-week&page=4", "documents", true)).toBe("?range=past-week&fetch=documents");
+    expect(withFetch("?range=past-week&fetch=user&hops=show", "all", false)).toBe("?range=past-week");
   });
 });
 

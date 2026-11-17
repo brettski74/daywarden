@@ -26,6 +26,14 @@ class DecisionRequest:
     flow_id: str | None = None
     sec_fetch_dest: str | None = None
     accept: str | None = None
+    sec_fetch_mode: str | None = None
+    sec_fetch_site: str | None = None
+    sec_fetch_user: str | None = None
+    sec_purpose: str | None = None
+
+
+# The request headers the addon passes on, each optional, by their JSON keys.
+FETCH_KEYS = ("sec_fetch_dest", "accept", "sec_fetch_mode", "sec_fetch_site", "sec_fetch_user", "sec_purpose")
 
 
 def parse_request(document: object) -> DecisionRequest:
@@ -52,7 +60,7 @@ def parse_request(document: object) -> DecisionRequest:
     if flow_id is not None and (not isinstance(flow_id, str) or not flow_id):
         raise ValueError("flow_id must be a string")
     headers = {}
-    for key in ("sec_fetch_dest", "accept"):
+    for key in FETCH_KEYS:
         value = document.get(key)
         if value is not None and not isinstance(value, str):
             raise ValueError(f"{key} must be a string")

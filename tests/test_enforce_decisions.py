@@ -254,13 +254,24 @@ def test_the_decision_request_carries_what_tells_a_page_load_from_a_fetch(stack)
     completed, headers, _body = _exchange(
         stack,
         "http://origin/watch?v=abc",
-        headers=("Sec-Fetch-Dest: document", "Accept: text/html,application/xhtml+xml"),
+        headers=(
+            "Sec-Fetch-Dest: document",
+            "Sec-Fetch-Mode: navigate",
+            "Sec-Fetch-Site: cross-site",
+            "Sec-Fetch-User: ?1",
+            "Sec-Purpose: prefetch",
+            "Accept: text/html,application/xhtml+xml",
+        ),
     )
     assert completed.returncode == 0, completed.stderr
     assert _status(headers) == 200
     entry = stack.jsonl("decisions", DECISION_LOG)[-1]["request"]
     assert entry["url"] == "http://origin/watch?v=abc"
     assert entry["sec_fetch_dest"] == "document"
+    assert entry["sec_fetch_mode"] == "navigate"
+    assert entry["sec_fetch_site"] == "cross-site"
+    assert entry["sec_fetch_user"] == "?1"
+    assert entry["sec_purpose"] == "prefetch"
     assert entry["accept"] == "text/html,application/xhtml+xml"
 
 
