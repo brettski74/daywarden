@@ -1,8 +1,8 @@
 Ticket: S030
 Title: Usage analytics
 Status: Draft
-Story Points: 63
-Last Updated: 2026-11-15 18:17:58
+Story Points: 68
+Last Updated: 2026-11-17 06:02:34
 ---
 
 # User Voice
@@ -24,7 +24,7 @@ much time and data goes to YouTube or any other site, and what was fetched.
 | S030.1 | Usage graph with filters and presets | 21 |
 | S030.2 | Drill down to usage by host | 13 |
 | S030.3 | Requests: drill-down table and Requests page | 21 |
-| S030.4 | Request fetch metadata for quieter lists | 8 |
+| S030.4 | Request fetch metadata for quieter lists | 13 |
 
 # Notes
 
