@@ -1,6 +1,6 @@
 Ticket: S033
 Title: Spelling word statistics and weighted revision
-Status: In Progress
+Status: Done
 Story Points: 8
 Last Updated: 2026-11-16 21:25:00
 ---

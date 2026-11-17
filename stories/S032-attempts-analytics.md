@@ -1,8 +1,8 @@
-Ticket: Sxxx
-Title: [Ticket Title]
-Status: [Draft|Refined|In Progress|Done]
-Story Points: [Fibonacci points; an epic's is the sum of its children's]
-Last Updated: [yyyy-mm-dd hh:mm:ss]
+Ticket: S035
+Title: Attempts Analytics
+Status: Draft
+Story Points: 
+Last Updated: 2026-11-17 15:05:00
 ---
 
 <!--
@@ -71,3 +71,12 @@ All of the above could probably be shown effectively over time using line charts
 
 Ultimately, we need to be able to drill down into more specific layers of information to understand what the child is doing well at and what areas he may still need help with or additional practice.
 
+Things worth thinking about and trying to know from our results:
+
+- which sums, products, differences, quotients he is doing well with versus struggling in basic arithmetic tasks.
+- which parts of speech he is doing well with versus struggling with in parts-of-speech quizzes.
+- which words he is doing better/worse with in spelling.
+
+Spelling statistics we already capture and can probably be used for these kinds of insights. We possibly have the data for analyzing the others, although not sure how easily analyzed it is with the way it is currently stored.
+
+I suspect we need to approach the analytics of different tasks differently, so the analytics for each task type may need it's own bespoke implementation. Priority should be in getting useful insights to understand where the child needs more help and/or practice, although shared code is a secondary consideration to help keep the parent's UX consistent.
