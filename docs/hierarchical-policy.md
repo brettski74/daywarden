@@ -162,7 +162,7 @@ A policy edit does not disturb a transfer until that stored time or a volume cei
 
 ## Tasks
 
-Under `tasks:`, each key is a task type, `arithmetic`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`, and under each type each key is a task name. Each task has the common attributes below and a `body` with the settings its type needs. Each type's subsection after this one describes its body.
+Under `tasks:`, each key is a task type, `arithmetic`, `capitalisation`, `skip_counting`, `parts_of_speech`, `spelling`, or `parent_check`, and under each type each key is a task name. Each task has the common attributes below and a `body` with the settings its type needs. Each type's subsection after this one describes its body.
 
 ```yaml
 tasks:
@@ -512,6 +512,48 @@ A run never asks the same sentence twice. Each new question is chosen uniformly 
 The attempt **passes** when his points are at least `correct_answers_required` and the number of finished questions is at least `minimum_questions`. That counts toward today's revision and shows "Well done". The attempt **fails**, with `failure_cooldown` and a skip day, when his points are still under `correct_answers_required` and any of these holds: finished questions have reached `maximum_questions`; no unseen runnable sentence remains; or at least `minimum_questions` are finished and even full marks on every remaining unseen sentence could not reach `correct_answers_required`. After a failure the page says the run is finished with his points and the pass mark.
 
 A run in progress keeps the sentences, difficulties, filter rows, and targets it started with after a policy edit. His next run uses the new settings. The attempt `detail` holds `settings` (a snapshot with resolved sentences and targets), `runs` (each with its `asked` indexes), `last_activity`, and `questions`. Each question has its `run`, its `index` in the snapshotted sentences, the `sentence`, its `parts` in order, the `words` with the `part` each belongs in (or `null`), every try in `tries`, the `outcome`, the `correct_try`, the `points`, `allowed_ms`, and the household-local `issued` time.
+
+### Capitalisation tasks
+
+A `capitalisation` task draws sentences from named **capitalisation pools**. Each pool is a YAML file under `capitalisation_pools/` beside the root policy file, stored, named, loaded, and identified as a parts of speech pool is: the file name is a stable id, the pool's user-visible `name` is what tasks list, only pools a `capitalisation` task names are loaded, and two pools with the same name are a load error that names both files. The portal does not edit them yet; write them by hand.
+
+A pool has `name`, `level_of_difficulty` (0.5 through 10, default 1), and `sentences`. Each sentence is a string, or a mapping with `sentence` and `level_of_difficulty`, which overrides the pool's. Write each sentence as it should be capitalised.
+
+```yaml
+# capitalisation_pools/names-and-places.yaml
+name: Names and places
+level_of_difficulty: 1
+sentences:
+  - On Tuesday, Mia and I flew to Sydney.
+  - sentence: Dr Patel works at NASA in the United States.
+    level_of_difficulty: 1.5
+```
+
+A **word** is a run of characters between spaces. Punctuation stays part of its word, so `Sydney.` and `Mia's` are each one word. A word **has a capital** when any of its letters is upper case. A sentence must have at least one such word, and the same sentence may not be in a pool twice, whatever the case of its letters.
+
+A task's `body` has these fields. They are the parts of speech task's, as above, except that `timeout` defaults to `60s` and there is no `parts_of_speech` filter. `correct_answers_required`, `minimum_questions`, `maximum_questions`, the runnable size, and the load errors for them are as in parts of speech tasks. A sentence's time is its level of difficulty times `timeout`, rounded up to whole seconds, so `level_of_difficulty: 1.5` with the default gets 90 seconds.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `pools` | Required | One or more pool names. |
+| `timeout` | `60s` | Base time for a sentence. |
+| `correct_answers_required` | As parts of speech | Points needed to pass. |
+| `minimum_questions` | `correct_answers_required` | Questions finished before a pass or an early failure. |
+| `maximum_questions` | The runnable size | Questions after which the attempt fails if it has not passed. |
+
+```yaml
+tasks:
+  capitalisation:
+    capitals-1:
+      group: younger
+      body:
+        pools: [Names and places]
+        timeout: 60s
+```
+
+The load fails, and the previous policy stays in force, for two pools with the same name, a task that names an unknown pool, a pool with no sentences, an empty sentence, a sentence with no capital, the same sentence twice in one pool, or a `level_of_difficulty` outside 0.5 through 10. The error names the pool, and the sentence where there is one.
+
+The run, its end conditions, and the time follow parts of speech tasks. The question shows the sentence in large lower case text, with "Click the words that need a capital letter". The first word and `I` are lower case too. A word with a letter is shaded light grey under the mouse; a word with no letter, such as `—` or `3`, cannot be clicked. Clicking a word shows it as the pool spells it, in blue, and clicking it again puts it back. A word with no capital in the pool shows with only its first letter capitalised. He submits with Submit or Enter, which do nothing when no word is clicked or nothing has changed since his last wrong try. A sentence is right when the words he clicked are exactly the words with a capital in the pool, compared by position. He has three tries worth 1, 0.5, and 0.25 points. After a wrong first or second try the page says how many clicked words should not have capitals and how many capitals he missed, and his clicks stay as they were. After a wrong third try, or when the timer empties, every word is shown as the pool spells it: a word with a capital that he clicked is blue, a word he clicked that has none and a word with a capital he did not click are red, and the rest are black. "Next Question" and Enter are ignored for the first 3 seconds of the answer. The attempt `detail` is as for parts of speech, except that `settings` holds each sentence's `sentence` and `level_of_difficulty`, and a question's `words` hold each word as the pool spells it and whether it has a `capital`, and each try holds its `clicks`, the positions of the words he clicked.
 
 ### Spelling tasks
 

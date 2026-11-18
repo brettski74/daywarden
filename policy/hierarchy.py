@@ -8,8 +8,8 @@ spelling may be used in two namespaces. Tasks are the sixth. ``tasks`` maps
 each task type to the tasks of that type, by name, and a task is its type and
 its name together, so two tasks may share a name when their types differ.
 Their bodies are opaque here, except that an ``arithmetic`` body is checked by
-``policy.arithmetic``, a ``parts_of_speech`` body by
-``policy.parts_of_speech``, a ``skip_counting`` body by
+``policy.arithmetic``, a ``capitalisation`` body and its pools by
+``policy.capitalisation``, a ``skip_counting`` body by
 ``policy.skip_counting``, a ``parts_of_speech`` body and its sentence pools by
 ``policy.parts_of_speech``, and a ``spelling`` body and its word directories by
 ``policy.spelling``, so a bad quiz body fails the load. A body keeps its keys
@@ -47,7 +47,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from policy import arithmetic, parts_of_speech, sentence_pools, skip_counting, spelling
+from policy import arithmetic, capitalisation, parts_of_speech, sentence_pools, skip_counting, spelling
 from policy.buckets import divides_day
 from policy.clients import Lookup, UnresolvedAddress, normalize_ip, resolve_address
 from policy.clock import named_zone
@@ -835,6 +835,7 @@ def _take_proxy_configuration(node: yaml.Node, build: _Build) -> None:
 
 _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
     arithmetic.ARITHMETIC: arithmetic.parse_settings,
+    capitalisation.CAPITALISATION: capitalisation.check_body,
     parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.check_body,
     skip_counting.SKIP_COUNTING: skip_counting.parse_settings,
     spelling.SPELLING: spelling.check_body,
@@ -842,6 +843,7 @@ _QUIZ_BODIES: dict[str, Callable[[Mapping], object]] = {
 
 _QUIZ_FIELDS: dict[str, Callable[[Mapping], object]] = {
     **_QUIZ_BODIES,
+    capitalisation.CAPITALISATION: capitalisation.parse_settings,
     parts_of_speech.PARTS_OF_SPEECH: parts_of_speech.parse_settings,
     spelling.SPELLING: spelling.parse_settings,
 }
@@ -1255,6 +1257,10 @@ def _finish(
     if build.task_data:
         try:
             sentence_pools.index_names()
+        except ValueError as error:
+            build.fail(str(error))
+        try:
+            sentence_pools.index_names(folder=sentence_pools.CAPITALISATION_DIR)
         except ValueError as error:
             build.fail(str(error))
     _check_references(build)

@@ -32,7 +32,7 @@ import json
 import random
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -136,6 +136,24 @@ class Settings:
     pool_names: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class PoolKind:
+    """What differs between task types that draw sentences from pools: the body's keys, folder, default timeout, and sentence check.
+
+    ``parse_sentence`` takes a pool's raw sentence, the pool's level of
+    difficulty, the task's parts filter (None when the kind has none), and
+    where the sentence is, and raises ``ValueError`` for a bad one.
+    """
+
+    keys: frozenset[str]
+    default_timeout: str
+    folder: str
+    parse_sentence: Callable[..., object]
+    filtered: bool = True
+    inline: bool = True
+    unique: bool = False  # a sentence may not be in its pool twice
+
+
 def word_key(text: str) -> str:
     """Return the form two words are compared by: case folded, with ``’`` as ``'``."""
     return unicodedata.normalize("NFC", text).replace("\u2019", "'").casefold()
@@ -187,7 +205,7 @@ def parse_settings(body: Mapping, root: Path | None = None) -> Settings:
         raise ValueError("body must be a mapping")
     if _is_snapshot(body):
         return _parse_snapshot(body)
-    return _parse_fields(body, pools=None, root=root)
+    return _parse_fields(body, None, root, PARTS_KIND)
 
 
 def check_body(body: Mapping, root: Path | None = None) -> Settings:
@@ -196,7 +214,7 @@ def check_body(body: Mapping, root: Path | None = None) -> Settings:
         raise ValueError("body must be a mapping")
     if _is_snapshot(body):
         return _parse_snapshot(body)
-    return _parse_fields(body, pools=_resolve_pools(body, root), root=root)
+    return _parse_fields(body, _resolve_pools(body, root), root, PARTS_KIND)
 
 
 def _is_snapshot(body: Mapping) -> bool:
@@ -227,10 +245,24 @@ def _is_snapshot(body: Mapping) -> bool:
     return True
 
 
-def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, root: Path | None) -> Settings:
+def parse_pooled_fields(
+    body: Mapping, pools: dict[str, sentence_pools.Pool] | None, root: Path | None, kind: PoolKind
+) -> Settings:
+    """Check a task body that names sentence pools, for ``kind``. Without ``pools`` only the fields are checked."""
+    return _parse_fields(body, pools, root, kind)
+
+
+def resolve_pools(body: Mapping, root: Path | None, kind: PoolKind) -> dict[str, sentence_pools.Pool]:
+    """Load the pools a body names from ``kind``'s folder. A duplicate pool name anywhere in it is an error."""
+    return _resolve_pools(body, root, kind)
+
+
+def _parse_fields(
+    body: Mapping, pools: dict[str, sentence_pools.Pool] | None, root: Path | None, kind: PoolKind
+) -> Settings:
     fields = Collector()
-    unknown = set(body) - _BODY_KEYS
-    inline = "sentences" in body and not _is_snapshot(body)
+    unknown = set(body) - kind.keys
+    inline = kind.inline and "sentences" in body and not _is_snapshot(body)
     if inline and pools is not None:
         fields.add("sentences: use pools; inline sentences are no longer allowed")
         unknown.discard("sentences")
@@ -239,7 +271,7 @@ def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, r
     for key in sorted(unknown):
         fields.add(f"{key}: unknown setting")
 
-    timeout = fields.take(duration, body.get("timeout", DEFAULT_TIMEOUT), "timeout")
+    timeout = fields.take(duration, body.get("timeout", kind.default_timeout), "timeout")
     names = body.get("pools")
     if "pools" not in body:
         if pools is not None or not inline:
@@ -264,7 +296,7 @@ def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, r
         names = cleaned or None
 
     parts_filter = None
-    if "parts_of_speech" in body:
+    if kind.filtered and "parts_of_speech" in body:
         parts_filter = fields.take(_parts_filter, body["parts_of_speech"], "parts_of_speech")
 
     for field in ("correct_answers_required", "minimum_questions", "maximum_questions"):
@@ -302,11 +334,19 @@ def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, r
         if not pool.sentences:
             fields.add(f"pools: pool {name!r} has no sentences")
             continue
+        first: dict[str, int] = {}
         for number, item in enumerate(pool.sentences, 1):
             where = f"pool {name!r} sentences entry {number}"
-            sentence = fields.take(_pool_sentence, item, pool.difficulty, parts_filter, where)
-            if sentence is not None:
-                sentences.append(sentence)
+            sentence = fields.take(kind.parse_sentence, item, pool.difficulty, parts_filter, where)
+            if sentence is None:
+                continue
+            if kind.unique:
+                folded = sentence.text.casefold()
+                if folded in first:
+                    fields.add(f"{where}: sentence: {sentence.text!r} is the same as entry {first[folded]}")
+                    continue
+                first[folded] = number
+            sentences.append(sentence)
 
     size = len(sentences)
     required = default_required(size) if size else 1
@@ -355,14 +395,15 @@ def _parse_fields(body: Mapping, pools: dict[str, sentence_pools.Pool] | None, r
     )
 
 
-def _resolve_pools(body: Mapping, root: Path | None) -> dict[str, sentence_pools.Pool]:
+def _resolve_pools(body: Mapping, root: Path | None, kind: PoolKind | None = None) -> dict[str, sentence_pools.Pool]:
+    folder = sentence_pools.POOLS_DIR if kind is None else kind.folder
     names = body.get("pools")
     if not isinstance(names, list):
         return {}
     wanted = [item.strip() for item in names if isinstance(item, str) and item.strip()]
     # Duplicate names across pool files are a load error even for unused pools.
-    sentence_pools.index_names(root)
-    return sentence_pools.load_named(wanted, root)
+    sentence_pools.index_names(root, folder)
+    return sentence_pools.load_named(wanted, root, folder)
 
 
 def _parse_snapshot(body: Mapping) -> Settings:
@@ -452,6 +493,9 @@ def _pool_sentence(
 ) -> Sentence:
     parsed = _sentence(item, pool_difficulty, where)
     return _apply_filter(parsed, parts_filter)
+
+
+PARTS_KIND = PoolKind(_BODY_KEYS, DEFAULT_TIMEOUT, sentence_pools.POOLS_DIR, _pool_sentence)
 
 
 def _sentence(item: object, default_difficulty: float, where: str) -> Sentence:
@@ -702,13 +746,27 @@ class Session(QuizRecord):
             self._parsed = (stored, self.parse(stored))
         return self._parsed[1]
 
+    def snapshot(self, settings: Settings) -> dict:
+        """Return the settings to store on a run that starts now."""
+        return snapshot_settings(settings, self.body)
+
+    def question_fields(self, sentence) -> dict:
+        """Return what a question records of its sentence, beyond the sentence's text."""
+        return {
+            "parts": [part.name for part in sentence.parts],
+            "words": [
+                {"word": word.text, "part": sentence.part_of(position)}
+                for position, word in enumerate(sentence.words)
+            ],
+        }
+
     def time_out(self, question: dict) -> None:
         question.update(outcome=TIMEOUT, correct_try=None, points=0)
 
     def _start_run(self, now: datetime) -> None:
         resolved = self.parse(self.body)
         super()._start_run(now)
-        self.detail["settings"] = snapshot_settings(resolved, self.body)
+        self.detail["settings"] = self.snapshot(resolved)
         self._parsed = None
         self.detail["runs"][-1]["asked"] = []
 
@@ -786,11 +844,7 @@ class Session(QuizRecord):
             "run": self.run,
             "index": index,
             "sentence": sentence.text,
-            "parts": [part.name for part in sentence.parts],
-            "words": [
-                {"word": word.text, "part": sentence.part_of(position)}
-                for position, word in enumerate(sentence.words)
-            ],
+            **self.question_fields(sentence),
             "tries": [],
             "outcome": None,
             "correct_try": None,
@@ -801,6 +855,27 @@ class Session(QuizRecord):
         self.questions.append(question)
         self.touch(now)
         return question
+
+    NOTHING_TO_SUBMIT = "sort at least one word into the table before submitting"
+    SAME_AS_LAST = "the table is the same as the last try"
+
+    def read_try(self, sent: object, question: Mapping):
+        """Check a try as sent and return what to store of it, and what it puts in place, to compare with other tries."""
+        return _placements(sent, question)
+
+    def stored_try(self, table) -> dict:
+        return {"placements": table}
+
+    def placed_in(self, recorded: Mapping):
+        """Return what a recorded try put in place, as ``read_try`` returns it."""
+        return _assignment(recorded["placements"])
+
+    def score(self, question: Mapping, placed) -> tuple[list[int], list[int]]:
+        """Return the positions of the words that are wrong in the try, and the ones that were missed."""
+        expected = [item["part"] for item in question["words"]]
+        wrong = sorted(position for position, part in placed.items() if expected[position] != part)
+        missed = [position for position, part in enumerate(expected) if part is not None and position not in placed]
+        return wrong, missed
 
     def answer(self, now: datetime, number: object, placements: object, *, expired: bool) -> Judged:
         """Judge a try the server received now.
@@ -816,21 +891,19 @@ class Session(QuizRecord):
         pending = self.pending
         if pending is None or number != len(self.questions) - 1:
             raise StaleQuestion("that sentence is no longer waiting for an answer")
-        table, placed = _placements(placements, pending)
+        table, placed = self.read_try(placements, pending)
         late = self.late(pending, now)
         tries = pending["tries"]
         if not late and not expired:
             if not placed:
-                raise ValueError("sort at least one word into the table before submitting")
-            if tries and _assignment(tries[-1]["placements"]) == placed:
-                raise ValueError("the table is the same as the last try")
-        expected = [item["part"] for item in pending["words"]]
-        wrong = sorted(position for position, part in placed.items() if expected[position] != part)
-        missed = [position for position, part in enumerate(expected) if part is not None and position not in placed]
+                raise ValueError(self.NOTHING_TO_SUBMIT)
+            if tries and self.placed_in(tries[-1]) == placed:
+                raise ValueError(self.SAME_AS_LAST)
+        wrong, missed = self.score(pending, placed)
         attempt = len(tries) + 1
         tries.append(
             {
-                "placements": table,
+                **self.stored_try(table),
                 "wrong": len(wrong),
                 "missed": len(missed),
                 "wrong_words": wrong,

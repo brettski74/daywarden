@@ -4,6 +4,11 @@ Each pool is a YAML file in ``parts_of_speech_pools/`` beside the root
 policy file. The file name is a stable id. The pool's user-visible ``name``
 is what tasks list under ``body.pools``. Only pools a task names are attached
 to the running policy; the directory can still be listed for the portal.
+
+Capitalisation pools are stored, named, loaded, and identified the same way,
+in ``capitalisation_pools/``. Each function here that reads a directory takes
+the directory's name, ``folder``, which is the parts of speech one unless a
+caller says otherwise.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from policy.quiz import duration
 from policy.tasks import TaskKey
 
 POOLS_DIR = "parts_of_speech_pools"
+CAPITALISATION_DIR = "capitalisation_pools"
 DEFAULT_DIFFICULTY = 1.0
 MIN_DIFFICULTY = 0.5
 MAX_DIFFICULTY = 10.0
@@ -56,8 +62,8 @@ def config_root(root: Path | None = None) -> Path:
     return Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml")).parent
 
 
-def pools_directory(root: Path | None = None) -> Path:
-    return config_root(root) / POOLS_DIR
+def pools_directory(root: Path | None = None, folder: str = POOLS_DIR) -> Path:
+    return config_root(root) / folder
 
 
 def use_config_root(root: Path):
@@ -91,9 +97,9 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def list_pool_files(root: Path | None = None) -> list[Path]:
+def list_pool_files(root: Path | None = None, folder: str = POOLS_DIR) -> list[Path]:
     """Return every pool YAML file, in name order. Missing directory is empty."""
-    directory = pools_directory(root)
+    directory = pools_directory(root, folder)
     found = set()
     if directory.is_dir():
         found = {
@@ -115,18 +121,17 @@ def list_pool_files(root: Path | None = None) -> list[Path]:
     return sorted(found)
 
 
-def index_names(root: Path | None = None) -> dict[str, Path]:
+def index_names(root: Path | None = None, folder: str = POOLS_DIR) -> dict[str, Path]:
     """Return each pool's user-visible name to its file.
 
     Two pools with the same name raise ``ValueError`` naming both places.
     """
     names: dict[str, Path] = {}
-    for path in list_pool_files(root):
+    label = "capitalisation" if folder == CAPITALISATION_DIR else "parts of speech"
+    for path in list_pool_files(root, folder):
         name = peek_name(path)
         if name in names:
-            raise ValueError(
-                f"parts of speech pool {name!r} is defined in both {names[name]} and {path}"
-            )
+            raise ValueError(f"{label} pool {name!r} is defined in both {names[name]} and {path}")
         names[name] = path
     return names
 
@@ -185,12 +190,9 @@ def load_pool(path: Path) -> Pool:
     return Pool(path.stem, path, name, difficulty, tuple(listed))
 
 
-def load_named(names: Sequence[str], root: Path | None = None) -> dict[str, Pool]:
+def load_named(names: Sequence[str], root: Path | None = None, folder: str = POOLS_DIR) -> dict[str, Pool]:
     """Load each named pool once. Unknown names are omitted; the caller reports them."""
-    try:
-        by_name = index_names(root)
-    except ValueError:
-        raise
+    by_name = index_names(root, folder)
     found: dict[str, Pool] = {}
     for name in names:
         if name in found:

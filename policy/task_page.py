@@ -30,8 +30,9 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from policy import arithmetic_page, parts_of_speech_page, skip_counting_page, spelling_page
+from policy import arithmetic_page, capitalisation_page, parts_of_speech_page, skip_counting_page, spelling_page
 from policy.arithmetic import ARITHMETIC
+from policy.capitalisation import CAPITALISATION
 from policy.child_page import counting_line, head, html_tag
 from policy.engine import classify_client
 from policy.hierarchy import Policy
@@ -67,6 +68,7 @@ PRACTICE_NOTE = "Practice is just for fun. It doesn't count toward your internet
 
 _QUIZZES = {
     ARITHMETIC: arithmetic_page,
+    CAPITALISATION: capitalisation_page,
     PARTS_OF_SPEECH: parts_of_speech_page,
     SKIP_COUNTING: skip_counting_page,
     SPELLING: spelling_page,

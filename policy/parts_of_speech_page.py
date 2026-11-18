@@ -87,10 +87,10 @@ def show(
         if verdict is None:
             store.save(attempt.id, session.detail)
         else:
-            ended = _conclude(policy, store, attempt, session, verdict, now, back)
+            ended = conclude(policy, store, attempt, session, verdict, now, back)
     config = {
         "action": path,
-        **_progress(session),
+        **progress(session),
         "correctPause": CORRECT_PAUSE_MS,
         "flightMs": FLIGHT_MS,
         "nextGuardMs": NEXT_GUARD_MS,
@@ -129,11 +129,11 @@ def respond_api(
         session.visit(now)
         verdict = session.verdict()
         if verdict is not None:
-            ended = _conclude(policy, store, attempt, session, verdict, now, back)
-            return json_response(200, {**_progress(session), "finished": True, **ended})
+            ended = conclude(policy, store, attempt, session, verdict, now, back)
+            return json_response(200, {**progress(session), "finished": True, **ended})
         if action == VISIT:
             store.save(attempt.id, session.detail)
-            return json_response(200, {**_progress(session), "finished": False})
+            return json_response(200, {**progress(session), "finished": False})
         question = session.issue(now)
         store.save(attempt.id, session.detail)
         tries = question["tries"]
@@ -151,7 +151,7 @@ def respond_api(
                 "wrong": None if last is None else last["wrong"],
                 "missed": None if last is None else last["missed"],
                 **_marks(last if len(tries) == RED_MARKS_TRY else None),
-                **_progress(session),
+                **progress(session),
                 "finished": False,
             },
         )
@@ -177,7 +177,7 @@ def respond_api(
     if judged.verdict is None:
         store.save(attempt.id, session.detail)
     else:
-        ended = _conclude(policy, store, attempt, session, judged.verdict, now, back)
+        ended = conclude(policy, store, attempt, session, judged.verdict, now, back)
     sound = CORRECT if judged.outcome == CORRECT else "timeout" if judged.outcome == "timeout" else "incorrect"
     last = judged.question["tries"][-1]
     shown = judged.outcome == WRONG and judged.attempt == RED_MARKS_TRY
@@ -191,7 +191,7 @@ def respond_api(
             **_marks(last if shown else None),
             "answer": answer(judged.question) if judged.outcome in (INCORRECT, TIMEOUT) else None,
             "scored": judged.question["points"],
-            **_progress(session),
+            **progress(session),
             "finished": judged.verdict is not None,
             **ended,
             "sound": (sounds or _NO_SOUNDS).choose(sound),
@@ -230,21 +230,21 @@ def _marks(last: Mapping | None) -> dict:
     return {"wrong_words": list(last["wrong_words"]), "missed_words": list(last["missed_words"])}
 
 
-def _conclude(
+def conclude(
     policy, store: AttemptStore, attempt: Attempt, session: Session, verdict: str, now: datetime, back: Back | None
 ) -> dict:
     store.finish(attempt.id, verdict, now, detail=session.detail)
     return {"result": verdict, **ending(policy, store, attempt.client_group, now, verdict, back)}
 
 
-def _questions_label(number: int, minimum: int, maximum: int) -> str:
+def questions_label(number: int, minimum: int, maximum: int) -> str:
     next_question = min(number + 1, maximum)
     if minimum == maximum:
         return f"Question {next_question} of {maximum}"
     return f"Question {next_question} · {minimum} minimum · {maximum} maximum"
 
 
-def _progress(session: Session) -> dict:
+def progress(session: Session) -> dict:
     settings = session.settings
     return {
         "points": session.points,
@@ -257,9 +257,9 @@ def _progress(session: Session) -> dict:
 
 
 def _document(session: Session, config: Mapping, note: str, line: str) -> str:
-    progress = _progress(session)
-    points = f"{format_points(progress['points'])} / {progress['required']} points"
-    upcoming = _questions_label(progress["number"], progress["minimum"], progress["maximum"])
+    now = progress(session)
+    points = f"{format_points(now['points'])} / {now['required']} points"
+    upcoming = questions_label(now["number"], now["minimum"], now["maximum"])
     return document(
         title=LABEL,
         config=config,
@@ -267,7 +267,7 @@ def _document(session: Session, config: Mapping, note: str, line: str) -> str:
         start=(
             f"<h1>{_e(LABEL)}</h1>\n"
             f'{note_html(note)}<p id="start-points">{_e(points)}</p>\n'
-            f'<p id="start-required" class="minor">{_e(str(progress["required"]))} points to pass</p>\n'
+            f'<p id="start-required" class="minor">{_e(str(now["required"]))} points to pass</p>\n'
             f'<p id="start-number" class="minor">{_e(upcoming)}</p>\n'
             '<button type="button" id="start-button" class="big" autofocus>Start</button>'
         ),

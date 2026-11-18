@@ -1,8 +1,8 @@
 Ticket: S007
 Title: Parent administration
 Status: Draft
-Story Points: 55
-Last Updated: 2026-11-09 19:50:00
+Story Points: 81
+Last Updated: 2026-11-18 06:51:21
 ---
 
 # User Voice
@@ -29,9 +29,11 @@ As a parent, I want to change the rules, the word lists, and which client group 
 | Ticket | Title | Points |
 | --- | --- | --- |
 | S007.1 | Parent sign-in | 5 |
-| S007.2 | Edit the hierarchical policy (later) | 8 |
+| S007.2 | Edit groups, windows, quotas, and household settings | 13 |
 | S007.3 | Parts of speech administration | 21 |
 | S007.4 | Parent portal layout, sign-in screen, and the attempts and usage pages | 21 |
+| S007.5 | Edit rule sets | 13 |
+| S007.6 | Rename groups, windows, quotas, and rule sets | 8 |
 
 S023 is the task administration epic: the task pages, the common task settings, and spelling. S007.3 is the parts of
 speech area of the task page. S025 and S026 are the skip counting and arithmetic areas. Creating and deleting tasks is
@@ -43,4 +45,5 @@ The initial build uses config files for the policy and the quiz content. S007.1 
 
 S007.4 is implemented before S007.2 and S007.3, even though it has a higher number. Those two stories are refined again after S007.4 is done, so their editors are designed as portal pages.
 
-S007.2 edits the model in `docs/hierarchical-policy.md`. It does not edit a rule list owned by a site group, and it does not generate the proxy bypass list.
+S007.2, S007.5, and S007.6 edit the model in `docs/hierarchical-policy.md`. S007.2 covers the groups, windows,
+quotas, and household settings, S007.5 the rule sets, and S007.6 renaming with the stored history. It does not edit a rule list owned by a site group, and it does not generate the proxy bypass list.
