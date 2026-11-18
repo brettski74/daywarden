@@ -105,4 +105,20 @@
   --chart-readout-bg: var(--palette-white);
   /* A practice attempt's marker is hollow: filled with the plot's own background. */
   --chart-marker-hollow: var(--content-bg);
+
+  /* The facts grid's shading, lightest to darkest. Navy text on the light levels, ivory on brick. */
+  --fact-level-0-bg: color-mix(in srgb, var(--palette-teal) 30%, var(--palette-white));
+  --fact-level-0-text: var(--palette-navy);
+  --fact-level-1-bg: color-mix(in srgb, var(--palette-brick) 12%, var(--palette-white));
+  --fact-level-1-text: var(--palette-navy);
+  --fact-level-2-bg: color-mix(in srgb, var(--palette-brick) 28%, var(--palette-white));
+  --fact-level-2-text: var(--palette-navy);
+  --fact-level-3-bg: color-mix(in srgb, var(--palette-brick) 45%, var(--palette-white));
+  --fact-level-3-text: var(--palette-navy);
+  --fact-level-4-bg: var(--palette-brick);
+  --fact-level-4-text: var(--palette-ivory);
+  /* Asked, but nothing to shade by, such as no right answers when shading by Time. */
+  --fact-none-bg: var(--palette-white);
+  --fact-none-text: var(--palette-navy);
+  --row-chosen-bg: color-mix(in srgb, var(--palette-teal) 35%, var(--palette-ivory));
 }

@@ -22,6 +22,7 @@ import {
 } from "../attempts";
 import { AttemptTable } from "../components/AttemptTable";
 import { ViewFilters } from "../components/ViewFilters";
+import { factsAddress } from "../facts";
 import { Shape, TrendChart, type Marked, type TrendSeries } from "../components/charts/TrendChart";
 import type { Tick } from "../components/charts/ChartFrame";
 import { ContextBar, StatusBar, useTitle } from "../slots";
@@ -41,6 +42,8 @@ type TrendReport = PeriodData & {
   notes: string[];
   times: string;
   task: { type: string; name: string; label: string; in_policy: boolean };
+  /** An arithmetic task's operation, whose facts page it links to. */
+  facts: string | null;
   message: string | null;
   trend: Trend | null;
 };
@@ -150,6 +153,11 @@ export function TaskTrend() {
         <ViewFilters view={draft} period={report} onChange={change} />
       </ContextBar>
 
+      {report.facts && (
+        <p className="trend-facts">
+          <Link to={factsAddress(report.facts, report.view)}>{report.facts.charAt(0).toUpperCase() + report.facts.slice(1)} facts</Link>
+        </p>
+      )}
       {!task.in_policy && trend !== null && <p className="task-gone">{task.label} is not in the policy.</p>}
       {report.message !== null && <p>{report.message}</p>}
       {trend !== null && kind === null && <p>This type has no figures yet, so its attempts are only listed.</p>}

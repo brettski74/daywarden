@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from policy.accounts import COOKIE_NAME, Accounts, cookie_value
 from policy.hierarchy import Policy
 from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
-from policy.review import NOT_STORED, attempt_report, attempts_report, record_parent_check, trend_report
+from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
 from policy.pool_admin import PoolAdmin
@@ -214,6 +214,25 @@ def install_portal(
                 TaskKey(kind, name),
                 now=now.clock.local(),
                 tasks=() if policy is None else policy.tasks,
+                timezone=None if policy is None else policy.timezone,
+                pairs=list(request.query_params.multi_items()),
+            ),
+        )
+
+    @app.get("/parent/api/attempts/facts/{operation}")
+    async def attempt_facts(request: Request, operation: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        now = loaded()
+        policy = now.policy
+        return _json(
+            200,
+            facts_report(
+                attempts,
+                client_names(policy),
+                operation,
+                now=now.clock.local(),
                 timezone=None if policy is None else policy.timezone,
                 pairs=list(request.query_params.multi_items()),
             ),

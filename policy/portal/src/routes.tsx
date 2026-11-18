@@ -2,6 +2,7 @@ import { redirect, type RouteObject } from "react-router";
 import { Layout, layoutLoader } from "./components/Layout";
 import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
+import { Facts, factsLoader, factsShouldRevalidate } from "./pages/Facts";
 import { Login, loginLoader } from "./pages/Login";
 import { Pool, poolAction, poolLoader, poolShouldRevalidate } from "./pages/Pool";
 import { Pools, poolsLoader } from "./pages/Pools";
@@ -32,6 +33,7 @@ export const routes: RouteObject[] = [
           { index: true, loader: () => redirect("/attempts") },
           { path: "attempts", element: <Attempts />, loader: attemptsLoader, action: attemptsAction },
           { path: "attempts/tasks/:type/:name", element: <TaskTrend />, loader: trendLoader, shouldRevalidate: trendShouldRevalidate },
+          { path: "attempts/facts/:operation", element: <Facts />, loader: factsLoader, shouldRevalidate: factsShouldRevalidate },
           { path: "attempts/:id", element: <Attempt />, loader: attemptLoader },
           { path: "usage", loader: () => redirect("/usage/minutes") },
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },

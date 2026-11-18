@@ -19,10 +19,14 @@ Quiz stories add type-specific detail later.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from policy.accounts import Accounts
+from policy.arithmetic import ARITHMETIC, OPERATIONS
+from policy.arithmetic_facts import attempt_runs, facts, no_questions
+from policy.arithmetic_facts import operation_of as question_operation
 from policy.attempt_trends import listed, no_attempts, overview, period_json, period_of, read_view, trend
 from policy.child_page import FAVICON_PATH
 from policy.report import format_day, format_duration, timezone_note
@@ -144,6 +148,7 @@ def trend_report(
         "times": timezone_note(timezone),
         **period_json(period, now),
         "task": {"type": key.type, "name": key.name, "label": str(key), "in_policy": key in {task.key for task in tasks}},
+        "facts": None,
         "message": None,
         "trend": None,
     }
@@ -155,11 +160,64 @@ def trend_report(
         report["message"] = "Fix the period to show the trend."
     else:
         today = household_day(now)
-        found = trend(attempts.attempts(chosen, key), key, view, period, today, lambda attempt: _attempt_row(attempt, today))
+        stored = attempts.attempts(chosen, key)
+        found = trend(stored, key, view, period, today, lambda attempt: _attempt_row(attempt, today))
+        if key.type == ARITHMETIC:
+            report["facts"] = _task_operation(stored, key, tasks)
         if found["points"]:
             report["trend"] = found
         else:
             report["message"] = no_attempts(key, chosen)
+    return report
+
+
+def facts_report(
+    attempts: AttemptStore,
+    clients: Sequence[str],
+    operation: str,
+    *,
+    now: datetime,
+    timezone: str | None = None,
+    pairs: Sequence[tuple[str, str]] = (),
+) -> dict:
+    """Return one operation's arithmetic facts for one client group over the period, with the attempts page's choices.
+
+    ``message`` says why there is nothing to show: no group chosen, a group
+    not in the household, an operation the service does not have, a Custom
+    period that is not real days, or no questions of that operation.
+    """
+    view, notes = read_view(pairs)
+    chosen = view.client
+    period, problems = period_of(view, now)
+    notes.extend(problems)
+    known = operation in OPERATIONS
+    report: dict = {
+        "clients": list(clients),
+        "client": chosen,
+        "view": view.as_json(),
+        "notes": notes,
+        "times": timezone_note(timezone),
+        **period_json(period, now),
+        "operation": {"name": operation, "label": OPERATIONS[operation].label if known else operation},
+        "operations": [{"name": name, "label": each.label} for name, each in OPERATIONS.items()],
+        "message": None,
+        "facts": None,
+    }
+    if not known:
+        report["message"] = f"{operation} is not an arithmetic operation."
+    elif not chosen:
+        report["message"] = "Choose a client group."
+    elif clients and chosen not in clients:
+        report["message"] = NOT_IN_HOUSEHOLD
+    elif period is None:
+        report["message"] = "Fix the period to show the facts."
+    else:
+        today = household_day(now)
+        found = facts(attempts.attempts(chosen), operation, view, period, today, lambda attempt: _local(attempt.started_at))
+        if found["facts"]:
+            report["facts"] = found
+        else:
+            report["message"] = no_questions(operation, chosen)
     return report
 
 
@@ -191,6 +249,7 @@ def attempt_report(
             {"label": "Duration", "value": _duration(found, today)},
         ],
         "reopened": _reopened(found),
+        "arithmetic": attempt_runs(found, _event_time),
         "answers": _answers(found.detail),
         "record": _record(found.detail),
     }
@@ -239,6 +298,24 @@ def outcome_label(attempt: Attempt, today) -> str:
     if attempt.left_open(today):
         return UNFINISHED_LABEL
     return attempt.outcome
+
+
+def _task_operation(stored: Sequence[Attempt], key: TaskKey, tasks: Sequence[Task]) -> str | None:
+    """Return the operation an arithmetic task asks: its latest attempt's, or else the policy's."""
+    for attempt in reversed(stored):
+        detail = attempt.detail if isinstance(attempt.detail, Mapping) else {}
+        named = question_operation({}, detail.get("settings"))
+        if named is not None:
+            return named
+    for task in tasks:
+        if task.key == key:
+            try:
+                body = json.loads(task.body)
+            except ValueError:
+                return None
+            named = body.get("operation") if isinstance(body, Mapping) else None
+            return named if named in OPERATIONS else None
+    return None
 
 
 def _parent_task(tasks: Sequence[Task], client_group: str) -> TaskKey:

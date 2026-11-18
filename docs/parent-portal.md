@@ -133,6 +133,7 @@ Charts are built from the small kit in `src/components/charts/`, not from a char
 - A chart whose lines can be hidden, as the task trend's can, makes each legend entry a `<button>` with `aria-pressed`, and the lines shown are in the page address.
 - A point that opens a page of its own, as a trend marker opens its attempt, is a real SVG `<a href>`, so middle click and Copy link address work. Only one point is in the Tab order, and the arrow keys move between them.
 - A shape, not only a colour, tells a marker's meaning, with a key beside the chart.
+- A shaded grid, such as the arithmetic facts grid in `src/components/FactGrid.tsx`, is a table whose cells take a level from 0 to 4 with `data-level`. Each level's background and text are role properties, such as `--fact-level-3-bg` and `--fact-level-3-text`, and each cell also says its value in text, so nothing relies on colour alone. A key beside the grid names each level. A grid wider than its page scrolls inside its own box.
 - A line chart fills the space its page gives it. A bar chart is as tall as its rows, and measures its labels so the names and the values at the bar ends fit.
 - The plot measures its own box with a `ResizeObserver` and draws at that size, so a chart fills whatever space its page gives it.
 

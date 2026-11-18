@@ -84,6 +84,7 @@ export const TREND = {
   days: { from: "2026-10-17", to: "2026-11-17" },
   times: "Times are Australia/Sydney.",
   task: { type: "arithmetic", name: "sums", label: "arithmetic/sums", in_policy: true },
+  facts: "addition" as string | null,
   message: null as string | null,
   trend: {
     kind: "points" as "points" | "spelling" | null,
@@ -130,8 +131,103 @@ export const ATTEMPT = {
     { label: "Outcome", value: "pass" },
   ],
   reopened: [{ gave_up: "Saturday 31 October 2026, 16:05", came_back: "Saturday 31 October 2026, 16:10" }],
+  arithmetic: null,
   answers: ["wombat", { prompt: "2 + 2", answer: "5", correct: false }],
   record: { result: "pass", settings: { words: 10 } },
+};
+
+const fact = (m: number, n: number, counts: { asked: number; right: number; wrong: number; timeouts: number }, extra: Record<string, unknown> = {}) => ({
+  m,
+  n,
+  cell: `${m} \u00d7 ${n}`,
+  text: `${m} \u00d7 ${n} = ${m * n}`,
+  ...counts,
+  missed: counts.wrong + counts.timeouts,
+  missed_percent: Math.round((100 * (counts.wrong + counts.timeouts)) / counts.asked),
+  median_ms: null as number | null,
+  last_missed: null as string | null,
+  last_missed_day: null as string | null,
+  attempts: [] as { id: number; answers: string[] }[],
+  ...extra,
+});
+
+/** younger's multiplication over the past month: 7 × 8 missed twice in five, 7 × 6 never missed, 6 × 8 once, and 6 × 6 not asked. */
+export const FACTS = {
+  clients: ["younger", "older", "default"],
+  client: "younger",
+  view: { ...ALL_VIEW, client: "younger" },
+  notes: [] as string[],
+  today: "2026-11-17",
+  range: "Saturday 17 October 2026 18:00 to Tuesday 17 November 2026 18:00",
+  days: { from: "2026-10-17", to: "2026-11-17" },
+  times: "Times are Australia/Sydney.",
+  operation: { name: "multiplication", label: "Multiplication" },
+  operations: [
+    { name: "addition", label: "Addition" },
+    { name: "subtraction", label: "Subtraction" },
+    { name: "multiplication", label: "Multiplication" },
+    { name: "division", label: "Division" },
+  ],
+  message: null as string | null,
+  facts: {
+    rows: [6, 7],
+    columns: [6, 8],
+    facts: [
+      fact(6, 8, { asked: 4, right: 3, wrong: 1, timeouts: 0 }, { median_ms: 4000, last_missed: "Monday 9 November 2026", last_missed_day: "2026-11-09", attempts: [{ id: 7, answers: ["46"] }] }),
+      fact(7, 6, { asked: 2, right: 2, wrong: 0, timeouts: 0 }, { median_ms: 2000, attempts: [{ id: 7, answers: ["42", "42"] }] }),
+      fact(7, 8, { asked: 5, right: 3, wrong: 1, timeouts: 1 }, {
+        median_ms: 3000,
+        last_missed: "Friday 13 November 2026",
+        last_missed_day: "2026-11-13",
+        attempts: [
+          { id: 9, answers: ["timeout", "56"] },
+          { id: 7, answers: ["54", "54", "56"] },
+        ],
+      }),
+    ],
+    attempts: {
+      "7": { started: "Tuesday 27 October 2026, 16:00", task: "times" },
+      "9": { started: "Friday 13 November 2026, 16:00", task: "tables" },
+    },
+  },
+};
+
+const RUN_QUESTION = { m: 6, n: 7, operation: "addition", allowed_ms: 10_000 };
+
+/** An arithmetic attempt: a run that expired, then a run that passed. */
+export const ARITHMETIC_ATTEMPT = {
+  ...ATTEMPT,
+  id: 43,
+  task: "sums",
+  type: "arithmetic",
+  reopened: [],
+  answers: null,
+  arithmetic: {
+    last: {
+      run: 2,
+      expired: null,
+      operation: "addition",
+      operation_label: "Addition",
+      figures: { points: 2, pass_mark: 2, questions: 4, maximum: null, wrong: 1, timeouts: 1, time_ms: 17_500, average_ms: 2250 },
+      questions: [
+        { ...RUN_QUESTION, text: "6 + 7 = 13", answer: "13", outcome: "correct", outcome_label: "Right", taken_ms: 2000 },
+        { ...RUN_QUESTION, text: "6 + 7 = 13", answer: "12", outcome: "incorrect", outcome_label: "Wrong", taken_ms: 3000 },
+        { ...RUN_QUESTION, m: 7, n: 8, text: "7 + 8 = 15", answer: "", outcome: "timeout", outcome_label: "Timeout", taken_ms: 10_000 },
+        { ...RUN_QUESTION, m: 2, n: 0, text: "2 + 0 = 2", answer: "2", outcome: "correct", outcome_label: "Right", taken_ms: 2500 },
+      ],
+    },
+    expired: [
+      {
+        run: 1,
+        expired: "Saturday 31 October 2026, 17:00",
+        operation: "addition",
+        operation_label: "Addition",
+        figures: { points: 0, pass_mark: 2, questions: 1, maximum: null, wrong: 1, timeouts: 0, time_ms: 4000, average_ms: null },
+        questions: [{ ...RUN_QUESTION, text: "6 + 7 = 13", answer: "0", outcome: "incorrect", outcome_label: "Wrong", taken_ms: 4000 }],
+      },
+    ],
+  },
+  record: { settings: { operation: "addition" }, last_activity: "2026-10-31T17:30:00" },
 };
 
 /** Default settings over the past week at Friday 13 November 2026 21:30: younger used 1h 15m on the Tuesday, older nothing. */
@@ -359,6 +455,10 @@ function standard(call: Call): Reply {
       return { body: ATTEMPT };
     case "/parent/api/attempts/tasks/arithmetic/sums":
       return { body: TREND };
+    case "/parent/api/attempts/43":
+      return { body: ARITHMETIC_ATTEMPT };
+    case "/parent/api/attempts/facts/multiplication":
+      return { body: FACTS };
     case "/parent/api/usage/minutes":
       return { body: USAGE };
     case "/parent/api/usage/bytes":

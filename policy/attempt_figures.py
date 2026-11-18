@@ -65,15 +65,23 @@ class Figures:
         return found
 
 
-def figures(task_type: str, detail: Mapping) -> Figures | None:
-    """Return an attempt's figures, or None when its type has none or nothing was asked yet."""
+def figures(task_type: str, detail: Mapping, number: int | None = None) -> Figures | None:
+    """Return an attempt's figures, or None when its type has none or nothing was asked yet.
+
+    ``number`` names an earlier run to work out instead of the last, as an
+    attempt's page does for each expired run. Its pass mark is the one stored
+    on the attempt, which is the last run's, as no other is kept.
+    """
     if task_type not in TYPES or not isinstance(detail, Mapping):
         return None
     questions = detail.get("questions")
     if not isinstance(questions, list):
         return None
     runs = detail.get("runs")
-    run = runs[-1] if isinstance(runs, list) and runs and isinstance(runs[-1], Mapping) else None
+    runs = [each for each in runs if isinstance(each, Mapping)] if isinstance(runs, list) else []
+    if number is not None:
+        runs = [each for each in runs if each.get("run") == number]
+    run = runs[-1] if runs else None
     number = run.get("run") if run is not None else None
     finished = [
         item
