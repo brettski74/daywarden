@@ -779,6 +779,8 @@ def test_the_policy_read_tools(service):
     household = tool_answer(service, access, "get_household")
     assert household == {
         "entry": "entry", "timezone": "Australia/Sydney", "bucket_length": "3m",
+        "time_grace": "5m", "volume_grace": "1M", "host_retention": "30d", "request_retention": "30d",
+        "proxy_configuration": {"direct": {"localhost": True, "plain_host_names": True, "policy_server": True, "local_subnets": True, "local_domains": True, "extra": []}},
         "date": "2026-11-17", "time": "20:30:00", "weekday": "tuesday",
     }
     assert tool_answer(service, access, "list_client_groups") == {"client_groups": [{"name": "younger", "addresses": ["192.0.2.40"]}]}

@@ -165,6 +165,17 @@ def span(seconds: int) -> str:
     return f"{seconds}s"
 
 
+_SIZES = (("T", 1024**4), ("G", 1024**3), ("M", 1024**2), ("k", 1024))
+
+
+def size(count: int) -> str:
+    """Return a byte count as the policy file writes one, such as 720M or 1G."""
+    for unit, scale in _SIZES:
+        if count and count % scale == 0:
+            return f"{count // scale}{unit}"
+    return f"{count}b"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m policy.check", description="Check the household policy.")
     parser.add_argument("--host-dir", help="the host directory mounted at /etc/daywarden, for the paths shown")

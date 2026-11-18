@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  ShieldCheck,
   SquarePlus,
   type LucideIcon,
 } from "lucide-react";
@@ -17,7 +18,8 @@ import { signOut } from "../api";
 import { useExpander } from "../motion";
 import { CAPITALISATION_POOLS, PARTS_POOLS } from "../pools";
 import { MCP } from "../mcp";
-import { ASSETS_KEY, KEY_STEP, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
+import { ASSETS_KEY, KEY_STEP, POLICY_KEY, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
+import { POLICY, POLICY_PAGES, policyPath } from "../policy";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
@@ -121,6 +123,21 @@ function AssetGroup() {
   );
 }
 
+/** Policy: the household's groups, windows, quotas, and settings. */
+function PolicyGroup() {
+  const { pathname } = useLocation();
+  const onPolicyPage = pathname.startsWith(`${POLICY}/`);
+  return (
+    <NavGroup id="policy-list" label="Policy" icon={ShieldCheck} storageKey={POLICY_KEY} onItsPage={onPolicyPage} hint="The policy list stays open while a policy page is open">
+      {POLICY_PAGES.map((page) => (
+        <li key={page.key}>
+          <NavLink to={policyPath(page.key)}>{page.title}</NavLink>
+        </li>
+      ))}
+    </NavGroup>
+  );
+}
+
 /** Settings: the MCP server. */
 function SettingsGroup() {
   const { pathname } = useLocation();
@@ -201,6 +218,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
                 <UsageGroup />
                 <TaskGroup tasks={tasks} />
                 <AssetGroup />
+                <PolicyGroup />
                 <SettingsGroup />
               </ul>
             </nav>

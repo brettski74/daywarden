@@ -33,6 +33,20 @@ export const LABELS: Record<string, string> = {
   max_timeout: "Max Timeout",
   min_timeout: "Min Timeout",
   practice_fallback: "Practice Fallback",
+  addresses: "Addresses",
+  patterns: "Patterns",
+  priority: "Priority",
+  time: "Time Limit",
+  bytes: "Byte Limit",
+  time_grace: "Time Grace",
+  volume_grace: "Volume Grace",
+  ruleset: "Rule Set",
+  entry: "Entry Rule Set",
+  timezone: "Timezone",
+  bucket_length: "Bucket Length",
+  host_retention: "Host Retention",
+  request_retention: "Request Retention",
+  extra: "Extra",
 };
 
 export function label(field: string): string {

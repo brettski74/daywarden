@@ -2861,3 +2861,152 @@ p.task-gone {
   color: var(--mark-wrong);
   font-weight: 600;
 }
+
+/* Policy pages: one section per item, each with its name, its file when not policy.yaml, and its fields. */
+
+.policy-items {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.policy-item {
+  min-width: 0;
+  padding: 0.6rem 0.9rem 0.9rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.policy-item[data-changed] {
+  border-color: var(--focus-ring);
+}
+
+.policy-item[data-marked] {
+  opacity: 0.7;
+}
+
+.policy-item[data-marked] .policy-name input {
+  text-decoration: line-through;
+}
+
+.policy-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.policy-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.policy-file,
+.policy-marked,
+.policy-hint {
+  font-size: 0.9rem;
+}
+
+.policy-heading {
+  margin: 0 0 0.3rem;
+  font-size: 1.1rem;
+}
+
+.policy-list {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+  margin: 0.4rem 0;
+}
+
+.policy-list-label {
+  font-weight: 600;
+}
+
+.policy-list ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.policy-list li input {
+  width: 22rem;
+  max-width: 100%;
+}
+
+.policy-period {
+  min-width: 0;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.35rem;
+}
+
+.policy-period[data-changed] {
+  background: var(--changed-bg);
+}
+
+.policy-period-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 1rem;
+}
+
+.policy-period-field {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.policy-period-field input {
+  width: 5.5rem;
+}
+
+.policy-weekdays {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.policy-weekday {
+  min-width: 2.2rem;
+  padding: 0.25rem 0.3rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--button-quiet-bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.policy-weekday[aria-pressed="true"] {
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+.policy-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+  margin: 0.4rem 0;
+}
+
+.policy-switches .setting-flag {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.policy-add {
+  justify-self: start;
+}

@@ -43,6 +43,7 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
+from policy.policy_admin import PolicyChanges
 from policy.pool_admin import CAPITALISATION, PoolAdmin
 from policy.task_admin import TaskAdmin, missing
 from policy.task_create import TaskChanges
@@ -164,6 +165,7 @@ def install_portal(
     changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
     presets = Presets(usage_store.connection)
     pools = PoolAdmin(tasks) if tasks is not None else None
+    policy_changes = PolicyChanges(tasks) if tasks is not None else None
     capitalisation_pools = PoolAdmin(tasks, CAPITALISATION) if tasks is not None else None
     gate = PortalGate(accounts, loaded)
     guard = gate.guard
@@ -335,6 +337,31 @@ def install_portal(
         now = loaded()
         pairs = list(request.query_params.multi_items())
         return _json(200, usage_graph(now.policy, usage_store, presets, pairs, now.clock.local(), unit))
+
+    @app.get("/parent/api/policy/{page}")
+    async def policy_page(request: Request, page: str) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if policy_changes is None:
+            return _json(404, {"error": f"{page} is not a policy page."})
+        answer = policy_changes.page(page)
+        return _json(answer.status, answer.body)
+
+    @app.post("/parent/api/policy/{page}")
+    async def policy_save(request: Request, page: str) -> Response:
+        if request.url.scheme != "https":
+            return _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return refused
+        username, refused = guard(request)
+        if refused is not None:
+            return refused
+        if policy_changes is None:
+            return _json(404, {"error": f"{page} is not a policy page."})
+        answer = policy_changes.save_page(page, body, username)
+        return _json(answer.status, answer.body)
 
     @app.get("/parent/api/tasks")
     async def task_list(request: Request) -> Response:

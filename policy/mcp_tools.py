@@ -16,9 +16,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import time
 
-from policy.check import span
+from policy.check import size, span
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.mcp_settings import McpSettings
+from policy.pac import SWITCHES
 from policy.policy_admin import PolicyChanges
 from policy.pool_admin import PoolAdmin
 from policy.portal import client_names
@@ -33,7 +34,6 @@ from policy.attempt_trends import OUTCOMES as ATTEMPT_OUTCOMES, SETS
 
 PERIODS = tuple(name.replace("-", "_") for name in RANGES if name != "custom")
 _WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-_SIZES = (("T", 1024**4), ("G", 1024**3), ("M", 1024**2), ("k", 1024))
 
 
 class ToolProblem(Exception):
@@ -225,11 +225,7 @@ def _period(period: Period) -> dict:
     return found
 
 
-def _size(count: int) -> str:
-    for unit, scale in _SIZES:
-        if count and count % scale == 0:
-            return f"{count // scale}{unit}"
-    return f"{count}b"
+_size = size
 
 
 def _action(action: Action) -> dict:
@@ -268,6 +264,16 @@ def get_household(sources: Sources, _arguments: Mapping) -> dict:
         "entry": policy.entry,
         "timezone": policy.timezone,
         "bucket_length": span(policy.bucket_length),
+        "time_grace": span(policy.time_grace),
+        "volume_grace": size(policy.volume_grace),
+        "host_retention": f"{policy.host_retention}d",
+        "request_retention": f"{policy.request_retention}d",
+        "proxy_configuration": {
+            "direct": {
+                **{name: getattr(policy.proxy_configuration, name) for name in SWITCHES},
+                "extra": [item.text for item in policy.proxy_configuration.extra],
+            }
+        },
         "date": local.date().isoformat(),
         "time": local.strftime("%H:%M:%S"),
         "weekday": _WEEKDAY_NAMES[local.weekday()],
@@ -483,7 +489,7 @@ _TASK_KEY = {
 }
 
 READ_TOOLS: tuple[Tool, ...] = (
-    Tool("get_household", "household", "read", "The household's entry rule set, timezone, usage bucket length, and its date and time now.", get_household),
+    Tool("get_household", "household", "read", "The household's entry rule set, timezone, usage bucket length, graces, retentions, proxy configuration, and its date and time now.", get_household),
     Tool("list_client_groups", "client_groups", "read", "Each client group and its addresses.", list_client_groups),
     Tool("list_site_groups", "site_groups", "read", "Each site group, its priority, and its host patterns.", list_site_groups),
     Tool("list_time_windows", "time_windows", "read", "Each time window and its periods. An end such as 09:00+1 is on a later day.", list_time_windows),

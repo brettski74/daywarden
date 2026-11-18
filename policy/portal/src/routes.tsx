@@ -7,6 +7,7 @@ import { Login, loginLoader } from "./pages/Login";
 import { Mcp, mcpAction, mcpLoader, mcpShouldRevalidate } from "./pages/Mcp";
 import { McpActivity, mcpActivityLoader } from "./pages/McpActivity";
 import { McpConnect, mcpConnectLoader } from "./pages/McpConnect";
+import { HouseholdPage, ItemsPage, policyAction, policyLoader, policyShouldRevalidate } from "./pages/Policy";
 import { Pool, poolAction, poolLoader, poolShouldRevalidate } from "./pages/Pool";
 import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
@@ -14,9 +15,19 @@ import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, ta
 import { Requests, requestsLoader } from "./pages/Requests";
 import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend";
 import { Usage, usageLoader } from "./pages/Usage";
+import type { PageKey } from "./policy";
 import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 
 export const BASENAME = "/parent";
+
+/** The five policy pages, each loading and saving its whole section at /parent/api/policy/<page>. */
+function policyRoutes(): RouteObject[] {
+  const common = (key: PageKey) => ({ path: `policy/${key}`, loader: policyLoader(key), action: policyAction(key), shouldRevalidate: policyShouldRevalidate });
+  return [
+    ...(["client-groups", "site-groups", "time-windows", "quotas"] as const).map((key) => ({ ...common(key), element: <ItemsPage key={key} page={key} /> })),
+    { ...common("household"), element: <HouseholdPage key="household" /> },
+  ];
+}
 
 const loading = <div className="loading" aria-busy="true" />;
 
@@ -68,6 +79,7 @@ export const routes: RouteObject[] = [
             action: poolAction,
             shouldRevalidate: poolShouldRevalidate,
           },
+          ...policyRoutes(),
           { path: "settings/mcp", element: <Mcp />, loader: mcpLoader, action: mcpAction, shouldRevalidate: mcpShouldRevalidate },
           { path: "settings/mcp/activity", element: <McpActivity />, loader: mcpActivityLoader },
           { path: "settings/mcp/connect", element: <McpConnect />, loader: mcpConnectLoader },

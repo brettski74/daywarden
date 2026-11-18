@@ -191,6 +191,18 @@ _HOUSEHOLD = {
     "entry": {"type": "string", "description": "The rule set every request starts at."},
     "timezone": {"type": ["string", "null"], "description": "An IANA name, such as America/Toronto. null uses the machine's."},
     "bucket_length": {"type": ["string", "null"], "description": "The usage bucket length, which divides a day, such as 5m. null is 5m."},
+    "time_grace": {"type": ["string", "null"], "description": "Time past a quota's limit before a transfer is cut, such as 5m. A quota's own grace wins. null is 5m."},
+    "volume_grace": {"type": ["string", "null"], "description": "Bytes past a quota's limit before a transfer is cut, such as 1M. A quota's own grace wins. null is 1M."},
+    "host_retention": {"type": ["string", "null"], "description": "How long the usage by host is kept, a whole number of days such as 30d. null is 30d."},
+    "request_retention": {"type": ["string", "null"], "description": "How long each request is kept, a whole number of days such as 30d. null is 30d."},
+    "proxy_configuration": {
+        "type": ["object", "null"],
+        "description": (
+            "Which hosts the proxy auto-configuration file sends direct: {\"direct\": {localhost, plain_host_names, "
+            "policy_server, local_subnets, local_domains: true or false, each on when left out, extra: [hosts, "
+            "domains, addresses, or subnets]}}. null takes the section out, so every switch is on and extra is empty."
+        ),
+    },
 }
 
 
@@ -224,7 +236,7 @@ def _tools() -> tuple[Tool, ...]:
     tools.append(
         Tool(
             "update_household", "household", "update",
-            "Change the household's entry rule set, timezone, or usage bucket length.",
+            "Change the household's entry rule set, timezone, usage bucket length, graces, retentions, or proxy configuration.",
             update_household, {**_HOUSEHOLD, **_DRY_RUN}, (), lambda _arguments: "household", write=True,
         )
     )

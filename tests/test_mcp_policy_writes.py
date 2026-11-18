@@ -449,3 +449,21 @@ def test_a_household_setting_not_yet_written_goes_after_entry(house):
     house.ok("update_household", {"bucket_length": None, "entry": "browsing"})
     assert house.text("policy.yaml") == HOUSE.replace("entry: household", "entry: browsing")
     assert house.commit().endswith("ada via Claude Code: saved household settings")
+
+
+def test_the_household_graces_retentions_and_proxy_configuration_are_read_written_and_taken_out_with_null(house):
+    found = house.ok(
+        "update_household",
+        {
+            "time_grace": "10m", "volume_grace": "2M", "host_retention": "7d", "request_retention": "14d",
+            "proxy_configuration": {"direct": {"local_subnets": False, "extra": ["*.home.arpa"]}},
+        },
+    )["household"]
+    assert (found["time_grace"], found["volume_grace"], found["host_retention"], found["request_retention"]) == ("10m", "2M", "7d", "14d")
+    assert found["proxy_configuration"]["direct"]["local_subnets"] is False
+    assert found["proxy_configuration"]["direct"]["extra"] == ["*.home.arpa"]
+    policy = house.in_force()
+    assert (policy.time_grace, policy.volume_grace, policy.host_retention, policy.request_retention) == (600, 2 * 1024**2, 7, 14)
+    house.ok("update_household", {"time_grace": None, "volume_grace": None, "host_retention": None, "request_retention": None, "proxy_configuration": None})
+    assert house.text("policy.yaml") == HOUSE
+    assert house.in_force().proxy_configuration.local_subnets is True

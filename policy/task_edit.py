@@ -173,9 +173,10 @@ def rewrite_root(text: str, source: Path, changes: Mapping[str, object]) -> str:
     return _apply(text, _edit_mapping(text, root, changes, 2))
 
 
-def add_root_entry_after(text: str, source: Path, after: str, key: str, value: str) -> str:
+def add_root_entry_after(text: str, source: Path, after: str, key: str, value: object) -> str:
     """Return ``text`` with ``key: value`` added to the top-level mapping on the line after the entry ``after``.
 
+    ``value`` is the text of a scalar, or a mapping of changes, which is written as a block.
     Where ``after`` is not a block entry of the file, the new entry goes at the end, as ``rewrite_root`` adds one.
     """
     root = _root(text, source)
@@ -185,7 +186,7 @@ def add_root_entry_after(text: str, source: Path, after: str, key: str, value: s
         if name == after and key_node.start_mark.column == 0:
             at = _line_end(text, max(_last_end(text, node), key_node.end_mark.index))
             prefix = "" if at == 0 or text[at - 1] == "\n" else "\n"
-            return text[:at] + prefix + f"{key}: {value}\n" + text[at:]
+            return text[:at] + prefix + _block_entry(key, value, "", 2) + text[at:]
     return rewrite_root(text, source, {key: value})
 
 

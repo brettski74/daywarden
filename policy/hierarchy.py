@@ -531,6 +531,9 @@ def written(path: str | Path) -> Written:
         return {name: _file_of(where) for name, where in where_table.items()}
 
     entry = build.scalars.get("entry", (None, ""))[0]
+    scalars = {key: _file_of(where) for key, (_value, where) in build.scalars.items()}
+    if build.proxy_where:
+        scalars["proxy_configuration"] = _file_of(build.proxy_where)
     return Written(
         places={
             "client_groups": files(build.client_where),
@@ -539,7 +542,7 @@ def written(path: str | Path) -> Written:
             "quotas": files(build.quota_where),
             "rule_sets": files(build.ruleset_where),
         },
-        scalars={key: _file_of(where) for key, (_value, where) in build.scalars.items()},
+        scalars=scalars,
         entry=entry if isinstance(entry, str) else None,
         rule_sets=dict(build.rule_sets),
         quota_rule_sets={name: raw.ruleset for name, raw in build.quotas.items() if isinstance(raw.ruleset, str)},
