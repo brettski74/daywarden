@@ -41,7 +41,11 @@ from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy import control
-from policy.portal import PORTAL_DIR, client_names, install_portal
+from policy import mcp_settings
+from policy.mcp_server import McpServer, install_mcp, parent_names
+from policy.mcp_tools import Sources
+from policy.pool_admin import PoolAdmin
+from policy.portal import PORTAL_DIR, PortalGate, client_names, install_portal
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE
 from policy.selection import task_media_path, task_page_path
@@ -52,6 +56,7 @@ from policy.task_admin import Reloads, TaskAdmin
 from policy.task_page import respond_task, task_media
 from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore, outcome_of
+from policy.usage_graph import Presets
 
 LOOPBACK = frozenset({"127.0.0.1", "::1"})
 
@@ -100,19 +105,32 @@ def create_app() -> FastAPI:
     def health() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
-    def apply_reload() -> dict:
+    mcp_box: dict[str, McpServer] = {}
+
+    def apply_reload(*, with_mcp: bool = True) -> dict:
+        """Load the policy again, and mcp.yaml with it unless with_mcp is False, as after a portal save of a task."""
         warnings: list[str] = []
+        problems: list[str] = []
         try:
             policy = load_required(policy_file, holder.loaded.policy, warn=warnings.append)
         except ConfigError as error:
-            print(f"reload refused: the policy has {len(error.problems)} errors", flush=True)
-            _announce(error.problems)
-            return {"reloaded": False, "errors": list(error.problems), "warnings": warnings}
+            problems = list(error.problems)
+            policy = None
+        settings = mcp_settings.load(mcp_settings.settings_file(policy_file)) if with_mcp else None
+        if settings is not None:
+            problems += settings.problems
+        if problems or policy is None:
+            print(f"reload refused: the policy has {len(problems)} errors", flush=True)
+            _announce(problems)
+            return {"reloaded": False, "errors": problems, "warnings": warnings}
         zone, source = household_zone(policy.timezone, localtime)
         clock = HouseholdClock(zone)
         usage_store.install_length(policy.bucket_length, clock.local())
         holder.loaded = Loaded(policy, clock, source)
         summary = summary_lines(policy, clock, source)
+        if settings is not None and "server" in mcp_box:
+            mcp_box["server"].apply(settings)
+            summary.append(mcp_settings.summary_line(settings))
         print(f"reloaded {policy_file}", flush=True)
         _announce([*summary, *warnings])
         return {"reloaded": True, "summary": summary, "warnings": warnings}
@@ -278,10 +296,28 @@ def create_app() -> FastAPI:
         now=lambda: holder.loaded.clock.local(),
         today=lambda: holder.loaded.clock.today(),
         attempts=attempts,
-        reloads=Reloads(apply_reload, others),
+        reloads=Reloads(lambda: apply_reload(with_mcp=False), others),
         clients=lambda: client_names(holder.loaded.policy),
         recordings=recordings,
     )
+    gate = PortalGate(accounts, lambda: holder.loaded)
+    mcp = McpServer(
+        policy_file=policy_file,
+        loaded=lambda: holder.loaded,
+        accounts=accounts,
+        sources=Sources(
+            loaded=lambda: holder.loaded,
+            attempts=attempts,
+            usage=usage_store,
+            presets=Presets(usage_store.connection),
+            tasks=tasks,
+            pools=PoolAdmin(tasks),
+        ),
+        names=parent_names(os.environ.get("PARENT_NAMES")),
+    )
+    mcp_box["server"] = mcp
+    _announce([mcp_settings.summary_line(mcp.state), *mcp.state.problems])
+    install_mcp(app, mcp, gate)
     install_portal(
         app,
         loaded=lambda: holder.loaded,

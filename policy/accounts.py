@@ -2,7 +2,7 @@
 
 There is no sign-up page. A host command adds or replaces one username.
 The password is read once and stored as an Argon2id hash. Replacing a
-password ends that account's sessions. A session key is 256 bits from the
+password ends that account's sessions and the MCP connections it approved. A session key is 256 bits from the
 operating system's random source. The browser receives the key. The database
 stores the SHA-256 of the key, the account, the sign-in time, and the time
 of the last accepted request.
@@ -93,6 +93,10 @@ class Accounts:
         (count,) = self.connection.execute("SELECT COUNT(*) FROM parent_accounts").fetchone()
         return int(count)
 
+    def account_id(self, username: str) -> int | None:
+        row = self.connection.execute("SELECT id FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        return None if row is None else int(row[0])
+
     def set_password(self, username: str, password: str) -> None:
         """Add this username, or replace its password and end its sessions.
 
@@ -123,6 +127,10 @@ class Accounts:
                 "DELETE FROM parent_sessions WHERE account_id = ?",
                 (account_id,),
             )
+        # The agents this parent approved must be approved again, as the browser must sign in again.
+        from policy.mcp_store import McpStore
+
+        McpStore(self.connection).end_for_account(account_id, datetime.now(timezone.utc), "the parent's password was replaced")
 
     def login(self, username: str, password: str, now: datetime) -> str | None:
         """Return a new session key, or None when the sign-in is refused.

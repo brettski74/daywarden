@@ -359,7 +359,9 @@ def _empties(node: yaml.MappingNode, changes: Mapping[str, object]) -> bool:
 
 
 def _replaceable(node: yaml.Node) -> bool:
-    """True for a one-line scalar whose text can be swapped where it stands."""
+    """True for a one-line scalar or flow list whose text can be swapped where it stands."""
+    if isinstance(node, yaml.SequenceNode) and node.flow_style:
+        return node.start_mark.line == node.end_mark.line
     if not isinstance(node, yaml.ScalarNode) or node.style not in _SIMPLE_STYLES:
         return False
     if node.style in (None, "") and node.value == "":

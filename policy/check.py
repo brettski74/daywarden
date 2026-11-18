@@ -8,6 +8,9 @@ pools beside the policy, with no previous policy. A parts-of-speech task that
 still has inline ``sentences`` is rewritten into a pool file before the new
 rules run; other than that migration, the check changes nothing.
 
+``mcp.yaml`` beside the policy, the MCP server's settings, is checked too.
+Each problem in it is an error, as a problem in the policy is.
+
 A good policy prints the summary the decisions service logs when it loads
 one, then any warnings, and exits 0. A policy with errors prints a count
 line, every error, then any warnings, to stderr, and exits 1. A missing
@@ -31,6 +34,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from policy import mcp_settings
 from policy.clock import HouseholdClock, machine_zone, named_zone
 from policy.hierarchy import ConfigError, Policy, load, require_yaml
 from policy.selection import picker_url, proxy_config_url
@@ -170,15 +174,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     warnings: list[str] = []
     names = [] if args.parent_names is None else bypass_warnings(args.parent_names, bypass_file())
+    mcp = mcp_settings.load(mcp_settings.settings_file(policy_file()))
     try:
         policy = load_required(policy_file(), warn=warnings.append)
     except ConfigError as error:
-        lines = error_lines(error.problems, [*warnings, *names], args.host_dir, args.refused)
+        lines = error_lines([*error.problems, *mcp.problems], [*warnings, *names], args.host_dir, args.refused)
+        print("\n".join(lines), file=sys.stderr)
+        return 1
+    if mcp.problems:
+        lines = error_lines(mcp.problems, [*warnings, *names], args.host_dir, args.refused)
         print("\n".join(lines), file=sys.stderr)
         return 1
     if not args.quiet:
         zone, source = household_zone(policy.timezone, machine_localtime())
-        lines = summary_lines(policy, HouseholdClock(zone), source) + warning_lines([*warnings, *names], args.host_dir)
+        lines = summary_lines(policy, HouseholdClock(zone), source) + [mcp_settings.summary_line(mcp)]
+        lines += warning_lines([*warnings, *names], args.host_dir)
         print("\n".join(lines))
     elif names:
         print("\n".join(warning_lines(names, args.host_dir)))

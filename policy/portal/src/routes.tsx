@@ -4,6 +4,9 @@ import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Facts, factsLoader, factsShouldRevalidate } from "./pages/Facts";
 import { Login, loginLoader } from "./pages/Login";
+import { Mcp, mcpAction, mcpLoader, mcpShouldRevalidate } from "./pages/Mcp";
+import { McpActivity, mcpActivityLoader } from "./pages/McpActivity";
+import { McpConnect, mcpConnectLoader } from "./pages/McpConnect";
 import { Pool, poolAction, poolLoader, poolShouldRevalidate } from "./pages/Pool";
 import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
@@ -57,6 +60,9 @@ export const routes: RouteObject[] = [
             action: poolAction,
             shouldRevalidate: poolShouldRevalidate,
           },
+          { path: "settings/mcp", element: <Mcp />, loader: mcpLoader, action: mcpAction, shouldRevalidate: mcpShouldRevalidate },
+          { path: "settings/mcp/activity", element: <McpActivity />, loader: mcpActivityLoader },
+          { path: "settings/mcp/connect", element: <McpConnect />, loader: mcpConnectLoader },
           { path: "*", element: <NotFound /> },
         ],
       },

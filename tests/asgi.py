@@ -4,7 +4,7 @@ import asyncio
 import json
 
 
-def call(app, method, path, *, query="", body=b"", cookie=None, content_type=None, scheme="https", json_body=None):
+def call(app, method, path, *, query="", body=b"", cookie=None, content_type=None, scheme="https", json_body=None, headers=None):
     """Return the status, the body text, and the headers, each header a list of values."""
     if json_body is not None:
         body = json.dumps(json_body).encode()
@@ -23,7 +23,8 @@ def call(app, method, path, *, query="", body=b"", cookie=None, content_type=Non
     async def send(message):
         messages.append(message)
 
-    headers = []
+    extra = headers or {}
+    headers = [(name.lower().encode(), value.encode()) for name, value in extra.items()]
     if content_type:
         headers.append((b"content-type", content_type.encode()))
     if cookie:

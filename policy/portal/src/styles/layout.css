@@ -2687,3 +2687,62 @@ p.task-gone {
   background: var(--fact-none-bg);
   color: var(--fact-none-text);
 }
+
+/* The MCP Server page: the server and durations side by side, then the permission matrix and the connections. */
+
+.mcp-common {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mcp-common .settings {
+  grid-template-columns: max-content minmax(8rem, 22rem);
+}
+
+.mcp-matrix {
+  width: auto;
+}
+
+.mcp-matrix th[scope="row"] {
+  font-weight: normal;
+}
+
+.mcp-matrix .mcp-matrix-cell {
+  text-align: center;
+  min-width: 5rem;
+}
+
+.mcp-problems {
+  margin: 0.25rem 0 1rem;
+  padding-left: 1.2rem;
+}
+
+/* The consent page an agent opens. */
+
+.mcp-consent {
+  max-width: 44rem;
+}
+
+.mcp-consent-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 1rem;
+  margin: 1rem 0;
+}
+
+.mcp-consent-facts dt {
+  font-weight: 600;
+}
+
+.mcp-consent-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-consent-permissions {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.2rem;
+}
+
+.mcp-consent-buttons {
+  justify-content: flex-start;
+}

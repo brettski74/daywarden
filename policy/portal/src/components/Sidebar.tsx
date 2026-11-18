@@ -7,6 +7,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
   SquarePlus,
   type LucideIcon,
 } from "lucide-react";
@@ -15,7 +16,8 @@ import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
 import { POOLS } from "../pools";
-import { ASSETS_KEY, KEY_STEP, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
+import { MCP } from "../mcp";
+import { ASSETS_KEY, KEY_STEP, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
 
 type Entry = { to: string; label: string; icon: LucideIcon };
@@ -116,6 +118,19 @@ function AssetGroup() {
   );
 }
 
+/** Settings: the MCP server. */
+function SettingsGroup() {
+  const { pathname } = useLocation();
+  const onSettingsPage = pathname === MCP || pathname.startsWith(`${MCP}/`);
+  return (
+    <NavGroup id="settings-list" label="Settings" icon={Settings} storageKey={SETTINGS_KEY} onItsPage={onSettingsPage} hint="The settings list stays open while a settings page is open">
+      <li>
+        <NavLink to={MCP}>MCP Server</NavLink>
+      </li>
+    </NavGroup>
+  );
+}
+
 export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[] }) {
   const { width, limits, collapsed, resize, setCollapsed } = useSidebar();
   const setExpanded = useCallback((value: boolean) => setCollapsed(!value), [setCollapsed]);
@@ -183,6 +198,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
                 <UsageGroup />
                 <TaskGroup tasks={tasks} />
                 <AssetGroup />
+                <SettingsGroup />
               </ul>
             </nav>
           </>

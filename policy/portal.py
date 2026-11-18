@@ -73,6 +73,7 @@ _HTTPS_ONLY = """<!DOCTYPE html>
 </html>
 """
 _NOT_BUILT = "The parent portal is not built into this image."
+NO_FRAMES = {"content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY"}
 
 
 def safe_next(value: object) -> str:
@@ -108,6 +109,37 @@ def client_names(policy: Policy | None) -> tuple[str, ...]:
     return tuple(names)
 
 
+class PortalGate:
+    """The parent session checks every data endpoint makes, for endpoints added outside ``install_portal``."""
+
+    def __init__(self, accounts: Accounts, loaded: Callable[[], object]) -> None:
+        self.accounts = accounts
+        self.loaded = loaded
+
+    def guard(self, request: Request) -> tuple[str | None, Response | None]:
+        """Return the signed-in username, or the refusal to send instead."""
+        if request.url.scheme != "https":
+            return None, _json(403, {"error": "Open this page over HTTPS."})
+        if self.accounts.count() == 0:
+            return None, _json(403, {"error": _CLOSED, "closed": True})
+        username = self.accounts.accept(_cookie(request), self.loaded().clock.local())
+        if username is None:
+            return None, _json(401, {"error": _SIGNED_OUT})
+        return username, None
+
+    async def acting(self, request: Request) -> tuple[dict, str, Response | None]:
+        """Return a state-changing request's JSON body and the signed-in username, or the refusal to send instead."""
+        if request.url.scheme != "https":
+            return {}, "", _json(403, {"error": "Open this page over HTTPS."})
+        body, refused = await _json_body(request)
+        if refused is not None:
+            return {}, "", refused
+        username, refused = self.guard(request)
+        if refused is not None:
+            return {}, "", refused
+        return body, username or "", None
+
+
 def install_portal(
     app: FastAPI,
     *,
@@ -132,17 +164,9 @@ def install_portal(
     changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
     presets = Presets(usage_store.connection)
     pools = PoolAdmin(tasks) if tasks is not None else None
-
-    def guard(request: Request) -> tuple[str | None, Response | None]:
-        """Return the signed-in username, or the refusal to send instead."""
-        if request.url.scheme != "https":
-            return None, _json(403, {"error": "Open this page over HTTPS."})
-        if accounts.count() == 0:
-            return None, _json(403, {"error": _CLOSED, "closed": True})
-        username = accounts.accept(_cookie(request), loaded().clock.local())
-        if username is None:
-            return None, _json(401, {"error": _SIGNED_OUT})
-        return username, None
+    gate = PortalGate(accounts, loaded)
+    guard = gate.guard
+    acting = gate.acting
 
     @app.get("/parent/api/session")
     async def session(request: Request) -> Response:
@@ -394,18 +418,6 @@ def install_portal(
             return _json(404, {"error": missing(TaskKey(kind, name))})
         answer = tasks.keep(TaskKey(kind, name), body)
         return _json(answer.status, answer.body)
-
-    async def acting(request: Request) -> tuple[dict, str, Response | None]:
-        """Return a state-changing request's JSON body and the signed-in username, or the refusal to send instead."""
-        if request.url.scheme != "https":
-            return {}, "", _json(403, {"error": "Open this page over HTTPS."})
-        body, refused = await _json_body(request)
-        if refused is not None:
-            return {}, "", refused
-        username, refused = guard(request)
-        if refused is not None:
-            return {}, "", refused
-        return body, username or "", None
 
     @app.post("/parent/api/tasks/{kind}/{name}/rename")
     async def task_rename(request: Request, kind: str, name: str) -> Response:
@@ -671,7 +683,8 @@ def install_portal(
         index = root / "index.html"
         if not index.is_file():
             return PlainTextResponse(_NOT_BUILT, status_code=503, headers={"cache-control": "no-store"})
-        return FileResponse(index, media_type="text/html; charset=utf-8", headers={"cache-control": "no-store"})
+        # No portal page, the MCP consent page above all, may be shown in a frame on another site.
+        return FileResponse(index, media_type="text/html; charset=utf-8", headers={"cache-control": "no-store", **NO_FRAMES})
 
     @app.get("/")
     async def home(request: Request) -> Response:
