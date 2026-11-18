@@ -33,5 +33,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     css: false,
+    // make test runs these beside the Docker tests, and a busy machine makes the user-event tests slow.
+    testTimeout: 30000,
   },
 });

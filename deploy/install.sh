@@ -6,7 +6,7 @@
 # cut-clips are linked into ~/bin. Every dependency is checked first, and
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
-# The files in config/tasks.d and config/parts_of_speech_pools are created
+# The files in config/tasks.d, config/parts_of_speech_pools, and config/capitalisation_pools are created
 # only along with a new policy.yaml. The package's copies are always installed
 # beside them as .sample files.
 # A config directory with no git history gets one, with what is there as
@@ -469,17 +469,18 @@ if [ -d "$package/config/tasks.d" ]; then
         [ "$new_policy" -eq 0 ] || keep_or_create "$target.sample" "$target"
     done
 fi
-# The sample tasks name the sample sentence pools, so the pools go with them.
+# The sample tasks name the sample pools, so the pools go with them.
 # A pool file's .sample copy is not loaded: only .yaml and .yml files are.
-if [ -d "$package/config/parts_of_speech_pools" ]; then
-    mkdir -p -- "$root/config/parts_of_speech_pools"
-    for sample in "$package/config/parts_of_speech_pools"/*; do
+for folder in parts_of_speech_pools capitalisation_pools; do
+    [ -d "$package/config/$folder" ] || continue
+    mkdir -p -- "$root/config/$folder"
+    for sample in "$package/config/$folder"/*; do
         [ -f "$sample" ] || continue
-        target="$root/config/parts_of_speech_pools/$(basename -- "$sample")"
+        target="$root/config/$folder/$(basename -- "$sample")"
         install_file "$sample" "$target.sample" 644
         [ "$new_policy" -eq 0 ] || keep_or_create "$target.sample" "$target"
     done
-fi
+done
 install_file "$scratch/bypass.txt" "$root/config/bypass.txt.sample" 644
 keep_or_create "$root/config/bypass.txt.sample" "$root/config/bypass.txt"
 [ -e "$root/config/.git" ] || dw_history_keep "$root/config" "install.sh"

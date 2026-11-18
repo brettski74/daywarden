@@ -166,4 +166,10 @@ the way it should, not a duplicate of static content elsewhere.
 
 Tests need to pass. All tests should be passing for work on a story to be considered done. If there are failing tests,
 then you need to work to figure out why they're failing, what needs to be done to fix them and fix them. Tests that are
-failing and no longer relevant or that meet the definition of pointless tests above should be removed.
+failing and no longer relevant or that meet the definition of pointless tests above should be removed. Tests that are
+failing mean that either the code is broken or the test is broken. Either way, this needs to be fixed. You are not done
+while there are still failing tests. If you are unsure whether it is the code or the test that needs to be fixed, report
+what you have found and ask for input from the usre to help decide the correct course of action. Don't ask if you should
+fix broken tests. The answer is always yes. Don't skip fixing tests because you think they predate your work. If every
+agent follows these rules, a broken tests will be from your changes. Even if somehow they were broken before you started,
+they still need to be fixed, so just fix them.

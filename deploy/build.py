@@ -13,7 +13,8 @@ directory, daywarden-<version>/, holding:
                           default ports, and a stand-in policy server name
     config/               the repository's policy.yaml and bypass.txt, the YAML
                           files in its tasks.d/, which policy.yaml includes, and
-                          the sentence pools in its parts_of_speech_pools/
+                          the pools in its parts_of_speech_pools/ and
+                          capitalisation_pools/
 
 The repository's .env and bypass.txt are this machine's development settings.
 The package never carries them: its ports are the defaults, and its policy
@@ -56,7 +57,7 @@ SAMPLE_SERVER = "daywarden-server"
 SAMPLE_DEFAULTS = {"PORT_BASE": "8080", "PARENT_NAMES": f"{SAMPLE_SERVER},localhost,127.0.0.1"}
 # A port set on its own wins over PORT_BASE, so the package sets none.
 SINGLE_PORTS = ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT")
-POOLS_DIR = "parts_of_speech_pools"
+POOLS_DIRS = ("parts_of_speech_pools", "capitalisation_pools")
 COMPOSE_HEADER = """\
 # daywarden {version}. install.sh replaces this file on every upgrade.
 # Change .env and config/ instead. Start with: dw up
@@ -188,11 +189,12 @@ def stage(package: Path, version: str, arch: str) -> None:
         (package / "config" / "tasks.d").mkdir()
         for path in tasks:
             shutil.copy2(path, package / "config" / "tasks.d" / path.name)
-    pools = sorted(path for path in (ROOT / "config" / POOLS_DIR).glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
-    if pools:
-        (package / "config" / POOLS_DIR).mkdir()
-        for path in pools:
-            shutil.copy2(path, package / "config" / POOLS_DIR / path.name)
+    for folder in POOLS_DIRS:
+        pools = sorted(path for path in (ROOT / "config" / folder).glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
+        if pools:
+            (package / "config" / folder).mkdir()
+            for path in pools:
+                shutil.copy2(path, package / "config" / folder / path.name)
     _copy_policy(package / "lib" / "policy")
     (package / "docker-compose.yml").write_text(installed_compose(compose, version), encoding="utf-8")
     (package / "env.sample").write_text(sample_env(env), encoding="utf-8")

@@ -101,6 +101,18 @@ def _pool_files():
     return sorted(path.name for path in (ROOT / "config" / "parts_of_speech_pools").iterdir() if path.suffix in (".yaml", ".yml"))
 
 
+def test_a_first_install_creates_the_capitalisation_pools_the_sample_task_names(host, package):
+    """S040: the sample capitalisation task names a pool, so an install without it would not start."""
+    done = host.install(package)
+    assert done.returncode == 0, done.stderr + done.stdout
+    pools = host.root / "config" / "capitalisation_pools"
+    names = sorted(path.name for path in (ROOT / "config" / "capitalisation_pools").iterdir() if path.suffix in (".yaml", ".yml"))
+    assert names
+    for name in names:
+        assert (pools / name).read_bytes() == (ROOT / "config" / "capitalisation_pools" / name).read_bytes()
+        assert (pools / f"{name}.sample").read_bytes() == (pools / name).read_bytes()
+
+
 def test_a_first_install_creates_the_sentence_pools_the_sample_tasks_name(host, package):
     """S031: the sample parts of speech tasks name pools, so a new install that lacked them would not start."""
     done = host.install(package)
