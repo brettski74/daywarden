@@ -201,7 +201,9 @@ def service(tmp_path, monkeypatch):
     monkeypatch.setenv("PARENT_IDLE", "1m")
     with PolicyStore(database) as saved:
         Accounts(saved.connection).set_password("ada", PASSWORD)
-        AttemptStore(connection=saved.connection).record("younger", TaskKey("worksheet", "later"), "pass", NOW, detail={"answers": ["wombat"]})
+        # The service reads the real clock, so the attempt is recent enough for the list's Past month.
+        recent = datetime.now() - timedelta(hours=1)
+        AttemptStore(connection=saved.connection).record("younger", TaskKey("worksheet", "later"), "pass", recent, detail={"answers": ["wombat"]})
     app = create_app()
     app.state.database = database
     return app

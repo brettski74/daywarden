@@ -103,4 +103,6 @@
   --chart-grid: color-mix(in srgb, var(--palette-lavender) 35%, var(--palette-ivory));
   --chart-marker-ring: var(--palette-white);
   --chart-readout-bg: var(--palette-white);
+  /* A practice attempt's marker is hollow: filled with the plot's own background. */
+  --chart-marker-hollow: var(--content-bg);
 }

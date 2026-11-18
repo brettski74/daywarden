@@ -2278,6 +2278,130 @@ select[aria-invalid] {
   background: var(--row-hover);
 }
 
+/* A legend entry whose line is hidden. */
+.chart-legend li[data-off] .chart-swatch,
+.chart-legend li[data-off] .chart-legend-name {
+  opacity: 0.4;
+}
+
+.chart-legend li[data-off] .chart-legend-name {
+  text-decoration: line-through;
+}
+
+.chart-readout[data-lines] {
+  line-height: 1.35;
+}
+
+/* The attempts overview and a task's trend. */
+.overview th[scope="row"] {
+  font-weight: normal;
+}
+
+.overview th[scope="col"]:not(:first-child):not(:last-child),
+.overview td:not(:last-child) {
+  text-align: right;
+}
+
+.task-gone {
+  margin-left: 0.6rem;
+  font-style: italic;
+}
+
+p.task-gone {
+  margin-left: 0;
+}
+
+.sparkline {
+  display: block;
+  width: 7.5rem;
+  height: 1.75rem;
+  overflow: visible;
+}
+
+.sparkline path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.sparkline .sparkline-mark {
+  stroke-dasharray: 3 2;
+}
+
+.sparkline circle {
+  fill: currentColor;
+}
+
+/* Both trend charts keep the same legend width, so their plots share one time axis. */
+.trend .chart {
+  grid-template-columns: minmax(0, 1fr) 15rem;
+}
+
+.trend-counts {
+  height: 22rem;
+}
+
+.trend-times {
+  height: 15rem;
+  margin-top: 1rem;
+}
+
+.trend-times .chart-plot {
+  min-height: 12rem;
+}
+
+.trend-attempt {
+  cursor: pointer;
+  outline: none;
+}
+
+.trend-marker {
+  fill: currentColor;
+  stroke: var(--chart-marker-ring);
+  stroke-width: 1.5;
+}
+
+.trend-marker[data-hollow] {
+  fill: var(--chart-marker-hollow);
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.trend-marker[data-on] {
+  stroke-width: 3;
+}
+
+.trend-attempt:focus-visible .trend-marker {
+  stroke: var(--focus-ring);
+  stroke-width: 3;
+}
+
+.trend-shapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.2rem;
+  margin: 0.5rem 0 0.8rem;
+  padding: 0;
+  list-style: none;
+}
+
+.trend-shapes li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.trend-shape {
+  width: 1rem;
+  height: 1rem;
+  overflow: visible;
+}
+
+.trend-shapes .trend-marker {
+  stroke: currentColor;
+}
+
 /* Asset Administration: the parts of speech pool list. */
 .pools-table th[scope="col"]:not(:first-child),
 .pools-number {

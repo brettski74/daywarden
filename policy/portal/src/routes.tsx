@@ -8,6 +8,7 @@ import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Requests, requestsLoader } from "./pages/Requests";
+import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend";
 import { Usage, usageLoader } from "./pages/Usage";
 import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 
@@ -30,6 +31,7 @@ export const routes: RouteObject[] = [
         children: [
           { index: true, loader: () => redirect("/attempts") },
           { path: "attempts", element: <Attempts />, loader: attemptsLoader, action: attemptsAction },
+          { path: "attempts/tasks/:type/:name", element: <TaskTrend />, loader: trendLoader, shouldRevalidate: trendShouldRevalidate },
           { path: "attempts/:id", element: <Attempt />, loader: attemptLoader },
           { path: "usage", loader: () => redirect("/usage/minutes") },
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },

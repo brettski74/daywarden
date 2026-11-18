@@ -7,9 +7,22 @@ export type Reply = { status?: number; body?: unknown };
 export type Call = { path: string; search: string; method: string; body: unknown };
 type Handler = (call: Call) => Reply | undefined;
 
+const ALL_VIEW = {
+  range: "past-month",
+  from: "",
+  to: "",
+  set: ["required", "potential", "practice"],
+  outcome: ["pass", "failure", "abandoned", "unfinished", "in_progress"],
+};
+
 export const ATTEMPTS = {
   clients: ["younger", "older", "default"],
   client: "younger",
+  view: { ...ALL_VIEW, client: "younger" },
+  notes: [] as string[],
+  today: "2026-11-17",
+  range: "Saturday 17 October 2026 18:00 to Tuesday 17 November 2026 18:00",
+  days: { from: "2026-10-17", to: "2026-11-17" },
   times: "Times are Australia/Sydney.",
   message: null,
   summary: [
@@ -30,9 +43,81 @@ export const ATTEMPTS = {
       duration: "12m 30s",
     },
   ],
+  overview: [
+    {
+      type: "spelling",
+      name: "spelling-week-3",
+      label: "spelling/spelling-week-3",
+      in_policy: true,
+      attempts: 1,
+      passes: 1,
+      failures: 0,
+      abandoned: 0,
+      unfinished: 0,
+      accuracy: 92,
+      spark: [{ points: 11, pass_mark: 12 }],
+      spark_label: "1 attempt, latest 11 of 12",
+    },
+  ],
 };
 
-export const NO_GROUP = { ...ATTEMPTS, client: "", message: "Choose a client group.", summary: null, attempts: null };
+export const NO_GROUP = {
+  ...ATTEMPTS,
+  client: "",
+  view: { ...ATTEMPTS.view, client: "" },
+  message: "Choose a client group.",
+  summary: null,
+  overview: null,
+  attempts: null,
+};
+
+const SUM_FIGURES = { points: 20, pass_mark: 20, questions: 25, maximum: null, wrong: 3, timeouts: 2, time_ms: 70_000, average_ms: 2500 };
+
+/** arithmetic/sums for younger over the past month: a pass, then a practice abandonment. */
+export const TREND = {
+  clients: ["younger", "older", "default"],
+  client: "younger",
+  view: { ...ALL_VIEW, client: "younger" },
+  notes: [] as string[],
+  today: "2026-11-17",
+  range: "Saturday 17 October 2026 18:00 to Tuesday 17 November 2026 18:00",
+  days: { from: "2026-10-17", to: "2026-11-17" },
+  times: "Times are Australia/Sydney.",
+  task: { type: "arithmetic", name: "sums", label: "arithmetic/sums", in_policy: true },
+  message: null as string | null,
+  trend: {
+    kind: "points" as "points" | "spelling" | null,
+    has_maximum: false,
+    length: 31 * 86400,
+    ticks: [{ at: 86400, label: "Sun 18 Oct" }],
+    points: [
+      {
+        id: 7,
+        at: 10 * 86400,
+        started: "Tuesday 27 October 2026, 16:00",
+        set: "Required",
+        practice: false,
+        outcome: "pass",
+        outcome_label: "Pass",
+        figures: SUM_FIGURES as Record<string, number | null>,
+      },
+      {
+        id: 9,
+        at: 20 * 86400,
+        started: "Friday 6 November 2026, 16:00",
+        set: "Practice",
+        practice: true,
+        outcome: "abandoned",
+        outcome_label: "Abandoned",
+        figures: { ...SUM_FIGURES, points: 4, questions: 6, wrong: 2, timeouts: 0, average_ms: null } as Record<string, number | null>,
+      },
+    ],
+    attempts: [
+      { id: 9, task: "sums", type: "arithmetic", set: "Practice", started: "Friday 6 November 2026, 16:00", finished: "Friday 6 November 2026, 16:05", outcome: "abandoned", duration: "5m" },
+      { id: 7, task: "sums", type: "arithmetic", set: "Required", started: "Tuesday 27 October 2026, 16:00", finished: "Tuesday 27 October 2026, 16:10", outcome: "pass", duration: "10m" },
+    ],
+  },
+};
 
 export const ATTEMPT = {
   id: 42,
@@ -272,6 +357,8 @@ function standard(call: Call): Reply {
       return { body: call.search ? ATTEMPTS : NO_GROUP };
     case "/parent/api/attempts/42":
       return { body: ATTEMPT };
+    case "/parent/api/attempts/tasks/arithmetic/sums":
+      return { body: TREND };
     case "/parent/api/usage/minutes":
       return { body: USAGE };
     case "/parent/api/usage/bytes":

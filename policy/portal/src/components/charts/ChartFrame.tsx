@@ -19,7 +19,11 @@ export const SERIES_COLOURS = 8;
 export type Tick = { at: number; label: string };
 /** A labelled mark up the vertical axis. */
 export type AxisTick = { value: number; label: string };
-export type LegendEntry = { name: string; total?: string };
+/**
+ * One legend entry. ``colour`` picks its series colour when it is not the entry's place in the list.
+ * ``pressed`` makes a picking entry an on and off toggle, such as a line shown or hidden.
+ */
+export type LegendEntry = { name: string; total?: string; colour?: number; pressed?: boolean };
 export type Scale = ScaleLinear<number, number>;
 
 /** The class that colours series index. More series than colours reuse them, dashed. */
@@ -75,13 +79,19 @@ export function ChartFrame({ plotRef, legend, legendLabel, swatch = "line", onPi
               </>
             );
             return (
-              <li key={entry.name} className={seriesClass(index)} data-dashed={dashed(index) || undefined}>
+              <li
+                key={entry.name}
+                className={seriesClass(entry.colour ?? index)}
+                data-dashed={dashed(entry.colour ?? index) || undefined}
+                data-off={entry.pressed === false || undefined}
+              >
                 {onPick ? (
                   <button
                     type="button"
                     className="chart-legend-pick"
                     aria-label={entry.total === undefined ? entry.name : `${entry.name}, ${entry.total}`}
                     title={pickTitle?.(entry.name)}
+                    aria-pressed={entry.pressed}
                     onClick={() => onPick(entry.name)}
                   >
                     {parts}
@@ -136,10 +146,10 @@ export function Axes({ x, y, xTicks, yTicks }: { x: Scale; y: Scale; xTicks: Tic
 }
 
 /** What the pointer or the keyboard is on, beside that spot in the plot. It turns to the left in the right of the plot. */
-export function Readout({ left, top, flip, text }: { left: number; top: number; flip: boolean; text: string }) {
+export function Readout({ left, top, flip, text }: { left: number; top: number; flip: boolean; text: string | string[] }) {
   return (
-    <div className="chart-readout" aria-live="polite" data-flip={flip || undefined} style={{ left, top }}>
-      {text}
+    <div className="chart-readout" aria-live="polite" data-flip={flip || undefined} data-lines={Array.isArray(text) || undefined} style={{ left, top }}>
+      {Array.isArray(text) ? text.map((line, index) => <div key={index}>{line}</div>) : text}
     </div>
   );
 }

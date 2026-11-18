@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from policy.accounts import Accounts
+from policy.attempt_trends import listed, no_attempts, overview, period_json, period_of, read_view, trend
 from policy.child_page import FAVICON_PATH
 from policy.report import format_day, format_duration, timezone_note
 from policy.tasks import (
@@ -72,19 +73,31 @@ def attempts_report(
     now: datetime,
     tasks: Sequence[Task] = (),
     timezone: str | None = None,
+    pairs: Sequence[tuple[str, str]] | None = None,
 ) -> dict:
-    """Return one client group's day so far and its attempts, newest first.
+    """Return one client group's day so far, its overview, and its attempts over the period, newest first.
 
+    ``pairs`` is the page address's query string, which names the period and
+    the filters. Without it, only ``client`` is chosen, over the past month.
     With no group chosen, or one that is not in the household, ``message``
-    says so and there is no summary or list.
+    says so and there is no summary, overview, or list. A Custom period that
+    is not real days has the summary but no overview or list, and ``notes``
+    says why.
     """
-    chosen = client.strip() if isinstance(client, str) else ""
+    view, notes = read_view([("client", client if isinstance(client, str) else "")] if pairs is None else pairs)
+    chosen = view.client
+    period, problems = period_of(view, now)
+    notes.extend(problems)
     report: dict = {
         "clients": list(clients),
         "client": chosen,
+        "view": view.as_json(),
+        "notes": notes,
         "times": timezone_note(timezone),
+        **period_json(period, now),
         "message": None,
         "summary": None,
+        "overview": None,
         "attempts": None,
     }
     if not chosen:
@@ -94,7 +107,59 @@ def attempts_report(
     else:
         today = household_day(now)
         report["summary"] = _summary(attempts.score(tasks, chosen, today))
-        report["attempts"] = [_attempt_row(attempt, today) for attempt in attempts.recent(chosen)]
+        if period is not None:
+            stored = attempts.recent(chosen)
+            known = {task.key for task in tasks}
+            report["overview"] = overview(stored, view, period, today, known)
+            report["attempts"] = [_attempt_row(attempt, today) for attempt in listed(stored, view, period, today)]
+    return report
+
+
+def trend_report(
+    attempts: AttemptStore,
+    clients: Sequence[str],
+    key: TaskKey,
+    *,
+    now: datetime,
+    tasks: Sequence[Task] = (),
+    timezone: str | None = None,
+    pairs: Sequence[tuple[str, str]] = (),
+) -> dict:
+    """Return one task's trend for one client group over the period, with the same choices as the attempts page.
+
+    ``message`` says why there is nothing to draw: no group chosen, a group
+    not in the household, a Custom period that is not real days, or no
+    attempts that pass the filters. A type and name that is not a task, with
+    no attempts, is the last of these.
+    """
+    view, notes = read_view(pairs)
+    chosen = view.client
+    period, problems = period_of(view, now)
+    notes.extend(problems)
+    report: dict = {
+        "clients": list(clients),
+        "client": chosen,
+        "view": view.as_json(),
+        "notes": notes,
+        "times": timezone_note(timezone),
+        **period_json(period, now),
+        "task": {"type": key.type, "name": key.name, "label": str(key), "in_policy": key in {task.key for task in tasks}},
+        "message": None,
+        "trend": None,
+    }
+    if not chosen:
+        report["message"] = "Choose a client group."
+    elif clients and chosen not in clients:
+        report["message"] = NOT_IN_HOUSEHOLD
+    elif period is None:
+        report["message"] = "Fix the period to show the trend."
+    else:
+        today = household_day(now)
+        found = trend(attempts.attempts(chosen, key), key, view, period, today, lambda attempt: _attempt_row(attempt, today))
+        if found["points"]:
+            report["trend"] = found
+        else:
+            report["message"] = no_attempts(key, chosen)
     return report
 
 

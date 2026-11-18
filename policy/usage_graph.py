@@ -472,7 +472,7 @@ def _graph(
     return {
         "length": int((end - start).total_seconds()),
         "interval": kind,
-        "ticks": _ticks(kind, start, end),
+        "ticks": time_ticks(kind, start, end),
         "points": [
             {
                 "at": int(((a - start) + (b - a) / 2).total_seconds()),
@@ -498,7 +498,7 @@ def _lines(settings: Settings, names: Catalog, seen: set[str]) -> list[str]:
     return [name for name in known if name in seen] + sorted(seen - set(known), key=str.casefold)
 
 
-def _ticks(kind: str, start: datetime, end: datetime) -> list[dict]:
+def time_ticks(kind: str, start: datetime, end: datetime) -> list[dict]:
     """Return the labelled marks along the time axis, no more than MOST_TICKS of them."""
     if kind == "hour":
         marks = _boundaries(start.replace(minute=0, second=0), start, end, timedelta(hours=1))
