@@ -46,6 +46,7 @@ from policy.mcp_server import McpServer, install_mcp, parent_names
 from policy.mcp_tools import Sources
 from policy.pool_admin import PoolAdmin
 from policy.task_create import TaskChanges
+from policy.policy_admin import PolicyChanges
 from policy.week import Weeks
 from policy.portal import PORTAL_DIR, PortalGate, client_names, install_portal
 from policy.returns import ReturnPages, way_back
@@ -315,6 +316,7 @@ def create_app() -> FastAPI:
             tasks=tasks,
             pools=PoolAdmin(tasks),
             changes=TaskChanges(tasks, Weeks(tasks)),
+            policy_changes=PolicyChanges(tasks),
         ),
         names=parent_names(os.environ.get("PARENT_NAMES")),
     )

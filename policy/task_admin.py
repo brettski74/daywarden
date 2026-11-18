@@ -322,7 +322,7 @@ class TaskAdmin:
 
     def change(
         self,
-        key: TaskKey,
+        key: TaskKey | None,
         overrides: Mapping[Path, str],
         moves: list[tuple[Path, Path]],
         steps: Sequence[Step],
@@ -347,7 +347,9 @@ class TaskAdmin:
         ``moved_all`` runs once every step is made. With any steps, every
         service reloads, and ``paths`` are committed with ``commit``, after
         the time and the parent, such as ``saved task spelling/spelling``.
-        ``done`` begins the message, such as ``Saved spelling.``.
+        ``done`` begins the message, such as ``Saved spelling.``. ``key`` is
+        the task changed, or None for a change to the rest of the policy, such
+        as a time window, which asks nothing about due dates.
 
         For an agent's dry run (``acting``), the change is checked and the
         answer describes it, with a diff of ``overrides`` and the ``removed``
@@ -368,7 +370,7 @@ class TaskAdmin:
         if refused is not None:
             return refused
         checked = self._checked
-        task = None if checked is None else checked.task(key)
+        task = None if checked is None or key is None else checked.task(key)
         if task is not None and task.due_date is not None and not confirmed:
             passed = [group for group in task.groups if stored_passes(key, group, self.attempts.history(group))]
             if passed:

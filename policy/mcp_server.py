@@ -48,6 +48,7 @@ from policy.history import History, HistoryError, stamp
 from policy.mcp_settings import CLASSES, FIRST_TIME, McpSettings, SettingsError
 from policy.mcp_store import CHECKED, DONE, FAILED, REFUSED, REVOKED, Client, McpStore, Refused
 from policy.mcp_tools import READ_TOOLS, Sources, Tool, ToolProblem, WriteFailed, WriteRefused, Writer, answer_text, visible
+from policy.mcp_policy_writes import POLICY_WRITE_TOOLS
 from policy.mcp_writes import WRITE_TOOLS
 from policy.owned import make_directory, own_like
 from policy.portal import PortalGate
@@ -65,7 +66,7 @@ _STALE = "mcp.yaml has changed on the server since this page was opened. Reload 
 _UNKNOWN_REQUEST = "This approval request is not known, or has expired. Start again from the agent."
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
-ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS
+ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS + POLICY_WRITE_TOOLS
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
 # Some hosts, claude.ai among them, refuse urllib's default Python-urllib user agent with 403.
 _USER_AGENT = "daywarden-mcp/1.0"

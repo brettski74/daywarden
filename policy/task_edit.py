@@ -86,6 +86,14 @@ class ListEdit:
     flow: bool = False
 
 
+class Quoted(str):
+    """Text always written quoted, such as a time window's clock, which the loader reads only when quoted."""
+
+
+class Flow(dict):
+    """A mapping written on one line inside a list item, such as a rule's ``when_true: { action: allow }``."""
+
+
 def scalar(text: str, *, name: bool = False) -> str:
     """Return the YAML for a value the parent typed.
 
@@ -425,7 +433,8 @@ def _block_entry(key: str, change: object, indent: str, step: int) -> str:
 
 
 def _holds_list_edit(changes: Mapping[str, object]) -> bool:
-    return any(isinstance(value, ListEdit) for value in changes.values())
+    """Whether the changes, at any depth, change a list."""
+    return any(isinstance(value, ListEdit) or (isinstance(value, Mapping) and _holds_list_edit(value)) for value in changes.values())
 
 
 def _edit_sequence(text: str, node: yaml.SequenceNode, edit: ListEdit, step: int, depth: int) -> list[Edit]:
@@ -482,7 +491,7 @@ def _list_item(data: object, indent: str, step: int, *, flow: bool = False) -> s
 
 
 def _data_entry(key: object, value: object, indent: str, step: int) -> str:
-    if isinstance(value, Mapping) and value:
+    if isinstance(value, Mapping) and value and not isinstance(value, Flow):
         inner = indent + " " * step
         return f"{indent}{_key(key)}:\n" + "".join(_data_entry(name, item, inner, step) for name, item in value.items())
     return f"{indent}{_key(key)}: {_value(value)}\n"
@@ -494,13 +503,15 @@ def _value(value: object) -> str:
         return "{ " + ", ".join(f"{_key(key)}: {_value(item)}" for key, item in value.items()) + " }" if value else "{}"
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_flow_item(item) for item in value) + "]"
+    if isinstance(value, Quoted):
+        return json.dumps(str(value), ensure_ascii=False)
     if isinstance(value, str):
         return value if _reads_back(f"k: {value}", {"k": value}) else json.dumps(value, ensure_ascii=False)
     return json.dumps(value, ensure_ascii=False)
 
 
 def _flow_item(value: object) -> str:
-    if isinstance(value, str):
+    if isinstance(value, str) and not isinstance(value, Quoted):
         return value if _reads_back(f"[{value}]", [value]) else json.dumps(value, ensure_ascii=False)
     return _value(value)
 

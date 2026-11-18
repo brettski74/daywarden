@@ -488,6 +488,97 @@ def task_files(path: str | Path) -> dict[TaskKey, Path]:
     return {key: Path(where.rsplit(":", 2)[0]) for key, where in build.task_where.items()}
 
 
+@dataclass(frozen=True)
+class Written:
+    """Where each named item and household setting is written, and what names what, read from the files on disk.
+
+    ``places`` maps a section, such as ``time_windows``, to each name it
+    defines and the file that defines it, in include order. ``scalars`` maps
+    each household setting written, such as ``timezone``, to its file.
+    Nothing is checked beyond what finding them needs: a rule that cannot be
+    read names nothing here.
+    """
+
+    places: Mapping[str, Mapping[str, Path]]
+    scalars: Mapping[str, Path]
+    entry: str | None
+    rule_sets: Mapping[str, tuple[Rule, ...]]
+    quota_rule_sets: Mapping[str, str]
+    task_groups: Mapping[TaskKey, tuple[str, ...]]
+
+    def users(self, section: str, name: str) -> list[str]:
+        """Return each thing that names ``name`` of ``section``, such as ``rule set bedtime-rules, rule 2``."""
+        found: list[str] = []
+        if section == "client_groups":
+            found += [f"task {key}" for key, groups in self.task_groups.items() if name in groups]
+        if section == "rule_sets":
+            if self.entry == name:
+                found.append("the household's entry")
+            found += [f"quota {quota}" for quota, ruleset in self.quota_rule_sets.items() if ruleset == name]
+        for owner, rules in self.rule_sets.items():
+            found += [f"rule set {owner}, {where}" for where in _naming(rules, section, name, "rule")]
+        return found
+
+
+def written(path: str | Path) -> Written:
+    """Return where the policy files write each named item and setting, following the includes."""
+    root = require_yaml(path)
+    build = _Build(task_data=False)
+    if root.is_file():
+        _load_file(root, root.resolve(), set(), build)
+
+    def files(where_table: Mapping[str, str]) -> dict[str, Path]:
+        return {name: _file_of(where) for name, where in where_table.items()}
+
+    entry = build.scalars.get("entry", (None, ""))[0]
+    return Written(
+        places={
+            "client_groups": files(build.client_where),
+            "site_groups": files(build.site_where),
+            "time_windows": files(build.window_where),
+            "quotas": files(build.quota_where),
+            "rule_sets": files(build.ruleset_where),
+        },
+        scalars={key: _file_of(where) for key, (_value, where) in build.scalars.items()},
+        entry=entry if isinstance(entry, str) else None,
+        rule_sets=dict(build.rule_sets),
+        quota_rule_sets={name: raw.ruleset for name, raw in build.quotas.items() if isinstance(raw.ruleset, str)},
+        task_groups={key: task.groups for key, task in build.tasks.items()},
+    )
+
+
+def _file_of(where: str) -> Path:
+    return Path(where.rsplit(":", 2)[0])
+
+
+_NAMED_BY = {
+    "client_groups": ("client_group", "groups"),
+    "site_groups": ("site_group", "groups"),
+    "time_windows": ("time_window", "windows"),
+}
+
+
+def _naming(rules: tuple[Rule, ...], section: str, name: str, label: str) -> list[str]:
+    """Return where in ``rules`` each rule names ``name`` of ``section``, such as ``rule 2`` or ``rule 3 when_true rule 1``."""
+    found: list[str] = []
+    for number, rule in enumerate(rules, start=1):
+        here = f"{label} {number}"
+        if section in _NAMED_BY:
+            condition, attribute = _NAMED_BY[section]
+            if rule.condition == condition and name in getattr(rule, attribute):
+                found.append(here)
+        elif section == "quotas" and rule.quota == name:
+            found.append(here)
+        for branch, action in (("when_true", rule.when_true), ("when_false", rule.when_false)):
+            if action.kind != "evaluate":
+                continue
+            if section == "rule_sets" and action.ruleset == name:
+                found.append(f"{here} {branch}")
+            if action.rules is not None:
+                found += _naming(action.rules, section, name, f"{here} {branch} rule")
+    return found
+
+
 def compose(text: str, source: Path) -> yaml.Node | None:
     """Return the YAML node tree of one policy file's text, as the loader reads it."""
     return _compose(text, source)

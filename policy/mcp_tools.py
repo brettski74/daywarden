@@ -19,6 +19,7 @@ from datetime import time
 from policy.check import span
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.mcp_settings import McpSettings
+from policy.policy_admin import PolicyChanges
 from policy.pool_admin import PoolAdmin
 from policy.portal import client_names
 from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, trend_report
@@ -76,6 +77,7 @@ class Sources:
     tasks: TaskAdmin | None = None
     pools: PoolAdmin | None = None
     changes: TaskChanges | None = None
+    policy_changes: PolicyChanges | None = None
 
 
 @dataclass(frozen=True)
