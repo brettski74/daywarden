@@ -13,5 +13,6 @@ permissions:
   rule_sets: [create, read, update]
   tasks: [create, read, update]
   sentence_pools: [create, read, update]
+  capitalisation_pools: [create, read, update]
   attempts: [read]
   usage: [read]

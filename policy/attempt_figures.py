@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 
 from policy.arithmetic import ARITHMETIC
+from policy.capitalisation import CAPITALISATION
 from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.quiz import CORRECT, TIMEOUT
 from policy.skip_counting import SKIP_COUNTING
@@ -39,7 +40,7 @@ from policy.skip_counting import parse_settings as skip_counting_settings
 from policy.spelling import CURRENT, REVISION
 from policy.spelling_words import SPELLING
 
-TYPES = (ARITHMETIC, PARTS_OF_SPEECH, SKIP_COUNTING, SPELLING)
+TYPES = (ARITHMETIC, CAPITALISATION, PARTS_OF_SPEECH, SKIP_COUNTING, SPELLING)
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ def _pass_mark(task_type: str, settings: Mapping) -> int | None:
 
 
 def _maximum(task_type: str, settings: Mapping) -> int | None:
-    if task_type in (PARTS_OF_SPEECH, SKIP_COUNTING):
+    if task_type in (CAPITALISATION, PARTS_OF_SPEECH, SKIP_COUNTING):
         return _whole(settings.get("maximum_questions"))
     return None
 

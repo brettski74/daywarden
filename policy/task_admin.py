@@ -39,12 +39,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from policy import clips, number_lists_admin, parts_of_speech_admin, spelling, spelling_directories
+from policy import capitalisation_admin, clips, number_lists_admin, parts_of_speech_admin, spelling, spelling_directories
 from policy.arithmetic import ARITHMETIC
 from policy.check import load_required
 from policy.hierarchy import ConfigError, Policy, task_files
 from policy.history import History, HistoryError, stamp
 from policy.owned import make_directory, own_like
+from policy.capitalisation import CAPITALISATION
 from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.recordings import GONE, Recordings
 from policy.skip_counting import SKIP_COUNTING
@@ -213,6 +214,8 @@ class TaskAdmin:
             body["spelling"] = self._spelling_page(written)
         elif kind == PARTS_OF_SPEECH:
             body["parts_of_speech"] = parts_of_speech_admin.page(written, self.policy_file.parent)
+        elif kind == CAPITALISATION:
+            body["capitalisation"] = capitalisation_admin.page(written, self.policy_file.parent)
         elif kind == SKIP_COUNTING:
             body["skip_counting"] = number_lists_admin.skip_counting_page(written)
         elif kind == ARITHMETIC:
@@ -701,6 +704,11 @@ def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, obj
         body.update(parts_of_speech_admin.list_changes(written, request))
         if request.get("sentences") is not None:
             raise ValueError("Sentences are edited on a parts of speech pool's page under Asset Administration.")
+    elif kind == CAPITALISATION:
+        _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
+        body.update(capitalisation_admin.list_changes(written, request))
+        if request.get("sentences") is not None:
+            raise ValueError("Sentences are edited on a capitalisation pool's page under Asset Administration.")
     elif kind == SKIP_COUNTING:
         _diff(body, written.body, request.get("settings"), number_lists_admin.SKIP_COUNTING_SETTINGS)
         body.update(number_lists_admin.list_changes(written, number_lists_admin.SKIP_COUNTING_TABLES, request.get("lists")))

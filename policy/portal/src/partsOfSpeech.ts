@@ -9,17 +9,19 @@ export type PosData = { settings: Record<string, string>; pools: string[]; filte
 
 export const SETTINGS = ["timeout", "correct_answers_required", "minimum_questions", "maximum_questions"];
 export const DEFAULT_TIMEOUT = "90s";
+/** What a capitalisation task's empty Timeout shows (S040.2). */
+export const CAPITALISATION_TIMEOUT = "60s";
 export const NO_POOLS = "Choose at least one pool.";
 export const FILTER_LABEL = "Parts of speech filter";
 
 /** The pool names to show as options: every available pool, then any the task names that no pool file has. */
-export function poolOptions(data: PosData, chosen: string[]): string[] {
+export function poolOptions(data: Pick<PosData, "available">, chosen: string[]): string[] {
   const names = data.available.map((pool) => pool.name);
   return [...names, ...chosen.filter((name) => !names.includes(name))];
 }
 
 /** The runnable size: the sentences across the chosen pools. */
-export function runnableSize(data: PosData, chosen: string[]): number {
+export function runnableSize(data: Pick<PosData, "available">, chosen: string[]): number {
   return data.available.filter((pool) => chosen.includes(pool.name)).reduce((total, pool) => total + pool.sentences, 0);
 }
 

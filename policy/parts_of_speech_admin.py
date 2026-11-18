@@ -98,10 +98,10 @@ def level(text: str, where: str) -> int | float | None:
     return int(number) if number.is_integer() else number
 
 
-def pool_list(root: Path) -> list[dict]:
+def pool_list(root: Path, folder: str = sentence_pools.POOLS_DIR) -> list[dict]:
     """Return every pool file, by name ignoring case: its id, name, level of difficulty, and how many sentences."""
     pools = []
-    for path in sentence_pools.list_pool_files(root):
+    for path in sentence_pools.list_pool_files(root, folder):
         entry: dict[str, object] = {"id": path.stem, "name": path.stem, LEVEL: "", "sentences": 0}
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))

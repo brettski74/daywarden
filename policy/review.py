@@ -27,6 +27,7 @@ from policy.accounts import Accounts
 from policy.arithmetic import ARITHMETIC, OPERATIONS
 from policy.arithmetic_facts import attempt_runs, facts, no_questions
 from policy.attempt_trends import listed, no_attempts, overview, period_json, period_of, read_view, trend
+from policy.capitalisation_attempt import capitalisation_runs
 from policy.child_page import FAVICON_PATH
 from policy.fact_figures import operation_of as question_operation
 from policy.report import format_day, format_duration, timezone_note
@@ -266,6 +267,7 @@ def attempt_report(
         ],
         "reopened": _reopened(found),
         "arithmetic": attempt_runs(found, _event_time),
+        "capitalisation": capitalisation_runs(found, _event_time),
         "answers": _answers(found.detail),
         "record": _record(found.detail),
     }

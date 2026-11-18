@@ -1,6 +1,6 @@
 Ticket: S040
 Title: Capitalisation
-Status: Refined
+Status: Done
 Story Points: 34
 Last Updated: 2026-11-18 06:17:49
 ---

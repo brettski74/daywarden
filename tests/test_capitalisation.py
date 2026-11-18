@@ -508,3 +508,54 @@ def test_the_attempt_report_can_show_a_capitalisation_attempt(tmp_path):
     attempt = quiz.store.attempts("younger", KEY)[-1]
     report = json.dumps(attempt_report(quiz.store, str(attempt.id), now=START))
     assert "capitalisation" in report and "clicks" in report
+
+
+# The attempt in the portal and the MCP tools (S040.2)
+
+
+def _report(quiz):
+    from policy.review import attempt_report
+
+    attempt = quiz.store.attempts("younger", KEY)[-1]
+    return attempt_report(quiz.store, str(attempt.id), now=START + timedelta(minutes=10), timezone="America/Toronto")
+
+
+def test_the_attempts_figures_are_points_against_the_pass_mark_and_questions_against_the_maximum(tmp_path):
+    from policy.attempt_figures import figures
+
+    quiz, question = _first(tmp_path)
+    quiz.answer(START, question, [5])
+    quiz.answer(START, question, quiz.right(question))
+    second = quiz.ask(START)
+    quiz.answer(START + timedelta(seconds=59), second, [], expired=True)
+    found = figures("capitalisation", quiz.detail()).as_json()
+    assert (found["points"], found["pass_mark"], found["questions"], found["maximum"]) == (0.5, 2, 2, 2)
+    assert (found["wrong"], found["timeouts"]) == (0, 1)
+    assert found["time_ms"] > 59_000
+
+
+def test_the_attempt_page_shows_each_try_with_its_marked_words_points_and_timeout(tmp_path):
+    quiz, question = _first(tmp_path)
+    quiz.answer(START, question, [5, 0])
+    quiz.answer(START + timedelta(seconds=3), question, quiz.right(question))
+    second = quiz.ask(START + timedelta(seconds=4))
+    quiz.answer(START + timedelta(seconds=63), second, [0], expired=True)
+    shown = _report(quiz)["capitalisation"]
+    assert shown["expired"] == []
+    first, last = shown["last"]["sentences"]
+    assert [one["points"] for one in first["tries"]] == [0, 0.5]
+    wrong_try, right_try = first["tries"]
+    assert {item["colour"] for item in right_try["words"]} == {"blue", "black"}
+    assert [item["word"] for item in wrong_try["words"]] == PLACES.split()
+    assert [item["colour"] for item in wrong_try["words"]] == ["blue", "red", "red", "black", "red", "red", "black", "red"]
+    assert [item["colour"] for item in wrong_try["words"]].count("red") == 5
+    assert right_try["taken_ms"] == 3000 and not wrong_try["timeout"]
+    assert last["tries"][0]["timeout"] is True and last["outcome"] == "timeout"
+    assert shown["last"]["figures"]["points"] == 0.5
+
+
+def test_the_attempt_report_has_each_tries_clicked_words_in_its_record(tmp_path):
+    quiz, question = _first(tmp_path)
+    quiz.answer(START, question, [5])
+    record = _report(quiz)["record"]
+    assert record["questions"][0]["tries"][0]["clicks"] == [5]

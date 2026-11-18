@@ -15,7 +15,7 @@ import { useCallback, type KeyboardEvent, type PointerEvent, type ReactNode } fr
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
 import { useExpander } from "../motion";
-import { POOLS } from "../pools";
+import { CAPITALISATION_POOLS, PARTS_POOLS } from "../pools";
 import { MCP } from "../mcp";
 import { ASSETS_KEY, KEY_STEP, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
@@ -108,11 +108,14 @@ function TaskGroup({ tasks }: { tasks: TaskRef[] }) {
 /** Asset Administration: what tasks draw on, such as the parts of speech pools. */
 function AssetGroup() {
   const { pathname } = useLocation();
-  const onAssetPage = pathname === POOLS || pathname.startsWith(`${POOLS}/`);
+  const onAssetPage = [PARTS_POOLS, CAPITALISATION_POOLS].some(({ list }) => pathname === list || pathname.startsWith(`${list}/`));
   return (
     <NavGroup id="asset-list" label="Asset Administration" icon={Library} storageKey={ASSETS_KEY} onItsPage={onAssetPage} hint="The asset list stays open while an asset page is open">
       <li>
-        <NavLink to={POOLS}>Parts of Speech Pools</NavLink>
+        <NavLink to={CAPITALISATION_POOLS.list}>{CAPITALISATION_POOLS.title}</NavLink>
+      </li>
+      <li>
+        <NavLink to={PARTS_POOLS.list}>{PARTS_POOLS.title}</NavLink>
       </li>
     </NavGroup>
   );

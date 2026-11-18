@@ -43,7 +43,7 @@ from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Reco
 from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
-from policy.pool_admin import PoolAdmin
+from policy.pool_admin import CAPITALISATION, PoolAdmin
 from policy.task_admin import TaskAdmin, missing
 from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
@@ -164,6 +164,7 @@ def install_portal(
     changes = TaskChanges(tasks, weeks) if tasks is not None and weeks is not None else None
     presets = Presets(usage_store.connection)
     pools = PoolAdmin(tasks) if tasks is not None else None
+    capitalisation_pools = PoolAdmin(tasks, CAPITALISATION) if tasks is not None else None
     gate = PortalGate(accounts, loaded)
     guard = gate.guard
     acting = gate.acting
@@ -460,64 +461,70 @@ def install_portal(
         answer = changes.create(body, username)
         return _json(answer.status, answer.body)
 
-    no_pools = "Parts of speech pools cannot be edited here."
+    def pool_routes(address: str, admin: PoolAdmin | None, label: str) -> None:
+        """Add the list, make, page, save, rename, and delete addresses of one kind of pool."""
+        unavailable = f"{label} pools cannot be edited here."
+        base = f"/parent/api/{address}"
 
-    @app.get("/parent/api/parts-of-speech-pools")
-    async def pool_list(request: Request) -> Response:
-        _username, refused = guard(request)
-        if refused is not None:
-            return refused
-        return _json(200, {"pools": []} if pools is None else pools.catalogue())
+        @app.get(base)
+        async def pool_list(request: Request) -> Response:
+            _username, refused = guard(request)
+            if refused is not None:
+                return refused
+            return _json(200, {"pools": []} if admin is None else admin.catalogue())
 
-    @app.post("/parent/api/parts-of-speech-pools")
-    async def pool_create(request: Request) -> Response:
-        body, username, refused = await acting(request)
-        if refused is not None:
-            return refused
-        if pools is None:
-            return _json(404, {"error": no_pools})
-        answer = pools.create(body, username)
-        return _json(answer.status, answer.body)
+        @app.post(base)
+        async def pool_create(request: Request) -> Response:
+            body, username, refused = await acting(request)
+            if refused is not None:
+                return refused
+            if admin is None:
+                return _json(404, {"error": unavailable})
+            answer = admin.create(body, username)
+            return _json(answer.status, answer.body)
 
-    @app.get("/parent/api/parts-of-speech-pools/{pool_id}")
-    async def pool_page(request: Request, pool_id: str) -> Response:
-        _username, refused = guard(request)
-        if refused is not None:
-            return refused
-        if pools is None:
-            return _json(404, {"error": no_pools})
-        answer = pools.page(pool_id)
-        return _json(answer.status, answer.body)
+        @app.get(base + "/{pool_id}")
+        async def pool_page(request: Request, pool_id: str) -> Response:
+            _username, refused = guard(request)
+            if refused is not None:
+                return refused
+            if admin is None:
+                return _json(404, {"error": unavailable})
+            answer = admin.page(pool_id)
+            return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/parts-of-speech-pools/{pool_id}")
-    async def pool_save(request: Request, pool_id: str) -> Response:
-        body, username, refused = await acting(request)
-        if refused is not None:
-            return refused
-        if pools is None:
-            return _json(404, {"error": no_pools})
-        answer = pools.save(pool_id, body, username)
-        return _json(answer.status, answer.body)
+        @app.post(base + "/{pool_id}")
+        async def pool_save(request: Request, pool_id: str) -> Response:
+            body, username, refused = await acting(request)
+            if refused is not None:
+                return refused
+            if admin is None:
+                return _json(404, {"error": unavailable})
+            answer = admin.save(pool_id, body, username)
+            return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/parts-of-speech-pools/{pool_id}/rename")
-    async def pool_rename(request: Request, pool_id: str) -> Response:
-        body, username, refused = await acting(request)
-        if refused is not None:
-            return refused
-        if pools is None:
-            return _json(404, {"error": no_pools})
-        answer = pools.rename(pool_id, body, username)
-        return _json(answer.status, answer.body)
+        @app.post(base + "/{pool_id}/rename")
+        async def pool_rename(request: Request, pool_id: str) -> Response:
+            body, username, refused = await acting(request)
+            if refused is not None:
+                return refused
+            if admin is None:
+                return _json(404, {"error": unavailable})
+            answer = admin.rename(pool_id, body, username)
+            return _json(answer.status, answer.body)
 
-    @app.post("/parent/api/parts-of-speech-pools/{pool_id}/delete")
-    async def pool_delete(request: Request, pool_id: str) -> Response:
-        body, username, refused = await acting(request)
-        if refused is not None:
-            return refused
-        if pools is None:
-            return _json(404, {"error": no_pools})
-        answer = pools.delete(pool_id, body, username)
-        return _json(answer.status, answer.body)
+        @app.post(base + "/{pool_id}/delete")
+        async def pool_delete(request: Request, pool_id: str) -> Response:
+            body, username, refused = await acting(request)
+            if refused is not None:
+                return refused
+            if admin is None:
+                return _json(404, {"error": unavailable})
+            answer = admin.delete(pool_id, body, username)
+            return _json(answer.status, answer.body)
+
+    pool_routes("parts-of-speech-pools", pools, "Parts of speech")
+    pool_routes("capitalisation-pools", capitalisation_pools, "Capitalisation")
 
     @app.get("/parent/api/new-task/audio/{pool}/{file_name}")
     async def new_task_audio(request: Request, pool: str, file_name: str) -> Response:

@@ -137,6 +137,21 @@ def test_parts_of_speech_points_come_from_the_tries_and_the_maximum_is_always_th
     assert found.time_ms == 5 * 4000 + 6000 + 3000 + 3000 + 30_000
 
 
+def test_capitalisation_figures_and_trend_are_points_with_a_maximum():
+    detail = {
+        "settings": {"correct_answers_required": 2, "minimum_questions": 2, "maximum_questions": 4, "sentences": []},
+        "runs": [{"run": 1}],
+        "questions": [_sentence("correct", 1, 4000), _sentence("correct", 0.25, 1000, 2000, 3000), _sentence("incorrect", 0, 1000, 2000, 3000), _sentence("timeout", 0, 1000)],
+    }
+    found = figures("capitalisation", detail)
+    assert (found.points, found.pass_mark, found.maximum, found.questions, found.wrong, found.timeouts) == (1.25, 2, 4, 4, 1, 1)
+    key = TaskKey("capitalisation", "caps")
+    with AttemptStore(":memory:") as store:
+        _plant(store, key, 1, detail=detail)
+        shown = _trend(store, key)["trend"]
+        assert shown["kind"] == "points" and shown["has_maximum"] is True
+
+
 def test_skip_counting_has_a_maximum_only_when_one_is_set_and_works_out_an_omitted_pass_mark():
     question = {"run": 1, "outcome": "correct", "points": 1, "allowed_ms": 180_000, "tries": [{"received_ms": 9000}]}
     detail = {"settings": {"correct_answers_required": 6}, "runs": [{"run": 1}], "questions": [question]}

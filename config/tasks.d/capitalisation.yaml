@@ -1,0 +1,6 @@
+tasks:
+  capitalisation:
+    Capitalisation:
+      groups: [younger, default]
+      body:
+        pools: ["Year 3 Capitals"]

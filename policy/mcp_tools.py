@@ -76,6 +76,7 @@ class Sources:
     presets: Presets
     tasks: TaskAdmin | None = None
     pools: PoolAdmin | None = None
+    capitalisation_pools: PoolAdmin | None = None
     changes: TaskChanges | None = None
     policy_changes: PolicyChanges | None = None
 
@@ -341,8 +342,21 @@ def get_task(sources: Sources, arguments: Mapping) -> dict:
     return body
 
 
+def _capitalisation_pools(sources: Sources) -> PoolAdmin:
+    if sources.capitalisation_pools is None:
+        raise ToolProblem("Capitalisation pools cannot be read here.")
+    return sources.capitalisation_pools
+
+
 def list_sentence_pools(sources: Sources, _arguments: Mapping) -> dict:
-    pools = _pools(sources)
+    return _list_pools(_pools(sources))
+
+
+def list_capitalisation_pools(sources: Sources, _arguments: Mapping) -> dict:
+    return _list_pools(_capitalisation_pools(sources))
+
+
+def _list_pools(pools: PoolAdmin) -> dict:
     listed = []
     for pool in pools.catalogue()["pools"]:
         page = pools.page(pool["id"])
@@ -358,7 +372,15 @@ def list_sentence_pools(sources: Sources, _arguments: Mapping) -> dict:
 
 
 def get_sentence_pool(sources: Sources, arguments: Mapping) -> dict:
-    answer = _pools(sources).page(_text(arguments, "id"))
+    return _get_pool(_pools(sources), arguments)
+
+
+def get_capitalisation_pool(sources: Sources, arguments: Mapping) -> dict:
+    return _get_pool(_capitalisation_pools(sources), arguments)
+
+
+def _get_pool(pools: PoolAdmin, arguments: Mapping) -> dict:
+    answer = pools.page(_text(arguments, "id"))
     if answer.status != 200:
         raise ToolProblem(answer.body.get("error", "That pool cannot be read."))
     body = dict(answer.body)
@@ -477,6 +499,12 @@ READ_TOOLS: tuple[Tool, ...] = (
     Tool(
         "get_sentence_pool", "sentence_pools", "read", "A parts of speech pool's sentences and their marked words.",
         get_sentence_pool, {"id": {"type": "string", "description": "The pool's id, from list_sentence_pools."}}, ("id",),
+        lambda arguments: str(arguments.get("id", "")),
+    ),
+    Tool("list_capitalisation_pools", "capitalisation_pools", "read", "Each capitalisation pool's id, name, sentence count, and the tasks using it.", list_capitalisation_pools),
+    Tool(
+        "get_capitalisation_pool", "capitalisation_pools", "read", "A capitalisation pool's sentences, each with its own level of difficulty if it has one.",
+        get_capitalisation_pool, {"id": {"type": "string", "description": "The pool's id, from list_capitalisation_pools."}}, ("id",),
         lambda arguments: str(arguments.get("id", "")),
     ),
     Tool(

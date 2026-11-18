@@ -1,7 +1,8 @@
-"""Asset Administration's parts of speech pool pages: list, create, edit, rename, and delete a pool.
+"""Asset Administration's pool pages: list, create, edit, rename, and delete a pool.
 
-A pool is one file in ``parts_of_speech_pools/`` beside the root policy file
-(S031.1). Its file name is a stable id, which is the pool page's address. Its
+A pool is one file in ``parts_of_speech_pools/``, or in ``capitalisation_pools/``
+(S040.2), beside the root policy file (S031.1). One ``PoolAdmin`` serves one
+kind of pool, described by a ``Flavour``. Its file name is a stable id, which is the pool page's address. Its
 ``name`` is what the parent sees and what tasks list under ``body.pools``.
 
 Every change is checked and applied as a task page's save is, through
@@ -21,12 +22,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from policy import sentence_pools
+from policy import capitalisation, capitalisation_admin, sentence_pools
 from policy.owned import make_directory, own_like
 from policy.parts_of_speech import PARTS_OF_SPEECH, check_pool_sentence
 from policy.parts_of_speech_admin import LEVEL, level, pool_list, sentences_edit, shown_level, shown_sentences
@@ -37,9 +39,32 @@ from policy.tasks import TaskKey
 
 LONGEST_NAME = 60
 NO_SENTENCES = "There are no sentences. Add at least one."
-# The key a pool's change is logged under. No task has this type, so a change never asks about a due date.
-_KIND = "parts_of_speech_pool"
 _ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+@dataclass(frozen=True)
+class Flavour:
+    """What differs between kinds of pool: where they are kept, what a task of the kind is, and how their sentences are edited."""
+
+    folder: str
+    task_type: str
+    label: str  # as a sentence names it: "parts of speech pool"
+    log_kind: str  # the key a change is logged under. No task has this type, so a change never asks about a due date.
+    shown: Callable[[object], tuple[list[dict], list[str]]]
+    edit: Callable[..., object]
+    check: Callable[[object, float, str], object]
+    unique: bool = False
+
+
+PARTS = Flavour(
+    sentence_pools.POOLS_DIR, PARTS_OF_SPEECH, "parts of speech pool", "parts_of_speech_pool",
+    shown_sentences, sentences_edit, lambda item, difficulty, where: check_pool_sentence(item, difficulty, where),
+)
+CAPITALISATION = Flavour(
+    sentence_pools.CAPITALISATION_DIR, capitalisation.CAPITALISATION, "capitalisation pool", "capitalisation_pool",
+    capitalisation_admin.shown_sentences, capitalisation_admin.sentences_edit,
+    lambda item, difficulty, where: capitalisation._pool_sentence(item, difficulty, None, where), unique=True,
+)
 
 
 def name_problem(name: str) -> str | None:
@@ -57,30 +82,31 @@ def _version(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _missing(pool_id: str) -> Answer:
-    return Answer(404, {"error": f"There is no parts of speech pool {pool_id}."})
+def _missing(pool_id: str, label: str) -> Answer:
+    return Answer(404, {"error": f"There is no {label} {pool_id}."})
 
 
 class PoolAdmin:
-    def __init__(self, tasks: TaskAdmin) -> None:
+    def __init__(self, tasks: TaskAdmin, flavour: Flavour = PARTS) -> None:
         self.tasks = tasks
+        self.flavour = flavour
 
     @property
     def directory(self) -> Path:
-        return sentence_pools.pools_directory(self.tasks.policy_file.parent)
+        return sentence_pools.pools_directory(self.tasks.policy_file.parent, self.flavour.folder)
 
     # Reading
 
     def catalogue(self) -> dict:
         """Return every pool file, by name ignoring case: its id, name, level of difficulty, and how many sentences."""
-        return {"pools": pool_list(self.tasks.policy_file.parent)}
+        return {"pools": pool_list(self.tasks.policy_file.parent, self.flavour.folder)}
 
     def page(self, pool_id: str) -> Answer:
         found = self._read(pool_id)
         if isinstance(found, Answer):
             return found
         path, text, data = found
-        sentences, problems = shown_sentences(data.get("sentences"))
+        sentences, problems = self.flavour.shown(data.get("sentences"))
         return Answer(
             200,
             {
@@ -117,7 +143,7 @@ class PoolAdmin:
         text = f"name: {text_value(name)}\nsentences: []\n"
         if request.get("sentences") is not None or request.get(LEVEL) is not None:
             try:
-                changes = _changes({"name": name, "sentences": []}, request)
+                changes = _changes({"name": name, "sentences": []}, request, self.flavour)
                 added = changes.pop(LEVEL, None)
                 if changes:
                     text = rewrite_root(text, path, changes)
@@ -125,14 +151,14 @@ class PoolAdmin:
                     text = add_root_entry_after(text, path, "name", LEVEL, str(added))
             except (EditError, ValueError) as error:
                 return Answer(400, {"error": str(error)})
-            problems = check_pool(path, text)
+            problems = check_pool(path, text, self.flavour)
             if problems:
                 return Answer(400, {"error": BROKEN, "errors": problems})
         steps = [Step(lambda: _write_new(path, text), lambda: path.unlink(missing_ok=True), f"{path} could not be written, so no pool was made")]
         answer = self.tasks.change(
-            TaskKey(_KIND, pool_id), {path.resolve(): text}, [], steps, username,
+            TaskKey(self.flavour.log_kind, pool_id), {path.resolve(): text}, [], steps, username,
             confirmed=True, moved=None, failed="", done=f"Made the pool {name}.",
-            commit=f"made parts of speech pool {name}", paths=[path],
+            commit=f"made {self.flavour.label} {name}", paths=[path],
         )
         if answer.status == 200:
             answer.body["pool"] = {"id": pool_id, "name": name}
@@ -147,7 +173,7 @@ class PoolAdmin:
             return Answer(409, {"error": STALE, "stale": True})
         name = _name(data, path)
         try:
-            changes = _changes(data, request)
+            changes = _changes(data, request, self.flavour)
             added = changes.pop(LEVEL) if LEVEL not in data and changes.get(LEVEL) is not None else None
             new_text = rewrite_root(text, path, changes) if changes else text
             if added is not None:
@@ -156,14 +182,14 @@ class PoolAdmin:
             return Answer(400, {"error": str(error)})
         if new_text == text:
             return Answer(200, {"message": "Nothing has changed, so nothing was saved.", "warnings": []})
-        problems = check_pool(path, new_text)
+        problems = check_pool(path, new_text, self.flavour)
         if problems:
             return Answer(400, {"error": BROKEN, "errors": problems})
         steps = [Step(lambda: replace_text(path, new_text), lambda: replace_text(path, text), f"{path} could not be written, so nothing was saved")]
         return self.tasks.change(
-            TaskKey(_KIND, pool_id), {path.resolve(): new_text}, [], steps, username,
+            TaskKey(self.flavour.log_kind, pool_id), {path.resolve(): new_text}, [], steps, username,
             confirmed=True, moved=None, failed="", done=f"Saved {name}.",
-            commit=f"saved parts of speech pool {name}", paths=[path],
+            commit=f"saved {self.flavour.label} {name}", paths=[path],
         )
 
     def rename(self, pool_id: str, request: Mapping, username: str) -> Answer:
@@ -206,9 +232,9 @@ class PoolAdmin:
         if users:
             done += f" Changed the name in {', '.join(key.name for key in users)} too."
         answer = self.tasks.change(
-            TaskKey(_KIND, pool_id), {file.resolve(): after for file, (_before, after) in files.items()}, [], steps, username,
+            TaskKey(self.flavour.log_kind, pool_id), {file.resolve(): after for file, (_before, after) in files.items()}, [], steps, username,
             confirmed=True, moved=None, failed="", done=done,
-            commit=f"renamed parts of speech pool {old} to {name}", paths=list(files),
+            commit=f"renamed {self.flavour.label} {old} to {name}", paths=list(files),
         )
         if answer.status == 200:
             answer.body["pool"] = {"id": pool_id, "name": name}
@@ -239,19 +265,19 @@ class PoolAdmin:
 
         steps = [Step(path.unlink, put_back, f"{path} could not be removed, so nothing was deleted")]
         return self.tasks.change(
-            TaskKey(_KIND, pool_id), {}, [], steps, username,
+            TaskKey(self.flavour.log_kind, pool_id), {}, [], steps, username,
             confirmed=True, moved=None, failed="", done=f"Deleted {name}.",
-            commit=f"deleted parts of speech pool {name}", paths=[path], removed=[path],
+            commit=f"deleted {self.flavour.label} {name}", paths=[path], removed=[path],
         )
 
     # Helpers
 
     def _read(self, pool_id: str) -> tuple[Path, str, Mapping] | Answer:
         if not _ID.fullmatch(pool_id):
-            return _missing(pool_id)
-        path = next((found for found in sentence_pools.list_pool_files(self.tasks.policy_file.parent) if found.stem == pool_id), None)
+            return _missing(pool_id, self.flavour.label)
+        path = next((found for found in sentence_pools.list_pool_files(self.tasks.policy_file.parent, self.flavour.folder) if found.stem == pool_id), None)
         if path is None:
-            return _missing(pool_id)
+            return _missing(pool_id, self.flavour.label)
         try:
             text = path.read_bytes().decode("utf-8")
             data = yaml.safe_load(text)
@@ -264,7 +290,7 @@ class PoolAdmin:
     def _taken(self, name: str, own: Path | None = None) -> str | None:
         """Return why another pool already has this name, ignoring case, or None."""
         folded = name.casefold()
-        for path in sentence_pools.list_pool_files(self.tasks.policy_file.parent):
+        for path in sentence_pools.list_pool_files(self.tasks.policy_file.parent, self.flavour.folder):
             if own is not None and path == own:
                 continue
             try:
@@ -276,10 +302,10 @@ class PoolAdmin:
         return None
 
     def _users_by_file(self, name: str) -> dict[Path, list[TaskKey]]:
-        """Return each file with a ``parts_of_speech`` task that lists the pool ``name``, and those tasks."""
+        """Return each file with a task of this pool's kind that lists the pool ``name``, and those tasks."""
         found: dict[Path, list[TaskKey]] = {}
         for key, path in sorted(self.tasks._files().items(), key=lambda item: item[0].name.casefold()):
-            if key.type != PARTS_OF_SPEECH:
+            if key.type != self.flavour.task_type:
                 continue
             try:
                 written = read_task(path.read_bytes().decode("utf-8"), path, key)
@@ -313,7 +339,7 @@ def _name(data: Mapping, path: Path) -> str:
     return name.strip() if isinstance(name, str) and name.strip() else path.stem
 
 
-def _changes(data: Mapping, request: Mapping) -> dict[str, object]:
+def _changes(data: Mapping, request: Mapping, flavour: Flavour) -> dict[str, object]:
     """Return the pool's top-level fields whose value a save changes, as ``rewrite_root`` changes."""
     changes: dict[str, object] = {}
     typed = request.get(LEVEL)
@@ -331,13 +357,13 @@ def _changes(data: Mapping, request: Mapping) -> dict[str, object]:
         if isinstance(asked, list) and not asked:
             raise ValueError(NO_SENTENCES)
         effective = sentence_pools.DEFAULT_DIFFICULTY if pool_level is None else float(pool_level)  # type: ignore[arg-type]
-        edit = sentences_edit(data.get("sentences"), asked, effective)
+        edit = flavour.edit(data.get("sentences"), asked, effective)
         if edit is not None:
             changes["sentences"] = edit
     return changes
 
 
-def check_pool(path: Path, text: str) -> list[str]:
+def check_pool(path: Path, text: str, flavour: Flavour = PARTS) -> list[str]:
     """Return why a pool file's text would not load if a task named it, or nothing."""
     token = sentence_pools.use_overrides({path.resolve(): text})
     try:
@@ -347,11 +373,19 @@ def check_pool(path: Path, text: str) -> list[str]:
     finally:
         sentence_pools.reset_overrides(token)
     problems = []
+    first: dict[str, int] = {}
     for number, item in enumerate(pool.sentences, 1):
+        where = f"{path}: sentences entry {number}"
         try:
-            check_pool_sentence(item, pool.difficulty, f"{path}: sentences entry {number}")
+            sentence = flavour.check(item, pool.difficulty, where)
         except ValueError as error:
             problems.extend(problems_of(error))
+            continue
+        if flavour.unique:
+            folded = sentence.text.casefold()  # type: ignore[attr-defined]
+            if folded in first:
+                problems.append(f"{where}: sentence: {sentence.text!r} is the same as entry {first[folded]}")  # type: ignore[attr-defined]
+            first.setdefault(folded, number)
     return problems
 
 

@@ -150,7 +150,7 @@ def test_the_tasks_own_file_is_not_a_clash(tmp_path):
 def test_the_new_task_page_offers_every_type_but_parent_check_and_empty_fields(house):
     status, body = house.get("/parent/api/new-task")
     assert status == 200
-    assert body["types"] == ["arithmetic", "parts_of_speech", "skip_counting", "spelling"]
+    assert body["types"] == ["arithmetic", "capitalisation", "parts_of_speech", "skip_counting", "spelling"]
     assert body["clients"] == ["younger", "older", "default"]
     assert set(body["fields"].values()) == {""}
 

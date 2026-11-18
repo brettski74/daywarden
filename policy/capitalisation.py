@@ -213,13 +213,20 @@ class Session(parts_of_speech.Session):
 def answer(question: Mapping) -> list[dict]:
     """Return every word of a finished sentence as the pool spells it, and its colour.
 
-    A word with a capital that he clicked is blue. A word he clicked that has
-    no capital, and a word with a capital he did not click, are red. Every
-    other word is black. His clicks are the last try's, or none when the
-    sentence closed without one.
+    His clicks are the last try's, or none when the sentence closed without one.
     """
     tries = question["tries"]
-    clicked = set(tries[-1]["clicks"]) if tries else set()
+    return marked(question, tries[-1]["clicks"] if tries else ())
+
+
+def marked(question: Mapping, clicks) -> list[dict]:
+    """Return every word of a sentence as the pool spells it, with the colour it takes when ``clicks`` are the words clicked.
+
+    A word with a capital that he clicked is blue. A word he clicked that has
+    no capital, and a word with a capital he did not click, are red. Every
+    other word is black.
+    """
+    clicked = set(clicks)
     shown = []
     for position, word in enumerate(question["words"]):
         here = position in clicked
@@ -246,6 +253,7 @@ __all__ = [
     "Session",
     "Sentence",
     "answer",
+    "marked",
     "check_body",
     "parse_settings",
     "sentence_words",

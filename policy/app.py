@@ -44,7 +44,7 @@ from policy import control
 from policy import mcp_settings
 from policy.mcp_server import McpServer, install_mcp, parent_names
 from policy.mcp_tools import Sources
-from policy.pool_admin import PoolAdmin
+from policy.pool_admin import CAPITALISATION, PoolAdmin
 from policy.task_create import TaskChanges
 from policy.policy_admin import PolicyChanges
 from policy.week import Weeks
@@ -315,6 +315,7 @@ def create_app() -> FastAPI:
             presets=Presets(usage_store.connection),
             tasks=tasks,
             pools=PoolAdmin(tasks),
+            capitalisation_pools=PoolAdmin(tasks, CAPITALISATION),
             changes=TaskChanges(tasks, Weeks(tasks)),
             policy_changes=PolicyChanges(tasks),
         ),

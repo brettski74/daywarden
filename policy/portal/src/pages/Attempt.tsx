@@ -41,6 +41,17 @@ type Walk = {
   questions: Question[];
 };
 
+/** A capitalisation attempt's try (S040.2): the sentence with the words he clicked marked, and what the try earned. */
+type CapTry = { words: { word: string; colour: "blue" | "red" | "black" }[]; points: number; timeout: boolean; taken_ms: number };
+type CapSentence = {
+  text: string;
+  outcome: "correct" | "incorrect" | "timeout" | null;
+  outcome_label: string;
+  points: number;
+  tries: CapTry[];
+};
+type CapRun = { run: number; expired: string | null; figures: Figures | null; sentences: CapSentence[] };
+
 type AttemptReport = {
   id: number;
   task: string;
@@ -50,6 +61,7 @@ type AttemptReport = {
   summary: { label: string; value: string }[];
   reopened: { gave_up: string; came_back: string }[];
   arithmetic: { last: Run; expired: Run[]; practice: Walk[] } | null;
+  capitalisation: { last: CapRun; expired: CapRun[] } | null;
   answers: Stored[] | null;
   record: { [key: string]: Stored } | null;
 };
@@ -187,6 +199,83 @@ function ArithmeticRuns({ runs, client }: { runs: { last: Run; expired: Run[]; p
   );
 }
 
+/** A capitalisation run's figures, as S035.1 works them out. */
+function CapSummary({ run }: { run: CapRun }) {
+  const f = run.figures;
+  if (f === null) return null;
+  const rows: [string, string][] = [
+    ["Points", `${formatPoints(f.points)} / ${f.pass_mark ?? "?"} right`],
+    ["Questions", `${f.questions}${f.maximum === null ? "" : ` / ${f.maximum}`}`],
+    ["Wrong", String(f.wrong)],
+    ["Timeouts", String(f.timeouts)],
+    ["Time answering", formatClock(f.time_ms / 1000)],
+  ];
+  return (
+    <dl className="summary run-summary">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** The sentences of a run in order, each with every try: its words marked, the points it earned or timeout, and the time taken. */
+function CapSentences({ run, label }: { run: CapRun; label: string }) {
+  if (run.sentences.length === 0) return <p>No sentences yet.</p>;
+  return (
+    <ol className="cap-sentences" aria-label={label}>
+      {run.sentences.map((sentence, index) => (
+        <li key={index} aria-label={`Sentence ${index + 1}`}>
+          <ul className="cap-tries">
+            {sentence.tries.map((one, number) => (
+              <li key={number} className="cap-try" aria-label={`Try ${number + 1}`}>
+                <span className="cap-words">
+                  {one.words.map((word, at) => (
+                    <span key={at} data-colour={word.colour}>
+                      {at > 0 && " "}
+                      {word.word}
+                    </span>
+                  ))}
+                </span>
+                <span className="run-outcome" data-outcome={one.timeout ? "timeout" : one.points > 0 ? "correct" : "incorrect"}>
+                  {one.timeout ? <TimerOff aria-hidden="true" /> : one.points > 0 ? <Check aria-hidden="true" /> : <X aria-hidden="true" />}
+                  {one.timeout ? "Timeout" : `${formatPoints(one.points)} ${one.points === 1 ? "point" : "points"}`}
+                </span>
+                <span>{seconds(one.taken_ms)}</span>
+              </li>
+            ))}
+            {sentence.outcome === null && <li>Not answered yet</li>}
+          </ul>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** A capitalisation attempt's last run, then each expired run. */
+function CapitalisationRuns({ runs }: { runs: { last: CapRun; expired: CapRun[] } }) {
+  return (
+    <>
+      <h2>Last run</h2>
+      <CapSummary run={runs.last} />
+      <CapSentences run={runs.last} label="Last run's sentences" />
+      {runs.expired.map((run) => {
+        const heading = run.expired ? `Run ${run.run}, expired ${run.expired}` : `Run ${run.run}`;
+        return (
+          <section key={run.run} aria-label={heading}>
+            <h2>{heading}</h2>
+            <CapSummary run={run} />
+            <CapSentences run={run} label={`Run ${run.run}'s sentences`} />
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 export function Attempt() {
   const loaded = useLoaderData() as Loaded;
   const attempt = "attempt" in loaded ? loaded.attempt : null;
@@ -226,6 +315,7 @@ export function Attempt() {
             ))}
           </dl>
           {attempt.arithmetic && <ArithmeticRuns runs={attempt.arithmetic} client={attempt.client} />}
+          {attempt.capitalisation && <CapitalisationRuns runs={attempt.capitalisation} />}
           {attempt.reopened.length > 0 && (
             <>
               <h2>Given up and carried on</h2>
@@ -254,7 +344,7 @@ export function Attempt() {
             </>
           )}
           {attempt.record !== null &&
-            (attempt.arithmetic ? (
+            (attempt.arithmetic || attempt.capitalisation ? (
               <Fold title="Stored record">
                 <Fields value={attempt.record} />
               </Fold>

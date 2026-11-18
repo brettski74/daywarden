@@ -2813,3 +2813,51 @@ p.task-gone {
 .mcp-consent-buttons {
   justify-content: flex-start;
 }
+
+/* The capitalisation pool editor: one row for each sentence, with its text, its level of difficulty, and a delete button. */
+
+.cap-row {
+  margin: 0.6rem 0;
+}
+
+.cap-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.cap-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+/* A capitalisation attempt's sentences, each try's words marked blue or red. */
+.cap-tries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cap-try {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 1rem;
+}
+
+.cap-words {
+  flex: 1;
+  min-width: 12rem;
+  overflow-wrap: anywhere;
+}
+
+.cap-words [data-colour="blue"] {
+  color: var(--mark-right);
+  font-weight: 600;
+}
+
+.cap-words [data-colour="red"] {
+  color: var(--mark-wrong);
+  font-weight: 600;
+}

@@ -1,5 +1,5 @@
 import { PencilLine, Save, TextCursorInput, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Link,
   useBlocker,
@@ -13,9 +13,11 @@ import {
 } from "react-router";
 import { ApiError, api, pageOf } from "../api";
 import { Dialog } from "../components/Dialog";
+import { CapitalisationEditor } from "../components/CapitalisationEditor";
 import { SentenceEditor } from "../components/SentenceEditor";
+import * as capital from "../capitalisation";
 import { label } from "../labels";
-import { POOLS, poolData, type PoolReport } from "../pools";
+import { kindOf, poolData, type PoolKind, type PoolReport } from "../pools";
 import {
   DEFAULT_LEVEL,
   FIX_FIRST,
@@ -30,7 +32,6 @@ import {
 } from "../sentences";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { Outcome } from "./Task";
-import { TITLE as POOLS_TITLE } from "./Pools";
 
 type Intent = "save" | "rename" | "delete";
 type Result = {
@@ -45,8 +46,43 @@ type Result = {
 const SAVE_FIRST = "Save the changes on this page first.";
 const NAME_NEEDED = "Give the pool a name.";
 
+/** What differs between the pools' sentence editors: how the blocks are made, judged, sent, and drawn. */
+type Editor = {
+  loaded: (data: PoolData) => unknown[];
+  changed: (data: PoolData, blocks: unknown[]) => boolean;
+  blocked: (blocks: unknown[]) => boolean;
+  request: (blocks: unknown[]) => unknown;
+  counts: (blocks: unknown[]) => string;
+  draw: (props: { data: PoolData; blocks: unknown[]; poolLevel: string; onBlocks: (change: (blocks: unknown[]) => unknown[]) => void }) => ReactNode;
+};
+
+const PARTS_EDITOR: Editor = {
+  loaded: (data) => loaded(data),
+  changed: (data, blocks) => blocksChanged(data, blocks as Block[]),
+  blocked: (blocks) => blocked(blocks as Block[]),
+  request: (blocks) => toRequest(blocks as Block[]),
+  counts: (blocks) => countsText(blocks as Block[]),
+  draw: ({ data, blocks, poolLevel, onBlocks }) => (
+    <SentenceEditor data={data} blocks={blocks as Block[]} poolLevel={poolLevel} onBlocks={onBlocks as never} />
+  ),
+};
+const CAPITALISATION_EDITOR: Editor = {
+  loaded: (data) => capital.loaded(data as unknown as capital.CapPoolData),
+  changed: (data, blocks) => capital.blocksChanged(data as unknown as capital.CapPoolData, blocks as capital.CapBlock[]),
+  blocked: (blocks) => capital.blocked(blocks as capital.CapBlock[]),
+  request: (blocks) => capital.toRequest(blocks as capital.CapBlock[]),
+  counts: (blocks) => capital.countsText(blocks as capital.CapBlock[]),
+  draw: ({ data, blocks, poolLevel, onBlocks }) => (
+    <CapitalisationEditor data={data as unknown as capital.CapPoolData} blocks={blocks as capital.CapBlock[]} poolLevel={poolLevel} onBlocks={onBlocks as never} />
+  ),
+};
+
+function editorOf(kind: PoolKind): Editor {
+  return kind.list.includes("capitalisation") ? CAPITALISATION_EDITOR : PARTS_EDITOR;
+}
+
 export async function poolLoader({ request, params }: LoaderFunctionArgs): Promise<PoolData> {
-  return api<PoolData>(poolData(params.id ?? ""), { page: pageOf(request), signal: request.signal });
+  return api<PoolData>(poolData(params.id ?? "", kindOf(new URL(request.url).pathname)), { page: pageOf(request), signal: request.signal });
 }
 
 /** Save, rename, or delete the pool. Sent from the page on show, so a refusal returns to it. */
@@ -54,7 +90,7 @@ export async function poolAction({ request, params }: ActionFunctionArgs): Promi
   const { intent, ...body } = (await request.json()) as { intent: Intent } & Record<string, unknown>;
   const suffix = intent === "save" ? "" : `/${intent}`;
   try {
-    const done = await api<Omit<Result, "intent" | "ok">>(poolData(params.id ?? "") + suffix, { page: pageOf(request), method: "POST", body });
+    const done = await api<Omit<Result, "intent" | "ok">>(poolData(params.id ?? "", kindOf(new URL(request.url).pathname)) + suffix, { page: pageOf(request), method: "POST", body });
     return { intent, ok: true, ...done };
   } catch (error) {
     if (error instanceof ApiError) return { intent, ok: false, ...(error.data as Partial<Result>), error: error.message };
@@ -77,28 +113,31 @@ export function Pool() {
 
 /** The pool's name and level of difficulty, then its sentences. */
 function PoolEditor({ data }: { data: PoolData }) {
-  const reported = useLocation().state as PoolReport | null;
+  const location = useLocation();
+  const reported = location.state as PoolReport | null;
+  const kind = kindOf(location.pathname);
+  const editor = editorOf(kind);
   const navigate = useNavigate();
   const fetcher = useFetcher<Result>();
   const handled = useRef<Result | undefined>(undefined);
   const leaving = useRef(false);
   const nameBox = useRef<HTMLInputElement>(null);
   const [level, setLevel] = useState<string | null>(null);
-  const [edited, setEdited] = useState<Block[] | null>(null);
+  const [edited, setEdited] = useState<unknown[] | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<Result | null>(reported?.message ? { intent: "save", ok: true, ...reported } : null);
   useTitle(data.name);
 
-  const shownBlocks = useMemo(() => loaded(data), [data]);
+  const shownBlocks = useMemo(() => editor.loaded(data), [data, editor]);
   const blocks = edited ?? shownBlocks;
   const poolLevel = level ?? data.level_of_difficulty;
   const levelTrouble = levelProblem(poolLevel);
   const name = renaming ?? data.name;
   const nameTrouble = renaming !== null && renaming.trim() === "" ? NAME_NEEDED : null;
-  const changed = poolLevel.trim() !== data.level_of_difficulty.trim() || (edited !== null && blocksChanged(data, edited));
+  const changed = poolLevel.trim() !== data.level_of_difficulty.trim() || (edited !== null && editor.changed(data, edited));
   const dirty = renaming !== null ? renaming.trim() !== data.name : changed;
-  const held = renaming !== null ? nameTrouble !== null : levelTrouble !== null || blocked(blocks);
+  const held = renaming !== null ? nameTrouble !== null : levelTrouble !== null || editor.blocked(blocks);
   const fixFirst = renaming !== null ? (nameTrouble ?? "") : (levelTrouble ?? FIX_FIRST);
   const busy = fetcher.state !== "idle";
 
@@ -119,8 +158,8 @@ function PoolEditor({ data }: { data: PoolData }) {
       post({ intent: "rename", name: renaming, version: data.version });
       return;
     }
-    post({ intent: "save", version: data.version, level_of_difficulty: poolLevel, sentences: toRequest(blocks) });
-  }, [busy, dirty, held, fixFirst, renaming, post, data.version, poolLevel, blocks]);
+    post({ intent: "save", version: data.version, level_of_difficulty: poolLevel, sentences: editor.request(blocks) });
+  }, [busy, dirty, held, fixFirst, renaming, post, data.version, poolLevel, blocks, editor]);
 
   useEffect(() => {
     const done = fetcher.data;
@@ -128,7 +167,7 @@ function PoolEditor({ data }: { data: PoolData }) {
     handled.current = done;
     if (done.intent === "delete" && done.ok) {
       leaving.current = true;
-      navigate(POOLS, { replace: true, state: { message: done.message ?? "", warnings: done.warnings ?? [] } satisfies PoolReport });
+      navigate(kind.list, { replace: true, state: { message: done.message ?? "", warnings: done.warnings ?? [] } satisfies PoolReport });
       return;
     }
     setResult(done);
@@ -137,7 +176,7 @@ function PoolEditor({ data }: { data: PoolData }) {
       setEdited(null);
       setRenaming(null);
     }
-  }, [fetcher.state, fetcher.data, navigate]);
+  }, [fetcher.state, fetcher.data, navigate, kind.list]);
 
   const latestSave = useRef(save);
   latestSave.current = save;
@@ -170,7 +209,7 @@ function PoolEditor({ data }: { data: PoolData }) {
   }, [isRenaming]);
 
   const changeBlocks = useCallback(
-    (change: (current: Block[]) => Block[]) => setEdited((current) => change(current ?? shownBlocks)),
+    (change: (current: unknown[]) => unknown[]) => setEdited((current) => change(current ?? shownBlocks)),
     [shownBlocks],
   );
 
@@ -182,7 +221,7 @@ function PoolEditor({ data }: { data: PoolData }) {
           <ol>
             <li>Asset Administration</li>
             <li>
-              <Link to={POOLS}>{POOLS_TITLE}</Link>
+              <Link to={kind.list}>{kind.title}</Link>
             </li>
             <li>
               <h1 className="bar-title">{data.name}</h1>
@@ -275,12 +314,12 @@ function PoolEditor({ data }: { data: PoolData }) {
       <hr className="task-divider" />
 
       <fieldset className="lock-area" disabled={renaming !== null} inert={renaming !== null}>
-        <SentenceEditor data={data} blocks={blocks} poolLevel={poolLevel.trim() || DEFAULT_LEVEL} onBlocks={changeBlocks} />
+        {editor.draw({ data, blocks, poolLevel: poolLevel.trim() || DEFAULT_LEVEL, onBlocks: changeBlocks })}
       </fieldset>
 
       <StatusBar>
         {result && <Outcome result={result} />}
-        <span>{countsText(blocks)}</span>
+        <span>{editor.counts(blocks)}</span>
       </StatusBar>
 
       {deleting && (

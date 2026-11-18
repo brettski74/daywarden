@@ -31,16 +31,22 @@ from policy.mcp_tools import (
     WriteRefused,
     Writer,
     _key_target,
+    _capitalisation_pools,
     _pools,
     _tasks,
     _text,
+    get_capitalisation_pool,
     get_sentence_pool,
     get_task,
 )
+from policy.capitalisation import CAPITALISATION, has_capital
+from policy.capitalisation import split_words as capital_words
+from policy.capitalisation_admin import EMPTY, NO_CAPITAL
 from policy.number_lists_admin import ARITHMETIC_SETTINGS, ARITHMETIC_TABLES, SKIP_COUNTING_SETTINGS, SKIP_COUNTING_TABLES
 from policy.parts_of_speech import PARTS_OF_SPEECH, entry_positions, split_words
 from policy.parts_of_speech_admin import LEVEL, pool_list
 from policy.parts_of_speech_admin import SETTINGS as PARTS_OF_SPEECH_SETTINGS
+from policy.sentence_pools import CAPITALISATION_DIR, POOLS_DIR
 from policy.skip_counting import SKIP_COUNTING
 from policy.task_admin import COMMON_FIELDS, NOT_FOR_PARENT_CHECK, SPELLING_SETTINGS, Agent, Answer, acting
 from policy.task_create import NEW_TYPES, TaskChanges
@@ -131,6 +137,8 @@ def _settings_of(kind: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str
         return SPELLING_SETTINGS, (), spelling_directories.FIELDS
     if kind == PARTS_OF_SPEECH:
         return PARTS_OF_SPEECH_SETTINGS, (), ("pools", "parts_of_speech")
+    if kind == CAPITALISATION:
+        return PARTS_OF_SPEECH_SETTINGS, (), ("pools",)
     if kind == SKIP_COUNTING:
         return SKIP_COUNTING_SETTINGS, tuple(table.field for table in SKIP_COUNTING_TABLES), ()
     if kind == ARITHMETIC:
@@ -165,8 +173,8 @@ def task_request(sources: Sources, kind: str, settings: object) -> dict:
                 request.setdefault("lists", {})[name] = _rows(value, name)
             elif name in spelling_directories.FIELDS and kind == spelling.SPELLING:
                 request.setdefault("directories", {})[name] = _directory(sources, name, value)
-            elif name == "pools" and kind == PARTS_OF_SPEECH:
-                request["pools"] = _pool_names(sources, value)
+            elif name == "pools" and kind in (PARTS_OF_SPEECH, CAPITALISATION):
+                request["pools"] = _pool_names(sources, value, kind)
             elif name == "parts_of_speech" and kind == PARTS_OF_SPEECH:
                 request["parts_of_speech"] = _names(value, name)
             else:
@@ -189,10 +197,11 @@ def _directory(sources: Sources, name: str, value: object) -> str:
     return path
 
 
-def _pool_names(sources: Sources, value: object) -> list[str]:
-    """Return the names of the pools a parts of speech task chooses by id."""
+def _pool_names(sources: Sources, value: object, kind: str = PARTS_OF_SPEECH) -> list[str]:
+    """Return the names of the pools a parts of speech or capitalisation task chooses by id. An id of the other kind is refused."""
     ids = _names(value, "pools")
-    found = {entry["id"]: entry["name"] for entry in pool_list(_tasks(sources).policy_file.parent) if "problem" not in entry}
+    folder = CAPITALISATION_DIR if kind == CAPITALISATION else POOLS_DIR
+    found = {entry["id"]: entry["name"] for entry in pool_list(_tasks(sources).policy_file.parent, folder) if "problem" not in entry}
     unknown = [pool for pool in ids if pool not in found]
     if unknown:
         listed = ", ".join(sorted(found)) or "none yet"
@@ -354,6 +363,91 @@ def delete_sentence_pool(sources: Sources, arguments: Mapping, writer: Writer) -
     return _answer(body, writer, lambda: {"deleted": {"id": pool_id, "name": page["name"]}})
 
 
+# Capitalisation pools
+
+
+def _capital_sentence(item: object, number: int) -> dict:
+    """Return a sentence as the pool file writes it, a text or ``{"sentence": ..., "level_of_difficulty": ...}``, as the page sends it."""
+    where = f"sentence {number}"
+    if isinstance(item, str):
+        text, level = item, None
+    elif isinstance(item, Mapping):
+        unknown = sorted(str(key) for key in set(item) - {"sentence", LEVEL})
+        if unknown:
+            raise ValueError(f"{where}: {unknown[0]} is not part of a sentence. A sentence has sentence and {LEVEL}.")
+        text, level = item.get("sentence"), item.get(LEVEL)
+    else:
+        raise ValueError(f"{where} must be a sentence, or a mapping with sentence and {LEVEL}.")
+    if not isinstance(text, str) or not capital_words(text):
+        raise ValueError(f"{where}: {EMPTY}")
+    if not any(has_capital(word) for word in capital_words(text)):
+        raise ValueError(f"{where} ({text.strip()}): {NO_CAPITAL}")
+    return {"text": text, LEVEL: "" if level is None else str(level)}
+
+
+def capital_sentences(listed: object, name: str) -> list[dict]:
+    """Return sentences in the pool file's form as the page sends them. Raises ``WriteRefused`` with every problem."""
+    if not isinstance(listed, list):
+        raise WriteRefused([f"{name} must be a list of sentences, each a text or a mapping with sentence and {LEVEL}."])
+    sentences, reasons = [], []
+    for number, item in enumerate(listed, 1):
+        try:
+            sentences.append(_capital_sentence(item, number))
+        except ValueError as error:
+            reasons.append(str(error))
+    if reasons:
+        raise WriteRefused(reasons, heading="The pool was not changed." if len(reasons) > 1 else None)
+    return sentences
+
+
+def _shown_capital_pool(sources: Sources, pool_id: str):
+    return lambda: {"pool": get_capitalisation_pool(sources, {"id": pool_id})}
+
+
+def create_capitalisation_pool(sources: Sources, arguments: Mapping, writer: Writer) -> dict:
+    request = {"name": _text(arguments, "name"), "sentences": capital_sentences(arguments.get("sentences"), "sentences"), **_level(arguments)}
+    with _with(writer):
+        body = _made(_capitalisation_pools(sources).create(request, writer.parent))
+    return _answer(body, writer, _shown_capital_pool(sources, body.get("pool", {}).get("id", "")))
+
+
+def update_capitalisation_pool(sources: Sources, arguments: Mapping, writer: Writer) -> dict:
+    pool_id = _text(arguments, "id")
+    pools = _capitalisation_pools(sources)
+    page = _made(pools.page(pool_id))
+    added = capital_sentences(arguments.get("add") or [], "add")
+    removing = arguments.get("remove") or []
+    if not isinstance(removing, list) or not all(isinstance(text, str) for text in removing):
+        raise WriteRefused(["remove must be a list of sentences, each its exact text."])
+    texts = [sentence["text"] for sentence in page["sentences"]]
+    missing = [text for text in removing if text not in texts]
+    if missing:
+        raise WriteRefused([f"No sentence in {page['name']} reads exactly: {text}" for text in missing])
+    kept = [{**sentence, "origin": origin} for origin, sentence in enumerate(page["sentences"]) if sentence["text"] not in removing]
+    request = {"version": page["version"], "sentences": kept + added, **_level(arguments)}
+    with _with(writer):
+        body = _made(pools.save(pool_id, request, writer.parent))
+    return _answer(body, writer, _shown_capital_pool(sources, pool_id))
+
+
+def rename_capitalisation_pool(sources: Sources, arguments: Mapping, writer: Writer) -> dict:
+    pool_id = _text(arguments, "id")
+    pools = _capitalisation_pools(sources)
+    page = _made(pools.page(pool_id))
+    with _with(writer):
+        body = _made(pools.rename(pool_id, {"version": page["version"], "name": arguments.get("name")}, writer.parent))
+    return _answer(body, writer, _shown_capital_pool(sources, pool_id))
+
+
+def delete_capitalisation_pool(sources: Sources, arguments: Mapping, writer: Writer) -> dict:
+    pool_id = _text(arguments, "id")
+    pools = _capitalisation_pools(sources)
+    page = _made(pools.page(pool_id))
+    with _with(writer):
+        body = _made(pools.delete(pool_id, {"version": page["version"]}, writer.parent))
+    return _answer(body, writer, lambda: {"deleted": {"id": pool_id, "name": page["name"]}})
+
+
 # The tools
 
 _DRY_RUN = {
@@ -377,7 +471,7 @@ _SETTINGS = {
         "{\"value\": 5, \"weight\": 2}. Arithmetic rows take no weight, and one given is ignored, because questions are "
         "weighted from his record. "
         "A parts of speech task's pools are "
-        "pool ids from list_sentence_pools. A spelling task's directories are existing paths from the data directory. "
+        "pool ids from list_sentence_pools, and a capitalisation task's from list_capitalisation_pools. A spelling task's directories are existing paths from the data directory. "
         "null clears a setting."
     ),
 }
@@ -403,8 +497,22 @@ _SENTENCES = {
         "\"verb\": [\"sat\"]}}. A word that appears twice is named with its occurrence, such as the[2]."
     ),
 }
+_CAPITAL_SENTENCES = {
+    "type": "array",
+    "items": {
+        "oneOf": [
+            {"type": "string"},
+            {"type": "object", "properties": {"sentence": {"type": "string"}, LEVEL: {"type": ["number", "string"]}}, "required": ["sentence"]},
+        ]
+    },
+    "description": (
+        "Sentences as the pool file writes them: the text, such as \"Anna flew to Paris in July.\", or {\"sentence\": ..., "
+        "\"level_of_difficulty\": 1.5} for a sentence with a level of its own. Each needs at least one capital letter."
+    ),
+}
 _POOL_LEVEL = {LEVEL: {"type": ["number", "string"], "description": "The pool's level of difficulty, 0.5 through 10."}}
 _POOL_ID = {"id": {"type": "string", "description": "The pool's id, from list_sentence_pools."}}
+_CAP_POOL_ID = {"id": {"type": "string", "description": "The pool's id, from list_capitalisation_pools."}}
 
 
 def _pool_target(arguments: Mapping) -> str:
@@ -414,7 +522,7 @@ def _pool_target(arguments: Mapping) -> str:
 WRITE_TOOLS: tuple[Tool, ...] = (
     Tool(
         "create_task", "tasks", "create",
-        "Make a task, as the new task page does: arithmetic, parts_of_speech, skip_counting, or spelling. "
+        "Make a task, as the new task page does: arithmetic, capitalisation, parts_of_speech, skip_counting, or spelling. "
         "A spelling task's words are set in the portal.",
         create_task, {**_TASK_KEY, "settings": _SETTINGS, **_DRY_RUN}, ("type", "name"), _key_target, write=True,
     ),
@@ -451,5 +559,26 @@ WRITE_TOOLS: tuple[Tool, ...] = (
     Tool(
         "delete_sentence_pool", "sentence_pools", "delete", "Delete a pool, as its page does. Refused while a task uses it.",
         delete_sentence_pool, {**_POOL_ID, **_DRY_RUN}, ("id",), _pool_target, write=True,
+    ),
+    Tool(
+        "create_capitalisation_pool", "capitalisation_pools", "create",
+        "Make a capitalisation pool, listed under Capitalisation Pools.",
+        create_capitalisation_pool, {"name": {"type": "string"}, "sentences": _CAPITAL_SENTENCES, **_POOL_LEVEL, **_DRY_RUN},
+        ("name", "sentences"), _pool_target, write=True,
+    ),
+    Tool(
+        "update_capitalisation_pool", "capitalisation_pools", "update",
+        "Add and remove a pool's sentences together. A sentence is removed by its exact text, and changed by removing it and adding the new one.",
+        update_capitalisation_pool,
+        {**_CAP_POOL_ID, "add": _CAPITAL_SENTENCES, "remove": {"type": "array", "items": {"type": "string"}}, **_POOL_LEVEL, **_DRY_RUN},
+        ("id",), _pool_target, write=True,
+    ),
+    Tool(
+        "rename_capitalisation_pool", "capitalisation_pools", "update", "Rename a pool, and the name in each task that uses it, as its page does.",
+        rename_capitalisation_pool, {**_CAP_POOL_ID, "name": {"type": "string"}, **_DRY_RUN}, ("id", "name"), _pool_target, write=True,
+    ),
+    Tool(
+        "delete_capitalisation_pool", "capitalisation_pools", "delete", "Delete a pool, as its page does. Refused while a task uses it.",
+        delete_capitalisation_pool, {**_CAP_POOL_ID, **_DRY_RUN}, ("id",), _pool_target, write=True,
     ),
 )

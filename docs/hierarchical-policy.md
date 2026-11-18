@@ -515,7 +515,7 @@ A run in progress keeps the sentences, difficulties, filter rows, and targets it
 
 ### Capitalisation tasks
 
-A `capitalisation` task draws sentences from named **capitalisation pools**. Each pool is a YAML file under `capitalisation_pools/` beside the root policy file, stored, named, loaded, and identified as a parts of speech pool is: the file name is a stable id, the pool's user-visible `name` is what tasks list, only pools a `capitalisation` task names are loaded, and two pools with the same name are a load error that names both files. The portal does not edit them yet; write them by hand.
+A `capitalisation` task draws sentences from named **capitalisation pools**. Each pool is a YAML file under `capitalisation_pools/` beside the root policy file, stored, named, loaded, and identified as a parts of speech pool is: the file name is a stable id, the pool's user-visible `name` is what tasks list, only pools a `capitalisation` task names are loaded, and two pools with the same name are a load error that names both files. They are edited in the parent portal under Asset Administration › Capitalisation Pools, `/parent/assets/capitalisation-pools`, which lists, makes, renames, and deletes them as the parts of speech pool pages do, and saves a changed pool as `saved capitalisation pool <name>`; they may still be written by hand. A capitalisation task's page, `/parent/tasks/capitalisation/<name>`, edits its settings and pools.
 
 A pool has `name`, `level_of_difficulty` (0.5 through 10, default 1), and `sentences`. Each sentence is a string, or a mapping with `sentence` and `level_of_difficulty`, which overrides the pool's. Write each sentence as it should be capitalised.
 

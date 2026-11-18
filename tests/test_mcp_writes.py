@@ -19,7 +19,7 @@ from test_mcp_server import activity, call_tool, connect, sign_in, tool_answer, 
 
 from asgi import call  # noqa: E402
 from policy.accounts import Accounts  # noqa: E402
-from policy.sentence_pools import pools_directory, write_pool  # noqa: E402
+from policy.sentence_pools import CAPITALISATION_DIR, pools_directory, write_pool  # noqa: E402
 from policy.mcp_writes import CONFIRM  # noqa: E402
 from policy.store import PolicyStore  # noqa: E402
 from policy.tasks import AttemptStore, TaskKey  # noqa: E402
@@ -69,6 +69,15 @@ enabled: true
 permissions:
   tasks: [create, read, update, delete]
   sentence_pools: [create, read, update, delete]
+  capitalisation_pools: [create, read, update, delete]
+"""
+CAPS = """\
+tasks:
+  capitalisation:
+    caps:
+      group: younger
+      body:
+        pools: [Places]
 """
 CAT = {"sentence": "The cat sat on the mat.", "parts": {"noun": ["cat", "mat"], "verb": ["sat"], "article": ["the[1]"]}}
 DOG = {"sentence": "A dog ran fast.", "parts": {"noun": ["dog"], "verb": ["ran"]}}
@@ -100,7 +109,9 @@ def house(tmp_path, monkeypatch):
     (config / "policy.yaml").write_text(HOUSE, encoding="utf-8")
     (config / "tasks.d" / "times-6.yaml").write_text(TIMES, encoding="utf-8")
     (config / "tasks.d" / "words.yaml").write_text(WORDS, encoding="utf-8")
+    (config / "tasks.d" / "caps.yaml").write_text(CAPS, encoding="utf-8")
     (config / "mcp.yaml").write_text(MCP_FILE, encoding="utf-8")
+    write_pool(pools_directory(config, CAPITALISATION_DIR), "places", "Places", ["Anna flew to Paris."])
     pools = pools_directory(config)
     write_pool(pools, "year-3-basic", "Year 3 Basic", [CAT])
     write_pool(pools, "verbs", "Verbs", [DOG])
@@ -174,7 +185,9 @@ TIMES_6 = {"type": "arithmetic", "name": "times-6"}
 def test_the_write_tools_are_listed_by_the_matrix(house):
     names = tool_names(house.app, house.access)
     for name in ("create_task", "update_task", "rename_task", "retire_task", "create_sentence_pool",
-                 "update_sentence_pool", "rename_sentence_pool", "delete_sentence_pool"):
+                 "update_sentence_pool", "rename_sentence_pool", "delete_sentence_pool", "list_capitalisation_pools",
+                 "get_capitalisation_pool", "create_capitalisation_pool", "update_capitalisation_pool",
+                 "rename_capitalisation_pool", "delete_capitalisation_pool"):
         assert name in names
 
 
@@ -389,3 +402,63 @@ def test_rename_and_delete_a_pool_as_its_page_does(house):
     found = house.ok("delete_sentence_pool", {"id": "verbs"})
     assert found["deleted"] == {"id": "verbs", "name": "Verbs"}
     assert not (house.config / "parts_of_speech_pools" / "verbs.yaml").exists()
+
+
+# Capitalisation pools
+
+
+def test_list_and_get_a_capitalisation_pool(house):
+    found = house.ok("list_capitalisation_pools", {})
+    assert found["pools"] == [{"id": "places", "name": "Places", "sentences": 1, "tasks": ["caps"]}]
+    found = house.ok("get_capitalisation_pool", {"id": "places"})
+    assert found["sentences"] == [{"text": "Anna flew to Paris.", "level_of_difficulty": ""}]
+    assert house.ok("list_sentence_pools", {})["pools"][0]["id"] in ("verbs", "year-3-basic")
+
+
+def test_create_a_capitalisation_pool_with_sentences_in_the_files_form(house):
+    sentences = ["Bob ran to Rome.", {"sentence": "We saw NASA in July.", "level_of_difficulty": 2}]
+    found = house.ok("create_capitalisation_pool", {"name": "Towns", "sentences": sentences})
+    assert found["pool"]["name"] == "Towns"
+    assert yaml.safe_load(house.text("capitalisation_pools/towns.yaml")) == {"name": "Towns", "sentences": sentences}
+    assert house.commit().endswith("ada via Claude Code: made capitalisation pool Towns\n")
+
+
+def test_a_sentence_with_no_capital_is_refused_with_the_pages_reason(house):
+    before = house.files()
+    text = house.refused("create_capitalisation_pool", {"name": "Bad", "sentences": ["all lower case"]})
+    assert "The sentence has no capital letter, so there is nothing to click." in text
+    text = house.refused("update_capitalisation_pool", {"id": "places", "add": ["no capitals"]})
+    assert "The sentence has no capital letter, so there is nothing to click." in text
+    assert house.files() == before
+
+
+def test_update_rename_and_delete_a_capitalisation_pool(house):
+    found = house.ok("update_capitalisation_pool", {"id": "places", "add": ["Cara sat."], "remove": ["Anna flew to Paris."]})
+    assert [sentence["text"] for sentence in found["pool"]["sentences"]] == ["Cara sat."]
+    house.ok("rename_capitalisation_pool", {"id": "places", "name": "Cities"})
+    assert "pools: [Cities]" in house.text("tasks.d/caps.yaml")
+    assert "cannot be deleted while a task uses it: caps" in house.refused("delete_capitalisation_pool", {"id": "places"})
+    house.ok("create_capitalisation_pool", {"name": "Spare", "sentences": ["Go Home."]})
+    assert house.ok("delete_capitalisation_pool", {"id": "spare"})["deleted"] == {"id": "spare", "name": "Spare"}
+
+
+def test_a_capitalisation_task_chooses_capitalisation_pools_by_id(house):
+    found = house.ok("create_task", {"type": "capitalisation", "name": "more", "settings": {"groups": ["younger"], "pools": ["places"]}})
+    assert found["task"]["capitalisation"]["pools"] == ["Places"]
+    text = house.refused("update_task", {"type": "capitalisation", "name": "caps", "settings": {"pools": ["verbs"]}})
+    assert "verbs is not a pool id" in text
+    text = house.refused("update_task", {"type": "parts_of_speech", "name": "words", "settings": {"pools": ["places"]}})
+    assert "places is not a pool id" in text
+
+
+def test_the_capitalisation_tools_need_the_capitalisation_pools_permission():
+    from policy.mcp_server import ALL_TOOLS
+    from policy.mcp_settings import McpSettings
+    from policy.mcp_tools import visible
+
+    held = {"sentence_pools": frozenset({"create", "read", "update", "delete"}), "capitalisation_pools": frozenset({"read"})}
+    names = [tool.name for tool in visible(McpSettings(permissions=held), ALL_TOOLS)]
+    assert "list_capitalisation_pools" in names and "get_capitalisation_pool" in names
+    assert not [name for name in names if name.endswith("capitalisation_pool") and not name.startswith("get_")]
+    names = [tool.name for tool in visible(McpSettings(permissions={"sentence_pools": held["sentence_pools"]}), ALL_TOOLS)]
+    assert "create_sentence_pool" in names and not [name for name in names if "capitalisation_pool" in name]

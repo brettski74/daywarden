@@ -20,6 +20,7 @@
   --palette-lavender: #777e9c;
   --palette-white: #ffffff;
   --palette-brick: #8a2c2c;
+  --palette-blue: #1f4e9e;
   /* Used only for chart series. */
   --palette-green: #3d7a4a;
   --palette-orange: #c0652a;
@@ -66,6 +67,9 @@
   --signin-panel-border: var(--palette-lavender);
   --signin-logo: url("../assets/logo.webp");
   --failure-text: var(--palette-brick);
+  /* A capitalisation try's words: a capital he clicked, and a word marked wrong. */
+  --mark-right: var(--palette-blue);
+  --mark-wrong: var(--palette-brick);
   --done-text: var(--palette-navy);
 
   --changed-bg: color-mix(in srgb, var(--palette-gold) 35%, var(--palette-ivory));

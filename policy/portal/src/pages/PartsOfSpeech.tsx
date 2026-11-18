@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { MultiSelect } from "../components/MultiSelect";
 import { label } from "../labels";
 import {
+  CAPITALISATION_TIMEOUT,
   DEFAULT_TIMEOUT,
   FILTER_LABEL,
   NO_POOLS,
@@ -15,39 +16,44 @@ import {
   sameList,
   type PosData,
 } from "../partsOfSpeech";
-import { POOLS, poolPath } from "../pools";
+import { CAPITALISATION_POOLS, PARTS_POOLS, poolPath } from "../pools";
 
 export type { PosData };
 
 type Props = {
-  data: PosData;
+  /** A capitalisation task has no filter of parts, and its page names its own pools and defaults. */
+  data: Omit<PosData, "filter"> & { filter?: string[] };
   settings: Record<string, string>;
   /** The pools and the filter on show, which are the file's until the parent changes them. */
   pools: string[];
-  filter: string[];
+  /** The parts of speech filter on show, or null for a capitalisation task, which has none. */
+  filter: string[] | null;
   onSetting: (key: string, text: string) => void;
   onPools: (pools: string[]) => void;
   onFilter: (filter: string[]) => void;
 };
 
 /**
- * A parts of speech task's own settings, the pools it draws on, and its parts of speech filter.
+ * A parts of speech or capitalisation task's own settings, the pools it draws on, and a parts of speech task's filter.
  * Its sentences are edited in their pools under Asset Administration.
  */
 export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, onPools, onFilter }: Props) {
+  const capital = filter === null;
+  const kind = capital ? CAPITALISATION_POOLS : PARTS_POOLS;
   const options = poolOptions(data, pools);
-  const placeholders = { timeout: DEFAULT_TIMEOUT, ...questionPlaceholders(runnableSize(data, pools), settings) } as Record<string, string>;
+  const placeholders = { timeout: capital ? CAPITALISATION_TIMEOUT : DEFAULT_TIMEOUT, ...questionPlaceholders(runnableSize(data, pools), settings) } as Record<string, string>;
   const toggle = (name: string) => onPools(options.filter((option) => (option === name ? !pools.includes(name) : pools.includes(option))));
   const move = (index: number, by: number) => {
+    if (filter === null) return;
     const next = [...filter];
     [next[index], next[index + by]] = [next[index + by], next[index]];
     onFilter(next);
   };
   return (
-    <section className="parts-of-speech" aria-label="Parts of speech">
+    <section className="parts-of-speech" aria-label={capital ? "Capitalisation" : "Parts of speech"}>
       <div className="task-common">
         <fieldset>
-          <legend>Parts of speech settings</legend>
+          <legend>{capital ? "Capitalisation settings" : "Parts of speech settings"}</legend>
           <div className="settings">
             {SETTINGS.map((key) => {
               const written = data.settings[key] ?? "";
@@ -85,7 +91,7 @@ export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, o
               return (
                 <li key={name}>
                   {found ? (
-                    <Link to={poolPath(found.id)}>
+                    <Link to={poolPath(found.id, kind)}>
                       <SquarePen aria-hidden="true" />
                       Edit {name}
                     </Link>
@@ -98,6 +104,7 @@ export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, o
           </ul>
         </fieldset>
       </div>
+      {filter !== null && (
       <fieldset className="parts-filter">
         <legend title="parts_of_speech">{FILTER_LABEL}</legend>
         <p className="note">
@@ -114,7 +121,7 @@ export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, o
                   aria-label={`Part ${index + 1}`}
                   value={name}
                   aria-invalid={problem !== null || undefined}
-                  data-changed={name.trim() !== (data.filter[index] ?? "") || undefined}
+                  data-changed={name.trim() !== (data.filter?.[index] ?? "") || undefined}
                   onChange={(event) => onFilter(filter.map((each, at) => (at === index ? event.target.value : each)))}
                 />
                 <button type="button" className="button button-quiet" aria-label={`Move part ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}>
@@ -143,9 +150,10 @@ export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, o
           Add part
         </button>
       </fieldset>
+      )}
       <p>
         The sentences are in the pools this task names. Edit them under Asset Administration ›{" "}
-        <Link to={POOLS}>Parts of Speech Pools</Link>.
+        <Link to={kind.list}>{kind.title}</Link>.
       </p>
     </section>
   );

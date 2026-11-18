@@ -46,6 +46,7 @@ CLASSES: dict[str, tuple[str, ...]] = {
     "rule_sets": CRUD,
     "tasks": CRUD,
     "sentence_pools": CRUD,
+    "capitalisation_pools": CRUD,
     "attempts": (READ,),
     "usage": (READ,),
 }

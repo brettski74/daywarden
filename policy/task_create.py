@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from policy.arithmetic import ARITHMETIC
+from policy.capitalisation import CAPITALISATION
 from policy.owned import make_directory, own_like
 from policy.parts_of_speech import PARTS_OF_SPEECH
 from policy.skip_counting import SKIP_COUNTING
@@ -44,7 +45,7 @@ from policy.week import Weeks
 
 TASKS_DIR = "tasks.d"
 # A parent check is only how a parent records credit for work done outside daywarden, so it is never made here.
-NEW_TYPES = (ARITHMETIC, PARTS_OF_SPEECH, SKIP_COUNTING, SPELLING)
+NEW_TYPES = (ARITHMETIC, CAPITALISATION, PARTS_OF_SPEECH, SKIP_COUNTING, SPELLING)
 CHOOSE_TYPE = "Choose the task's type."
 _EMPTY = WrittenTask({}, (), {})
 _WRITTEN_ORDER = ("group", "groups", *COMMON_FIELDS, "body")

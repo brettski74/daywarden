@@ -61,6 +61,7 @@ export const CLASS_LABELS: Record<string, string> = {
   rule_sets: "Rule Sets",
   tasks: "Tasks",
   sentence_pools: "Sentence Pools",
+  capitalisation_pools: "Capitalisation Pools",
   attempts: "Attempts",
   usage: "Usage",
 };

@@ -54,6 +54,8 @@ export type TaskData = {
   today: string;
   spelling?: SpellingData;
   parts_of_speech?: PosData;
+  /** A capitalisation task's settings and pools, which has no filter of parts. */
+  capitalisation?: Omit<PosData, "filter">;
   skip_counting?: SkipData;
   arithmetic?: ArithmeticData;
 };
@@ -203,12 +205,13 @@ function pendingMoves(moves: Record<string, Pool>, words: SpellingWord[]): Recor
 function changed(data: TaskData, edits: Edits, words: SpellingWord[]): boolean {
   const differs = (shown: Record<string, string>, edited: Record<string, string>) =>
     Object.entries(edited).some(([key, value]) => value.trim() !== (shown[key] ?? "").trim());
-  const settings = (data.spelling ?? data.parts_of_speech ?? data.skip_counting ?? data.arithmetic)?.settings ?? {};
+  const settings = (data.spelling ?? data.parts_of_speech ?? data.capitalisation ?? data.skip_counting ?? data.arithmetic)?.settings ?? {};
   if (differs(data.fields, edits.fields) || differs(settings, edits.settings)) return true;
   if (edits.groups !== null && edits.groups.join("\n") !== data.groups.join("\n")) return true;
-  if (data.parts_of_speech) {
-    if (edits.pools !== null && !sameList(edits.pools, data.parts_of_speech.pools)) return true;
-    if (edits.filter !== null && !sameList(edits.filter, data.parts_of_speech.filter)) return true;
+  const pooled = data.parts_of_speech ?? data.capitalisation;
+  if (pooled) {
+    if (edits.pools !== null && !sameList(edits.pools, pooled.pools)) return true;
+    if (data.parts_of_speech && edits.filter !== null && !sameList(edits.filter, data.parts_of_speech.filter)) return true;
   }
   if (data.skip_counting && shownDifference(data.skip_counting, edits.settings, edits.lists.difference).changed) return true;
   if (data.arithmetic && Object.keys(arithmeticLists(shownArithmetic(data.arithmetic, edits.settings, edits.lists))).length > 0) return true;
@@ -286,10 +289,11 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
     if (!dirty || opening.current || currentLocation.pathname === nextLocation.pathname) return false;
     return otherDirty || !nextLocation.pathname.startsWith(`${taskPath(data)}/words/`);
   });
-  const pos = data.parts_of_speech;
+  const pos = data.parts_of_speech ?? data.capitalisation;
+  const capital = data.capitalisation !== undefined;
   const posPools = edits.pools ?? pos?.pools ?? [];
-  const posFilter = edits.filter ?? pos?.filter ?? [];
-  const posProblem = pos ? posBlock(posPools, posFilter) : null;
+  const posFilter = edits.filter ?? data.parts_of_speech?.filter ?? [];
+  const posProblem = pos ? posBlock(posPools, capital ? [] : posFilter) : null;
   const skip = data.skip_counting;
   const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
   const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
@@ -340,7 +344,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
                 ...(directoriesMoved ? { directories: unsavedDirectories } : {}),
               }
             : {}),
-          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, pools: posPools, parts_of_speech: posFilter } : {}),
+          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, pools: posPools, ...(capital ? {} : { parts_of_speech: posFilter }) } : {}),
           ...(skip ? { settings: { ...skip.settings, ...edits.settings }, lists } : {}),
           ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
           confirmed,
@@ -642,7 +646,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
               data={pos}
               settings={edits.settings}
               pools={posPools}
-              filter={posFilter}
+              filter={capital ? null : posFilter}
               onSetting={setSetting}
               onPools={(next) => setEdits((current) => ({ ...current, pools: sameList([...next].sort(), [...pos.pools].sort()) ? null : next }))}
               onFilter={(next) => setEdits((current) => ({ ...current, filter: next }))}
