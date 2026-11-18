@@ -206,6 +206,16 @@ def test_a_number_is_taken_as_the_page_takes_its_text_and_an_arithmetic_weight_i
     assert "- { from: 1, to: 12 }" in text
 
 
+def test_practice_fallback_can_be_set_and_cleared_with_null(house):
+    house.ok("update_task", {**TIMES_6, "settings": {"practice_fallback": 2}})
+    assert yaml.safe_load(house.text("tasks.d/times-6.yaml"))["tasks"]["arithmetic"]["times-6"]["body"]["practice_fallback"] == 2
+    house.ok("update_task", {**TIMES_6, "settings": {"practice_fallback": None}})
+    assert "practice_fallback" not in house.text("tasks.d/times-6.yaml")
+    assert "practice_fallback: must be a whole number, 1 or more" in house.refused(
+        "update_task", {**TIMES_6, "settings": {"practice_fallback": 0}}
+    )
+
+
 def test_a_dry_run_checks_and_writes_nothing(house):
     before = house.files()
     found = house.ok("update_task", {**TIMES_6, "settings": {"pass_cooldown": 2}, "dry_run": True})

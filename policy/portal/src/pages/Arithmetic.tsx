@@ -1,7 +1,7 @@
 import { Note, WeightedTable } from "../components/WeightedTable";
 import { label } from "../labels";
 import type { NumberRow } from "../numberTable";
-import { NO_FIRST, NO_OPERANDS, SETTINGS, USES, hasNumbers, type ArithmeticData, type ShownArithmetic } from "../arithmetic";
+import { NO_FIRST, NO_OPERANDS, OPTIONAL_SETTINGS, SETTINGS, USES, hasNumbers, type ArithmeticData, type ShownArithmetic } from "../arithmetic";
 
 type Props = {
   data: ArithmeticData;
@@ -44,6 +44,9 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
             {SETTINGS.map((key) => (
               <Setting key={key} name={key} value={value(key)} written={written(key)} problem={shown.settingProblems[key]} onSetting={onSetting} />
             ))}
+            {Object.entries(OPTIONAL_SETTINGS).map(([key, fallback]) => (
+              <Setting key={key} name={key} value={value(key)} written={written(key)} problem={undefined} placeholder={fallback} onSetting={onSetting} />
+            ))}
           </div>
         </fieldset>
       </div>
@@ -81,16 +84,24 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
   );
 }
 
-type SettingProps = { name: string; value: string; written: string; problem: string | undefined; onSetting: (key: string, text: string) => void };
+type SettingProps = {
+  name: string;
+  value: string;
+  written: string;
+  problem: string | undefined;
+  placeholder?: string;
+  onSetting: (key: string, text: string) => void;
+};
 
-function Setting({ name, value, written, problem, onSetting }: SettingProps) {
+function Setting({ name, value, written, problem, placeholder, onSetting }: SettingProps) {
   return (
     <>
       <label className="setting">
         <span title={name}>{label(name)}</span>
         <input
           type="text"
-          inputMode={name === "correct_answers_required" ? "numeric" : undefined}
+          inputMode={name === "correct_answers_required" || name === "practice_fallback" ? "numeric" : undefined}
+          placeholder={placeholder}
           value={value}
           aria-invalid={problem !== undefined || undefined}
           data-changed={value.trim() !== written.trim() || undefined}

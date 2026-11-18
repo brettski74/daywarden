@@ -241,6 +241,27 @@ describe("an arithmetic attempt's page", () => {
     expect(ARITHMETIC_ATTEMPT.arithmetic.expired).toHaveLength(1);
   });
 
+  it("lists each practice walk under a Practice heading with its m, and each question with its step", async () => {
+    fakeService();
+    renderPortal("/parent/attempts/43");
+    const practice = await screen.findByRole("region", { name: "Practice" });
+    expect(within(practice).getByRole("heading", { name: "Practice" })).toBeInTheDocument();
+    const walk = within(practice).getByRole("region", { name: "Practice walk 1" });
+    expect(within(walk).getByRole("heading", { name: "Walk 1: m = 7, Addition, left early" })).toBeInTheDocument();
+    const table = within(walk).getByRole("table", { name: "Practice walk 1's questions" });
+    expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toEqual([
+      "#", "Step", "Question", "Answer given", "Outcome", "Time taken", "Time allowed",
+    ]);
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent))).toEqual([
+      ["1", "1 of 28", "7 + 1 = 8", "8", "Right", "1.5 s", "10.0 s"],
+      ["2", "2 of 28", "7 + 2 = 9", "10", "Wrong", "2.5 s", "10.0 s"],
+      ["3", "1 of 28", "7 + 1 = 8", "", "Timeout", "10.0 s", "10.0 s"],
+    ]);
+    // Practice is in no fact's figures, so its questions do not link to the facts page.
+    expect(within(table).queryByRole("link")).toBeNull();
+  });
+
   it("lists each expired run after the last under the time it expired", async () => {
     fakeService();
     renderPortal("/parent/attempts/43");

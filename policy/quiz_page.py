@@ -175,6 +175,12 @@ main { flex: 1; display: flex; flex-direction: column; align-items: center; just
 #confirm { position: fixed; top: 3rem; right: 1rem; background: var(--surface); border: 1px solid var(--control-border); border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px var(--shadow); }
 #confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
 .hidden-label { position: absolute; left: -10000px; }
+.practice { position: fixed; right: 1rem; bottom: 2.8rem; font-size: 1.1rem; padding: 0.35rem 1rem; background: var(--surface);
+  border: 1px solid var(--control-border); border-radius: 6px; color: var(--soft-text); cursor: pointer; }
+.practice:disabled { color: var(--control-border); cursor: default; }
+#practice-confirm { position: fixed; right: 1rem; bottom: 5.6rem; max-width: 22rem; background: var(--surface); border: 1px solid var(--control-border);
+  border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px var(--shadow); text-align: left; }
+#practice-confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
 [hidden] { display: none !important; }
 """
 

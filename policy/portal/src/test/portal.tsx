@@ -247,6 +247,22 @@ export const ARITHMETIC_ATTEMPT = {
         questions: [{ ...RUN_QUESTION, text: "6 + 7 = 13", answer: "0", outcome: "incorrect", outcome_label: "Wrong", taken_ms: 4000 }],
       },
     ],
+    practice: [
+      {
+        walk: 1,
+        run: 2,
+        m: 7,
+        operation: "addition",
+        operation_label: "Addition",
+        length: 28,
+        ended: "left",
+        questions: [
+          { ...RUN_QUESTION, m: 7, n: 1, text: "7 + 1 = 8", answer: "8", outcome: "correct", outcome_label: "Right", taken_ms: 1500, step: "1 of 28" },
+          { ...RUN_QUESTION, m: 7, n: 2, text: "7 + 2 = 9", answer: "10", outcome: "incorrect", outcome_label: "Wrong", taken_ms: 2500, step: "2 of 28" },
+          { ...RUN_QUESTION, m: 7, n: 1, text: "7 + 1 = 8", answer: "", outcome: "timeout", outcome_label: "Timeout", taken_ms: 10_000, step: "1 of 28" },
+        ],
+      },
+    ],
   },
   record: { settings: { operation: "addition" }, last_activity: "2026-10-31T17:30:00" },
 };

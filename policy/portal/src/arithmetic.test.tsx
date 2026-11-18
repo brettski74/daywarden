@@ -10,7 +10,7 @@ const TIMES = {
   name: "times",
   type: "arithmetic",
   arithmetic: {
-    settings: { operation: "addition", max_timeout: "10s", min_timeout: "4s", correct_answers_required: "20" },
+    settings: { operation: "addition", max_timeout: "10s", min_timeout: "4s", correct_answers_required: "20", practice_fallback: "" },
     operations: [
       { name: "addition", label: "Addition" },
       { name: "subtraction", label: "Subtraction" },
@@ -58,6 +58,25 @@ describe("the arithmetic area of a task page", () => {
     expect(box("First", 1, "From")).toHaveValue("0");
     expect(status()).toHaveTextContent("No problems.");
     expect(screen.getByText("Each question is first + operand.")).toBeInTheDocument();
+  });
+
+  it("shows Practice Fallback with the default as its placeholder, and an empty box is not a problem", async () => {
+    await openTimes();
+    const fallback = screen.getByRole("textbox", { name: "Practice Fallback" });
+    expect(fallback).toHaveValue("");
+    expect(fallback).toHaveAttribute("placeholder", "3");
+    expect(screen.getByText("Practice Fallback")).toHaveAttribute("title", "practice_fallback");
+    expect(status()).toHaveTextContent("No problems.");
+    expect(save()).toBeDisabled();
+  });
+
+  it("saves a Practice Fallback typed, and saves it empty to clear it", async () => {
+    const calls = await openTimes();
+    await userEvent.type(screen.getByRole("textbox", { name: "Practice Fallback" }), "2");
+    expect(screen.getByRole("textbox", { name: "Practice Fallback" })).toHaveAttribute("data-changed");
+    await userEvent.click(save());
+    await screen.findByText("Saved times.");
+    expect(posted(calls)[0]).toMatchObject({ settings: { ...TIMES.arithmetic.settings, practice_fallback: "2" } });
   });
 
   it("says how the chosen operation uses the tables, following the pull-down, and saves the choice", async () => {

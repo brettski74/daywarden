@@ -174,6 +174,8 @@ def test_a_bad_operand_list_is_rejected(operands):
         ({"correct_answers_required": 0}, "correct_answers_required"),
         ({"operation": "exponent"}, "operation"),
         ({"colour": "blue"}, "colour"),
+        ({"practice_fallback": 0}, "practice_fallback"),
+        ({"practice_fallback": "3"}, "practice_fallback"),
     ],
 )
 def test_bad_arithmetic_settings_fail_the_policy_load_and_keep_the_previous_policy(tmp_path, change, field):

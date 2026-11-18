@@ -163,11 +163,12 @@ def no_questions(operation: str, client: str) -> str:
 
 
 def attempt_runs(attempt: Attempt, stamp: Callable[[str], str]) -> dict | None:
-    """Return an arithmetic attempt's runs for its page: the last run first, then each expired run in order.
+    """Return an arithmetic attempt's runs for its page: the last run first, then each earlier run in order.
 
     Each run has its figures, as S035.1 works them out, and its questions in
-    order. ``stamp`` formats a stored time. None when the attempt holds no
-    arithmetic record.
+    order. ``practice`` lists each practice walk (S039) with its ``m`` and
+    each question asked, which are in no run's figures. ``stamp`` formats a
+    stored time. None when the attempt holds no arithmetic record.
     """
     detail = attempt.detail if isinstance(attempt.detail, Mapping) else {}
     questions = detail.get("questions")
@@ -197,8 +198,40 @@ def attempt_runs(attempt: Attempt, stamp: Callable[[str], str]) -> dict | None:
         )
     if not shown:
         return None
-    # A run ends early only by expiring, so every run before the last is an expired one.
-    return {"last": shown[-1], "expired": shown[:-1]}
+    # A run before the last ended by expiring, or because he left it for practice, which starts a new run.
+    return {"last": shown[-1], "expired": shown[:-1], "practice": _walks(detail, settings)}
+
+
+def _walks(detail: Mapping, settings: Mapping) -> list[dict]:
+    """Return each practice walk with its ``m`` and its questions, the position in the walk each was asked at, and how it ended."""
+    walks = detail.get("practice")
+    if not isinstance(walks, list):
+        return []
+    shown = []
+    for number, walk in enumerate((each for each in walks if isinstance(each, Mapping)), start=1):
+        asked = [each for each in walk.get("questions", []) if isinstance(each, Mapping)] if isinstance(walk.get("questions"), list) else []
+        operation = walk.get("operation") if walk.get("operation") in OPERATIONS else operation_of({}, settings)
+        total = _whole(walk.get("length"))
+        rows = []
+        for question in asked:
+            position = _whole(question.get("position"))
+            row = _question_row(question, operation)
+            row["step"] = None if position is None or total is None else f"{position + 1} of {total}"
+            rows.append(row)
+        ended = walk.get("ended")
+        shown.append(
+            {
+                "walk": number,
+                "run": _whole(walk.get("run")),
+                "m": _whole(walk.get("m")),
+                "operation": operation,
+                "operation_label": OPERATIONS[operation].label if operation in OPERATIONS else "Arithmetic",
+                "length": total,
+                "ended": ended if ended in ("finished", "left") else None,
+                "questions": rows,
+            }
+        )
+    return shown
 
 
 def _question_row(question: Mapping, operation: str | None) -> dict:

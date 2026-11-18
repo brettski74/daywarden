@@ -419,12 +419,6 @@ _STYLE = (
   padding: 0.2em 0.4em; text-align: center; border: 3px solid var(--field-border); border-radius: 10px; background: var(--surface); color: var(--text); }
 #answer:disabled { background: var(--given-bg); }
 #reveal { min-height: 3.6rem; font-size: 3rem; font-weight: bold; color: var(--right); margin-top: 1.2rem; }
-.practice { position: fixed; right: 1rem; bottom: 2.8rem; font-size: 1.1rem; padding: 0.35rem 1rem; background: var(--surface);
-  border: 1px solid var(--control-border); border-radius: 6px; color: var(--soft-text); cursor: pointer; }
-.practice:disabled { color: var(--control-border); cursor: default; }
-#practice-confirm { position: fixed; right: 1rem; bottom: 5.6rem; max-width: 22rem; background: var(--surface); border: 1px solid var(--control-border);
-  border-radius: 6px; padding: 0.8rem 1rem; box-shadow: 0 2px 8px var(--shadow); text-align: left; }
-#practice-confirm button { margin: 0.5rem 0.3rem 0 0; font-size: 1rem; }
 #practise:not([hidden]) { display: flex; flex-direction: column; align-items: center; }
 #practice-word { font-size: min(9rem, 9vw); font-weight: bold; line-height: 1.2; overflow-wrap: anywhere; }
 .prompt-line { min-height: 4rem; margin: 1.5rem 0; }

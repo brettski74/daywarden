@@ -11,6 +11,8 @@ export type ArithmeticData = {
 };
 
 export const SETTINGS = ["max_timeout", "min_timeout", "correct_answers_required"];
+/** Settings the file may leave out, with the value in force when it does (S039). They are never a problem when empty. */
+export const OPTIONAL_SETTINGS: Record<string, string> = { practice_fallback: "3" };
 export const NO_OPERANDS = "Add a number.";
 export const NO_FIRST = "With no first numbers, both numbers are drawn from Operands.";
 export const NO_ZERO_DIVISOR = "Division cannot divide by 0.";

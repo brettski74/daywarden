@@ -12,6 +12,10 @@ in time. Runs, expiry, and resume are ``policy.quiz``'s.
 ``first`` and ``operands`` set which facts can be asked, the task's
 **domain**. Which fact is asked is weighted from his record of every other
 attempt, by ``policy.fact_figures``. A weight written in the lists is ignored.
+
+Practice mode (S039) is a walk through one ``m``'s table, kept on the attempt's
+``detail["practice"]`` and never among its ``questions``, so it counts in no
+figure. ``policy.arithmetic_practice`` has the walk and the choice of ``m``.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from policy.arithmetic_practice import DEFAULT_FALLBACK, MIN_OPERANDS, choose_m, index_at, length, restart
 from policy.fact_figures import ARITHMETIC, NO_FIGURES, UNIT_CAP, Book
 from policy.problems import Collector
 from policy.quiz import (
@@ -53,6 +58,7 @@ __all__ = [
     "Judged",
     "OPERATIONS",
     "Operation",
+    "PracticeJudged",
     "Session",
     "Settings",
     "StaleQuestion",
@@ -64,7 +70,15 @@ __all__ = [
 RECENT_QUESTIONS = 3
 LONGEST_ANSWER = 20
 
-_BODY_KEYS = {"operation", "max_timeout", "min_timeout", "correct_answers_required", "operands", "first"}
+_BODY_KEYS = {
+    "operation",
+    "max_timeout",
+    "min_timeout",
+    "correct_answers_required",
+    "operands",
+    "first",
+    "practice_fallback",
+}
 _REQUIRED_KEYS = ("operation", "max_timeout", "min_timeout", "correct_answers_required", "operands")
 _DIGITS = re.compile(r"^[0-9]+$")
 
@@ -100,10 +114,16 @@ class Settings:
     required: int
     operands: WeightedList
     first: WeightedList | None = None
+    practice_fallback: int = DEFAULT_FALLBACK
 
     @property
     def lefts(self) -> WeightedList:
         return self.operands if self.first is None else self.first
+
+    @property
+    def can_practice(self) -> bool:
+        """Whether the task offers practice mode: it has enough values in ``operands`` to walk through."""
+        return self.operands.count >= MIN_OPERANDS
 
     def timeout(self, correct: int) -> int:
         """Return the time allowed after ``correct`` right answers, in milliseconds."""
@@ -138,6 +158,9 @@ def parse_settings(body: Mapping) -> Settings:
     required = body.get("correct_answers_required")
     if "correct_answers_required" in body and (not is_whole(required) or required < 1):
         fields.add("correct_answers_required: must be a whole number, 1 or more")
+    fallback = body.get("practice_fallback", DEFAULT_FALLBACK)
+    if "practice_fallback" in body and (not is_whole(fallback) or fallback < 1):
+        fields.add("practice_fallback: must be a whole number, 1 or more")
     first = fields.take(_numbers, body["first"], "first") if "first" in body else None
     operands = fields.take(_numbers, body["operands"], "operands") if "operands" in body else None
     if name == DIVISION:
@@ -145,7 +168,7 @@ def parse_settings(body: Mapping) -> Settings:
         if lefts is not None and lefts.has(0):
             fields.add(f"{field}: division cannot divide by 0, so 0 cannot be in the list the first number is drawn from")
     fields.finish()
-    return Settings(OPERATIONS[name], longest, shortest, required, operands, first)
+    return Settings(OPERATIONS[name], longest, shortest, required, operands, first, fallback)
 
 
 def draw(
@@ -231,6 +254,28 @@ class Judged:
     finished: bool
 
 
+@dataclass(frozen=True)
+class PracticeJudged:
+    """What the server decided about one answer in a practice walk.
+
+    ``full`` is the question with its answer, given only for a right answer:
+    a wrong answer or a timeout never shows the right one. ``position`` is the
+    place in the walk of the question that comes next, which a miss has moved
+    back. ``finished`` means he has reached the end of the walk.
+    """
+
+    outcome: str
+    full: str | None
+    position: int
+    length: int
+    finished: bool
+
+
+# How a walk ended: he answered its last question, or he left it by reloading, giving up, or going back to the quiz.
+FINISHED = "finished"
+LEFT = "left"
+
+
 class Session(QuizRecord):
     """The arithmetic record on one attempt."""
 
@@ -277,6 +322,118 @@ class Session(QuizRecord):
         self.touch(now)
         return question
 
+    def close_pending(self) -> None:
+        """Close the question showing, in the quiz or a walk. A walk in progress ends, as he has left it."""
+        super().close_pending()
+        walks = self.walks
+        if walks and "ended" not in walks[-1]:
+            showing = _showing(walks[-1])
+            if showing is not None:
+                self.time_out(showing)
+            walks[-1]["ended"] = LEFT
+
+    # Practice mode (S039)
+
+    @property
+    def walks(self) -> list[dict]:
+        """Return every practice walk on the attempt, oldest first. They are never among ``questions``."""
+        found = self.detail.get("practice")
+        return found if isinstance(found, list) else []
+
+    @property
+    def walk(self) -> dict | None:
+        """Return the walk in progress on the current run, or None."""
+        walks = self.walks
+        if not walks or "ended" in walks[-1] or not self.detail["runs"]:
+            return None
+        return walks[-1] if walks[-1].get("run") == self.run else None
+
+    def begin_walk(self, now: datetime, rng: random.Random, figures: Callable[[str], Book]) -> dict:
+        """Enter practice: start a new run, so the quiz is back at zero, and a walk through one ``m``'s table.
+
+        A question showing must already be closed and stored, so ``figures``,
+        which returns his whole record of an operation, counts it. The new
+        run takes the task settings in force now. Raises ``ValueError`` when
+        they do not offer practice.
+        """
+        self.close_pending()
+        self._start_run(now)
+        settings = self.settings
+        if not settings.can_practice:
+            raise ValueError("this task has too few operands to practise")
+        m = choose_m(settings.lefts, settings.operands, figures(settings.operation.name), rng)
+        walk = {
+            "run": self.run,
+            "operation": settings.operation.name,
+            "m": m,
+            "length": length(settings.operands.count),
+            "fallback": settings.practice_fallback,
+            "started": stamp(now),
+            "next": 0,
+            "questions": [],
+        }
+        self.detail.setdefault("practice", []).append(walk)
+        return walk
+
+    def practice_question(self, now: datetime) -> dict:
+        """Issue the walk's next question and start its time now. Raises ``StaleQuestion`` when no walk is in progress."""
+        self.resume(now)
+        walk = self.walk
+        if walk is None:
+            raise StaleQuestion("there is no practice walk to ask a question for")
+        left_showing = _showing(walk)
+        if left_showing is not None:
+            self.time_out(left_showing)
+            self._fall_back(walk, left_showing)
+        settings = self.settings
+        position = walk["next"]
+        m, n = walk["m"], settings.operands.nth(index_at(position, settings.operands.count))
+        question = {
+            "position": position,
+            "m": m,
+            "n": n,
+            "question": settings.operation.text(m, n),
+            "expected": settings.operation.answer(m, n),
+            "answer": None,
+            "outcome": None,
+            "allowed_ms": settings.max_timeout,
+            "taken_ms": None,
+            "issued": stamp(now),
+        }
+        walk["questions"].append(question)
+        self.touch(now)
+        return question
+
+    def practice_answer(self, now: datetime, number: object, text: object, *, expired: bool) -> PracticeJudged:
+        """Judge an answer in the walk, as the quiz judges one, then move the walk on or back."""
+        self.resume(now)
+        walk = self.walk
+        pending = None if walk is None else _showing(walk)
+        if walk is None or pending is None or number != len(walk["questions"]) - 1:
+            raise StaleQuestion("that question is no longer waiting for an answer")
+        received = _received(text)
+        if received is None and not expired:
+            raise ValueError("an empty answer is not submitted")
+        taken = self.taken_ms(pending, now)
+        outcome = _outcome(pending, taken, received, expired)
+        pending.update(answer=received, outcome=outcome, taken_ms=taken)
+        self.touch(now)
+        finished = False
+        if outcome != CORRECT:
+            self._fall_back(walk, pending)
+        elif pending["position"] + 1 >= walk["length"]:
+            walk["ended"] = FINISHED
+            finished = True
+        else:
+            walk["next"] = pending["position"] + 1
+        full = f"{pending['question']} {pending['expected']}" if outcome == CORRECT else None
+        return PracticeJudged(outcome, full, walk["next"], walk["length"], finished)
+
+    def _fall_back(self, walk: dict, missed: Mapping) -> None:
+        """Start the walk again ``fallback`` values of ``n`` below the one missed, or from the first."""
+        index = self.settings.operands.index_of(missed["n"])
+        walk["next"] = restart(index, walk["fallback"])
+
     def answer(self, now: datetime, number: object, text: object, *, expired: bool) -> Judged:
         """Judge an answer the server received now.
 
@@ -294,20 +451,32 @@ class Session(QuizRecord):
         if received is None and not expired:
             raise ValueError("an empty answer is not submitted")
         taken = self.taken_ms(pending, now)
-        value = int(received) if received is not None and _DIGITS.fullmatch(received) else None
-        if taken > pending["allowed_ms"] + NETWORK_ALLOWANCE_MS:
-            outcome = TIMEOUT
-        elif value == pending["expected"]:
-            outcome = CORRECT
-        elif expired or received is None:
-            outcome = TIMEOUT
-        else:
-            outcome = INCORRECT
+        outcome = _outcome(pending, taken, received, expired)
         pending.update(answer=received, outcome=outcome, taken_ms=taken)
         self.touch(now)
         settings = self.settings
         correct = self.correct
         return Judged(outcome, dict(pending), correct, settings.required, correct >= settings.required)
+
+
+def _outcome(pending: Mapping, taken: int, received: str | None, expired: bool) -> str:
+    """Return how an answer taken ``taken`` ms after its question was issued is judged."""
+    value = int(received) if received is not None and _DIGITS.fullmatch(received) else None
+    if taken > pending["allowed_ms"] + NETWORK_ALLOWANCE_MS:
+        return TIMEOUT
+    if value == pending["expected"]:
+        return CORRECT
+    if expired or received is None:
+        return TIMEOUT
+    return INCORRECT
+
+
+def _showing(walk: Mapping) -> dict | None:
+    """Return the walk's question left showing with no outcome, or None."""
+    questions = walk.get("questions")
+    if isinstance(questions, list) and questions and questions[-1].get("outcome") is None:
+        return questions[-1]
+    return None
 
 
 def _numbers(value: object, field: str) -> WeightedList:

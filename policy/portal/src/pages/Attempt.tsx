@@ -17,6 +17,8 @@ type Question = {
   outcome_label: string;
   taken_ms: number | null;
   allowed_ms: number | null;
+  /** A practice question's place in its walk, such as "5 of 28". */
+  step?: string | null;
 };
 type Run = {
   run: number;
@@ -24,6 +26,18 @@ type Run = {
   operation: string | null;
   operation_label: string;
   figures: Figures | null;
+  questions: Question[];
+};
+
+/** One practice walk (S039): its `m` and each question asked. Practice is in no run's figures. */
+type Walk = {
+  walk: number;
+  run: number | null;
+  m: number | null;
+  operation: string | null;
+  operation_label: string;
+  length: number | null;
+  ended: "finished" | "left" | null;
   questions: Question[];
 };
 
@@ -35,7 +49,7 @@ type AttemptReport = {
   times: string;
   summary: { label: string; value: string }[];
   reopened: { gave_up: string; came_back: string }[];
-  arithmetic: { last: Run; expired: Run[] } | null;
+  arithmetic: { last: Run; expired: Run[]; practice: Walk[] } | null;
   answers: Stored[] | null;
   record: { [key: string]: Stored } | null;
 };
@@ -86,14 +100,17 @@ function RunSummary({ run }: { run: Run }) {
 
 const OUTCOME_ICONS = { correct: Check, incorrect: X, timeout: TimerOff };
 
-/** The run's questions in order, each linking to its fact over the past month. */
-function RunQuestions({ run, client, label }: { run: Run; client: string; label: string }) {
-  if (run.questions.length === 0) return <p>No questions yet.</p>;
+type QuestionsProps = { questions: Question[]; operation: string | null; client: string; label: string; walk?: boolean };
+
+/** The questions in order, each of a run linking to its fact over the past month. A walk's have a Step and no link. */
+function RunQuestions({ questions, operation: asked, client, label, walk = false }: QuestionsProps) {
+  if (questions.length === 0) return <p>No questions yet.</p>;
   return (
     <table className="records run-questions" aria-label={label}>
       <thead>
         <tr>
           <th scope="col">#</th>
+          {walk && <th scope="col">Step</th>}
           <th scope="col">Question</th>
           <th scope="col">Answer given</th>
           <th scope="col">Outcome</th>
@@ -102,14 +119,15 @@ function RunQuestions({ run, client, label }: { run: Run; client: string; label:
         </tr>
       </thead>
       <tbody>
-        {run.questions.map((question, index) => {
+        {questions.map((question, index) => {
           const Icon = question.outcome === null ? Hourglass : OUTCOME_ICONS[question.outcome];
-          const operation = question.operation ?? run.operation;
+          const operation = question.operation ?? asked;
           return (
             <tr key={index}>
               <td>{index + 1}</td>
+              {walk && <td>{question.step ?? ""}</td>}
               <td>
-                {operation !== null && question.m !== null && question.n !== null ? (
+                {!walk && operation !== null && question.m !== null && question.n !== null ? (
                   <Link to={factLink(operation, client, question.m, question.n)}>{question.text}</Link>
                 ) : (
                   question.text
@@ -130,23 +148,41 @@ function RunQuestions({ run, client, label }: { run: Run; client: string; label:
   );
 }
 
-/** An arithmetic attempt's last run, then each run that expired before it. */
-function ArithmeticRuns({ runs, client }: { runs: { last: Run; expired: Run[] }; client: string }) {
+const ENDINGS = { finished: "finished", left: "left early" };
+
+function walkHeading(walk: Walk): string {
+  const ended = walk.ended === null ? "in progress" : ENDINGS[walk.ended];
+  return `Walk ${walk.walk}: m = ${walk.m ?? "?"}, ${walk.operation_label}, ${ended}`;
+}
+
+/** An arithmetic attempt's last run, then each earlier run, then each practice walk. */
+function ArithmeticRuns({ runs, client }: { runs: { last: Run; expired: Run[]; practice: Walk[] }; client: string }) {
   return (
     <>
       <h2>Last run</h2>
       <RunSummary run={runs.last} />
-      <RunQuestions run={runs.last} client={client} label="Last run's questions" />
+      <RunQuestions questions={runs.last.questions} operation={runs.last.operation} client={client} label="Last run's questions" />
       {runs.expired.map((run) => {
         const heading = run.expired ? `Run ${run.run}, expired ${run.expired}` : `Run ${run.run}`;
         return (
           <section key={run.run} aria-label={heading}>
             <h2>{heading}</h2>
             <RunSummary run={run} />
-            <RunQuestions run={run} client={client} label={`Run ${run.run}'s questions`} />
+            <RunQuestions questions={run.questions} operation={run.operation} client={client} label={`Run ${run.run}'s questions`} />
           </section>
         );
       })}
+      {runs.practice.length > 0 && (
+        <section aria-label="Practice">
+          <h2>Practice</h2>
+          {runs.practice.map((walk) => (
+            <section key={walk.walk} aria-label={`Practice walk ${walk.walk}`}>
+              <h3>{walkHeading(walk)}</h3>
+              <RunQuestions questions={walk.questions} operation={walk.operation} client={client} label={`Practice walk ${walk.walk}'s questions`} walk />
+            </section>
+          ))}
+        </section>
+      )}
     </>
   );
 }

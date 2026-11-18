@@ -48,7 +48,10 @@ def _body(house) -> dict:
 def test_the_page_shows_the_settings_the_operations_and_both_lists(house):
     page = house.page("arithmetic/times")["arithmetic"]
     assert page == {
-        "settings": {"operation": "addition", "max_timeout": "10s", "min_timeout": "4s", "correct_answers_required": "20"},
+        "settings": {
+            "operation": "addition", "max_timeout": "10s", "min_timeout": "4s", "correct_answers_required": "20",
+            "practice_fallback": "",
+        },
         "operations": [
             {"name": "addition", "label": "Addition"},
             {"name": "subtraction", "label": "Subtraction"},
@@ -107,3 +110,27 @@ def test_a_cleared_required_setting_is_refused_naming_it(house):
     status, body = house.save("arithmetic/times", settings={"min_timeout": ""})
     assert status == 400
     assert any("min_timeout: is required" in problem for problem in body["errors"]), body
+
+
+def test_practice_fallback_is_written_changed_and_cleared_from_the_file(house):
+    status, body = house.save("arithmetic/times", settings={"practice_fallback": "2"})
+    assert status == 200, body
+    assert _body(house)["practice_fallback"] == 2
+    assert house.page("arithmetic/times")["arithmetic"]["settings"]["practice_fallback"] == "2"
+    assert house.task("arithmetic/times").document()["practice_fallback"] == 2
+    status, body = house.save("arithmetic/times", settings={"practice_fallback": "4"})
+    assert status == 200, body
+    assert _body(house)["practice_fallback"] == 4
+    status, body = house.save("arithmetic/times", settings={"practice_fallback": ""})
+    assert status == 200, body
+    assert house.policy.read_text(encoding="utf-8") == TEXT
+    assert "practice_fallback" not in _body(house)
+    assert check.main(["--quiet"]) == 0
+
+
+@pytest.mark.parametrize("text", ["0", "-1", "2.5", "three"])
+def test_practice_fallback_that_is_not_a_whole_number_of_one_or_more_is_refused_naming_it(house, text):
+    status, body = house.save("arithmetic/times", settings={"practice_fallback": text})
+    assert status == 400
+    assert any("practice_fallback: must be a whole number, 1 or more" in problem for problem in body["errors"]), body
+    assert house.policy.read_text(encoding="utf-8") == TEXT

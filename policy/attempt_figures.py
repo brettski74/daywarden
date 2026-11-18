@@ -2,7 +2,7 @@
 
 An attempt's figures come from its last run: the run that decided its
 outcome, or the run still in progress. An earlier run, such as one that
-expired or a spelling run left for practice mode, is left out. An attempt in
+expired or a run left for practice mode, is left out. A practice walk's questions (S039) are never in them. An attempt in
 progress or unfinished has the figures of its questions so far.
 
 - ``points`` against ``pass_mark``. Arithmetic counts right answers against

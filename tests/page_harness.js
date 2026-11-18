@@ -8,7 +8,7 @@
 // Enter, then lets `run_ms` pass. `steps` replaces that with a list of
 // {click: id}, {wait: ms}, {type: [id, text]}, {key: [id, key]}, and
 // {snap: [id, ...], label}. A snap records whether each element is hidden,
-// disabled, and focused, its text, and its href. A screen's querySelector
+// disabled, and focused, its text, its href, and its inline style. A screen's querySelector
 // finds an element by class among the ids inside it in the page source. Prints the posts, plays, and snaps it
 // saw, and each window.location.assign as a navigate, each with the fake time it happened. With `bodies`, each post also
 // carries the JSON it sent. `calls` is a list of [name, ...args] run after the
@@ -227,6 +227,7 @@ function snap(ids) {
       focused: document.activeElement === element,
       text: element.textContent,
       href: element.href,
+      style: { ...element.style },
     };
   }
   return found;

@@ -42,7 +42,7 @@ SKIP_COUNTING_SETTINGS = (
 )
 # The checkbox settings and the value each has when the file leaves it out.
 FLAGS = {"consecutive": True, "multiples_only": False}
-ARITHMETIC_SETTINGS = ("operation", "max_timeout", "min_timeout", "correct_answers_required")
+ARITHMETIC_SETTINGS = ("operation", "max_timeout", "min_timeout", "correct_answers_required", "practice_fallback")
 # A skip counting save sends this in place of rows to go back to the default list.
 DEFAULT = "default"
 

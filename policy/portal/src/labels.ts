@@ -32,6 +32,7 @@ export const LABELS: Record<string, string> = {
   operation: "Operation",
   max_timeout: "Max Timeout",
   min_timeout: "Min Timeout",
+  practice_fallback: "Practice Fallback",
 };
 
 export function label(field: string): string {

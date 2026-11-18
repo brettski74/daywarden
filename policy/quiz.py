@@ -59,6 +59,25 @@ class WeightedList:
     def has(self, value: int) -> bool:
         return self.weight(value) > 0
 
+    def nth(self, index: int) -> int:
+        """Return the value at ``index``, counting the list's values from 0 in increasing order. A range is not expanded."""
+        if index >= 0:
+            for entry in self.entries:
+                size = entry.high - entry.low + 1
+                if index < size:
+                    return entry.low + index
+                index -= size
+        raise ValueError("the index is outside the list")
+
+    def index_of(self, value: int) -> int:
+        """Return where ``value`` comes among the list's values in increasing order, counting from 0."""
+        before = 0
+        for entry in self.entries:
+            if entry.low <= value <= entry.high:
+                return before + value - entry.low
+            before += entry.high - entry.low + 1
+        raise ValueError(f"{value} is not in the list")
+
     def weight(self, value: int) -> int:
         for entry in self.entries:
             if entry.low <= value <= entry.high:
