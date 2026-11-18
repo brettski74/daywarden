@@ -1,8 +1,8 @@
 Ticket: S006
 Title: Parts of speech quiz
 Status: Refined
-Story Points: 17
-Last Updated: 2026-11-04 23:55:00
+Story Points: 14
+Last Updated: 2026-11-17 16:52:14
 ---
 
 # User Voice
@@ -35,11 +35,11 @@ As a parent, I want a quiz he has passed to stay away for a few weeks while a qu
 
 ## UC4 - Parent reviews the attempt
 
-- The parent sees each sentence, where he put each word on each try, and the answer (S006.4).
+- The parent sees each sentence, where he put each word on each try, and the answer (S035.3).
 
 # Acceptance Criteria
 
-- [ ] S006.1 through S006.4 are done.
+- [ ] S006.1 through S006.3 are done.
 - [ ] A passing attempt increments today's revision pass count. A failing attempt does not, records a skip day, and becomes eligible again according to `failure_cooldown`. A passed attempt becomes eligible again according to `pass_cooldown`.
 - [ ] End to end on the child's computer through the proxy, with a two-sentence task ("The quick, brown fox jumped over the lazy dog." and "Dry the dishes with a dry towel."), `failure_cooldown: 0`, and the default pass mark of 2 points:
   - Getting both sentences wrong on all three tries ends the attempt on the failure screen. `/attempts` shows a `failure`, today's revision count is unchanged, and the task is offered again straight away.
@@ -52,7 +52,6 @@ As a parent, I want a quiz he has passed to stay away for a few weeks while a qu
 | S006.1 | Parts of speech sentences and configuration | 3 |
 | S006.2 | Parts of speech quiz | 8 |
 | S006.3 | Parts of speech red marks and answer | 3 |
-| S006.4 | Parts of speech attempt review | 3 |
 
 # Notes
 

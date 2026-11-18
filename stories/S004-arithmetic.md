@@ -1,8 +1,8 @@
 Ticket: S004
 Title: Arithmetic quizzes
 Status: Draft
-Story Points: 13
-Last Updated: 2026-11-10 00:40:00
+Story Points: 10
+Last Updated: 2026-11-17 16:52:14
 ---
 
 # User Voice
@@ -18,7 +18,7 @@ As a parent, I want him to practice addition, subtraction, multiplication, and d
 
 # Acceptance Criteria
 
-- [ ] S004.1, S004.2, and S004.6 are done, and S026 has added subtraction, multiplication, and division.
+- [ ] S004.1 and S004.2 are done, and S026 has added subtraction, multiplication, and division.
 - [ ] A completed arithmetic attempt increments the daily pass count from S003.1.
 - [ ] The parent attempt view shows each question, the answer he gave, and whether it was correct, incorrect, or timed out.
 
@@ -28,10 +28,9 @@ As a parent, I want him to practice addition, subtraction, multiplication, and d
 | --- | --- | --- |
 | S004.1 | Arithmetic session shell | 8 |
 | S004.2 | Addition | 2 |
-| S004.6 | Arithmetic attempt review | 3 |
 
 Multiplication, subtraction, and division were S004.3 to S004.5. They are now part of S026, with the arithmetic task
-page.
+page. The arithmetic attempt review, once S004.6, is now part of S035.2.
 
 # Notes
 

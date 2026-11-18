@@ -126,7 +126,7 @@ starts a new word. A word's figures are kept when its recording is removed.
 A word's weight depends only on its figures, so a word in the revision pools of two tasks has the same weight in both.
 The word-stats filters read the pool directories as they are when the command runs.
 
-Out of scope: any page that shows the figures (analytics, S032), tuning the weights from the policy file or the
+Out of scope: any page that shows the figures (analytics, S035.4), tuning the weights from the policy file or the
 portal, and weighting current words. The figures are added to the household database. Counting as answers are recorded
 (rather than when an attempt ends) is what makes a given-up or reopened attempt safe, so the recording must be
 idempotent per attempt and word.
