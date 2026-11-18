@@ -21,7 +21,8 @@ export const USES: Record<string, string> = {
   multiplication: "first \u00d7 operand",
   division: "(first \u00d7 operand) \u00f7 first, and the answer is the operand",
 };
-const RULES: TableRules = { bounds: false, negatives: false, noZero: false };
+// Questions are weighted from his record, so the tables have no Weight (S037).
+const RULES: TableRules = { weights: false, bounds: false, negatives: false, noZero: false };
 const DIVISOR: TableRules = { ...RULES, check: (range: Range) => (range.low <= 0 ? [NO_ZERO_DIVISOR] : []) };
 
 export type ShownTable = { rows: NumberRow[]; originals: NumberRow[]; changed: boolean };
@@ -74,7 +75,7 @@ export function problemsText(shown: ShownArithmetic): string {
 /** The lists a save sends: each one changed. An empty First is sent empty, which leaves it out of the file. */
 export function arithmeticLists(shown: ShownArithmetic): Record<string, ServiceRow[]> {
   const lists: Record<string, ServiceRow[]> = {};
-  if (shown.first.changed) lists.first = toService(shown.first.rows, false);
-  if (shown.operands.changed) lists.operands = toService(shown.operands.rows, false);
+  if (shown.first.changed) lists.first = toService(shown.first.rows, false, false);
+  if (shown.operands.changed) lists.operands = toService(shown.operands.rows, false, false);
   return lists;
 }

@@ -8,6 +8,10 @@ The session lives on the attempt's ``detail``. The server issues each
 question, records when it did, and judges every answer against that moment.
 The browser draws the timer, but it does not decide whether an answer was
 in time. Runs, expiry, and resume are ``policy.quiz``'s.
+
+``first`` and ``operands`` set which facts can be asked, the task's
+**domain**. Which fact is asked is weighted from his record of every other
+attempt, by ``policy.fact_figures``. A weight written in the lists is ignored.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from policy.fact_figures import ARITHMETIC, NO_FIGURES, UNIT_CAP, Book
 from policy.problems import Collector
 from policy.quiz import (
     CORRECT,
@@ -55,8 +60,6 @@ __all__ = [
     "draw",
     "parse_settings",
 ]
-
-ARITHMETIC = "arithmetic"
 
 RECENT_QUESTIONS = 3
 LONGEST_ANSWER = 20
@@ -135,48 +138,85 @@ def parse_settings(body: Mapping) -> Settings:
     required = body.get("correct_answers_required")
     if "correct_answers_required" in body and (not is_whole(required) or required < 1):
         fields.add("correct_answers_required: must be a whole number, 1 or more")
-    first = fields.take(weighted, body["first"], "first", _operand) if "first" in body else None
-    operands = fields.take(weighted, body["operands"], "operands", _operand) if "operands" in body else None
+    first = fields.take(_numbers, body["first"], "first") if "first" in body else None
+    operands = fields.take(_numbers, body["operands"], "operands") if "operands" in body else None
     if name == DIVISION:
         lefts, field = (first, "first") if "first" in body else (operands, "operands")
-        if lefts is not None and lefts.weight(0):
+        if lefts is not None and lefts.has(0):
             fields.add(f"{field}: division cannot divide by 0, so 0 cannot be in the list the first number is drawn from")
     fields.finish()
     return Settings(OPERATIONS[name], longest, shortest, required, operands, first)
 
 
-def draw(settings: Settings, recent: Sequence[tuple[int, int]], rng: random.Random) -> tuple[int, int]:
-    """Draw ``(m, n)``, leaving out the last three questions when it can.
+def draw(
+    settings: Settings,
+    recent: Sequence[tuple[int, int]],
+    rng: random.Random,
+    figures: Book = NO_FIGURES,
+) -> tuple[int, int]:
+    """Draw ``(m, n)`` from the domain by its figures, leaving out the last three questions when it can.
 
-    ``recent`` is oldest first. The remaining questions keep their relative
-    weights. When every allowed question is recent, the oldest recent one is
-    let back first, and the question just asked is the last.
+    A fact's chance is in proportion to ``base + unit × boost``, where
+    ``unit`` is the domain's average base over at most ``UNIT_CAP`` facts.
+    A fact never asked weighs 1, so the domain is never listed. ``recent``
+    is oldest first. The remaining facts keep their relative weights. When
+    every fact is recent, the oldest recent one is let back first, and the
+    question just asked is the last.
     """
+    lefts, rights = settings.lefts, settings.operands
+    size = lefts.count * rights.count
+    if size == 0:
+        raise ValueError("an operand list is empty")
+    asked = {fact: found for fact, found in figures.facts.items() if lefts.has(fact[0]) and rights.has(fact[1])}
+    unit = (size - len(asked) + sum(found.base for found in asked.values())) / min(size, UNIT_CAP)
+    chances = {fact: found.base + unit * figures.boost(found) for fact, found in sorted(asked.items())}
     for keep in range(min(RECENT_QUESTIONS, len(recent)), -1, -1):
         excluded = frozenset(recent[len(recent) - keep :]) if keep else frozenset()
-        pair = _draw_without(settings.lefts, settings.operands, excluded, rng)
+        pair = _draw_without(lefts, rights, chances, excluded, rng)
         if pair is not None:
             return pair
-    raise ValueError("an operand list has no weight")
+    raise ValueError("an operand list is empty")
 
 
 def _draw_without(
     lefts: WeightedList,
     rights: WeightedList,
+    chances: Mapping[tuple[int, int], float],
     excluded: frozenset[tuple[int, int]],
     rng: random.Random,
 ) -> tuple[int, int] | None:
-    held_by_left: dict[int, int] = {}
-    for m, n in excluded:
-        if lefts.weight(m) and rights.weight(n):
-            held_by_left[m] = held_by_left.get(m, 0) + rights.weight(n)
-    less = {m: lefts.weight(m) * held for m, held in held_by_left.items()}
-    total = lefts.total * rights.total - sum(less.values())
-    if total <= 0:
+    """Draw a fact that is not excluded: one with figures by its chance, or else one never asked, each weighing 1."""
+    left_out = {fact for fact in excluded if lefts.has(fact[0]) and rights.has(fact[1])}
+    known = [(fact, chance) for fact, chance in chances.items() if fact not in left_out]
+    held = set(chances) | left_out
+    unknown = lefts.count * rights.count - len(held)
+    known_total = sum(chance for _fact, chance in known)
+    if not known and unknown == 0:
         return None
-    m = lefts.pick(rng.randrange(total), scale=rights.total, less=less)
-    skip = {n: rights.weight(n) for left, n in excluded if left == m and rights.weight(n)}
-    n = rights.pick(rng.randrange(rights.total - sum(skip.values())), less=skip)
+    point = rng.random() * (known_total + unknown)
+    if point < known_total or unknown == 0:
+        for fact, chance in known:
+            point -= chance
+            if point < 0:
+                return fact
+        return known[-1][0]
+    return _never_asked(lefts, rights, held, unknown, rng)
+
+
+def _never_asked(
+    lefts: WeightedList,
+    rights: WeightedList,
+    held: set[tuple[int, int]],
+    unknown: int,
+    rng: random.Random,
+) -> tuple[int, int]:
+    """Draw evenly from the domain's facts that are not ``held``, walking its ranges rather than listing them."""
+    held_by_left: dict[int, int] = {}
+    for m, _n in held:
+        held_by_left[m] = held_by_left.get(m, 0) + 1
+    m = lefts.pick(rng.randrange(unknown), scale=rights.count, less=held_by_left)
+    skip = {n: 1 for left, n in held if left == m}
+    n = rights.pick(rng.randrange(rights.count - len(skip)), less=skip)
     return m, n
 
 
@@ -204,8 +244,13 @@ class Session(QuizRecord):
     def correct(self) -> int:
         return sum(1 for item in self.questions if item.get("run") == self.run and item.get("outcome") == CORRECT)
 
-    def issue(self, now: datetime, rng: random.Random) -> dict:
-        """Issue the next question and start its time now."""
+    def issue(self, now: datetime, rng: random.Random, figures: Callable[[str], Book] | None = None) -> dict:
+        """Issue the next question and start its time now.
+
+        ``figures`` returns the figures to draw with for an operation, which
+        leave out this attempt's own answers. Without it every fact is drawn
+        as never asked.
+        """
         self.resume(now)
         self.close_pending()
         settings = self.settings
@@ -214,7 +259,8 @@ class Session(QuizRecord):
             for item in self.questions[-RECENT_QUESTIONS:]
             if item.get("question") == settings.operation.text(item["m"], item["n"])
         ]
-        m, n = draw(settings, recent, rng)
+        found = NO_FIGURES if figures is None else figures(settings.operation.name)
+        m, n = draw(settings, recent, rng, found)
         question = {
             "run": self.run,
             "m": m,
@@ -262,6 +308,11 @@ class Session(QuizRecord):
         settings = self.settings
         correct = self.correct
         return Judged(outcome, dict(pending), correct, settings.required, correct >= settings.required)
+
+
+def _numbers(value: object, field: str) -> WeightedList:
+    """Return a ``first`` or ``operands`` list. An entry may leave out ``weight``, and a weight given is ignored."""
+    return weighted(value, field, _operand, weights=False)
 
 
 def _operand(value: object, where: str) -> int:

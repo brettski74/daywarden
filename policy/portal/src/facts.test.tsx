@@ -59,8 +59,9 @@ describe("the facts page", () => {
     const grid = screen.getByRole("table", { name: "Multiplication facts" });
     const rows = within(grid).getAllByRole("row");
     // The header row, then 6 and 7. 6 × 6 was never asked, so its cell is empty.
-    expect(rows.map((row) => row.textContent)).toEqual(["68", "66 × 81/4", "77 × 60/27 × 82/5"]);
-    expect(within(grid).getByRole("link", { name: "7 × 8 = 56, missed 2 of 5" })).toHaveAttribute("aria-current", "true");
+    expect(rows.map((row) => row.textContent)).toEqual(["68", "66 × 83/4", "77 × 62/27 × 83/5"]);
+    expect(within(grid).getByRole("link", { name: "7 × 8 = 56, right 3 of 5" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText(/^Under each question: times right \/ times asked/)).toBeInTheDocument();
   });
 
   it("shows a fact's readout when it is pointed at or focused, and the arrow keys move between the facts asked", async () => {
@@ -115,16 +116,65 @@ describe("the facts page", () => {
     fakeService();
     const { router } = renderPortal("/parent/attempts/facts/multiplication?client=younger");
     const list = await screen.findByRole("table", { name: "Facts" });
-    const body = () => within(list).getAllByRole("row").slice(1);
+    const body = () => within(list).getAllByRole("row").slice(2);
     expect(body().map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent))).toEqual([
-      ["7 × 8 = 56", "5", "3", "1", "1", "40%", "3.0 s", "Friday 13 November 2026"],
-      ["6 × 8 = 48", "4", "3", "1", "0", "25%", "4.0 s", "Monday 9 November 2026"],
-      ["7 × 6 = 42", "2", "2", "0", "0", "0%", "2.0 s", ""],
+      ["7 × 8 = 56", "5", "3", "1", "1", "40%", "3.0 s", "Friday 13 November 2026", "6", "1", "3.1 s", "2.000", "0.000", "2.143"],
+      ["6 × 8 = 48", "4", "3", "1", "0", "25%", "4.0 s", "Monday 9 November 2026", "9", "2", "6.0 s", "1.000", "2.000", "3.100"],
+      ["7 × 6 = 42", "2", "2", "0", "0", "0%", "2.0 s", "", "12", "12", "1.9 s", "0.000", "0.000", "0.077"],
     ]);
     expect(within(list).getByRole("columnheader", { name: /Missed/ })).toHaveAttribute("aria-sort", "descending");
     await userEvent.click(within(list).getByRole("button", { name: "Median time" }));
     await waitFor(() => expect(shown(router)).toBe("/parent/attempts/facts/multiplication?client=younger&sort=median&dir=desc"));
     await waitFor(() => expect(body()[0].querySelector("td")?.textContent).toBe("6 × 8 = 48"));
+  });
+
+  it("heads the all-time columns apart from the period's, and each sorts like the others", async () => {
+    fakeService();
+    const { router } = renderPortal("/parent/attempts/facts/multiplication?client=younger");
+    const list = await screen.findByRole("table", { name: "Facts" });
+    const groups = within(list).getAllByRole("row")[0];
+    expect([...groups.querySelectorAll("th")].map((cell) => [cell.textContent, cell.getAttribute("colspan")])).toEqual([
+      ["In this period", "8"],
+      ["All time", "6"],
+    ]);
+    const first = () => within(list).getAllByRole("row")[2].querySelector("td")?.textContent;
+    await userEvent.click(within(list).getByRole("button", { name: "Weight" }));
+    await waitFor(() => expect(shown(router)).toBe("/parent/attempts/facts/multiplication?client=younger&sort=weight&dir=desc"));
+    await waitFor(() => expect(first()).toBe("6 × 8 = 48"));
+    for (const [column, top] of [["All-time asked", "7 × 6 = 42"], ["Run", "7 × 6 = 42"], ["Smoothed time", "6 × 8 = 48"], ["Miss boost", "7 × 8 = 56"], ["Slow boost", "6 × 8 = 48"]]) {
+      await userEvent.click(within(list).getByRole("button", { name: column }));
+      await waitFor(() => expect(first()).toBe(top));
+    }
+  });
+
+  it("shows the all-time figures in the readout and the operation's median line above the grid", async () => {
+    fakeService();
+    renderPortal("/parent/attempts/facts/multiplication?client=younger");
+    const grid = await screen.findByRole("table", { name: "Multiplication facts" });
+    expect(screen.getByText("Median 2.0 s. Slow from 4.0 s, full at 8.0 s.", { exact: false })).toHaveTextContent(
+      "All time: Median 2.0 s. Slow from 4.0 s, full at 8.0 s.",
+    );
+    fireEvent.pointerEnter(within(grid).getByRole("link", { name: /^6 × 8/ }));
+    expect(await screen.findByText("All time: asked 9, run 2, smoothed time 6.0 s")).toBeInTheDocument();
+    expect(screen.getByText("All time: miss boost 1.000, slow boost 2.000, weight 3.100")).toBeInTheDocument();
+  });
+
+  it("shades by Weight with its own key and levels, kept in the address", async () => {
+    expect(facts.map(shading("weight", facts).level)).toEqual([3, 0, 3]);
+    const levels = [0.49, 0.5, 0.99, 1, 1.99, 2, 3.99, 4, 9].map((weight) => shading("weight", facts).level({ ...facts[0], all_time: { ...facts[0].all_time, weight } }));
+    expect(levels).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4]);
+    fakeService();
+    const { router } = renderPortal("/parent/attempts/facts/multiplication?client=younger");
+    await screen.findByRole("list", { name: "Shading" });
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Shade by" }), "weight");
+    await waitFor(() => expect(shown(router)).toBe("/parent/attempts/facts/multiplication?client=younger&shade=weight"));
+    const key = screen.getByRole("list", { name: "Shading" });
+    expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Weight under 0.5", "0.5 to 1", "1 to 2", "2 to 4", "4 or more"]);
+    expect(key).toHaveAttribute("data-shade", "weight");
+    const grid = screen.getByRole("table", { name: "Multiplication facts" });
+    expect(grid).toHaveAttribute("data-shade", "weight");
+    expect(within(grid).getByRole("link", { name: /^7 × 6/ }).closest("td")).toHaveAttribute("data-level", "0");
+    expect(withChoice("?client=younger&shade=weight", { m: 7, n: 8 })).toBe("?client=younger&m=7&n=8&shade=weight");
   });
 
   it("shades by Time when chosen, with a key, and keeps the choice in the address", async () => {
@@ -143,6 +193,9 @@ describe("the facts page", () => {
     renderPortal("/parent/attempts/facts/division?client=younger");
     expect(await screen.findByText("No division questions for younger in this period.")).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/^Under each question/)).toBeNull();
+    // The median comes from his whole record, so it is shown whatever the period.
+    expect(screen.getByText("All time:")).toBeInTheDocument();
   });
 
   it("is linked from an arithmetic task's trend with the same view", async () => {

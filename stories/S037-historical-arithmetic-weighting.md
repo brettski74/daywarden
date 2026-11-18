@@ -1,8 +1,8 @@
 Ticket: S037
 Title: Historical Arithmetic Weighting
-Status: Refined
+Status: Done
 Story Points: 13
-Last Updated: 2026-11-18 04:18:43
+Last Updated: 2026-11-18 05:26:15
 ---
 
 # User Voice
@@ -17,7 +17,7 @@ the policy file.
 
 He answers most times-table facts in about 2 seconds, but `7 × 8` takes him 7 or 8 seconds even when he gets it
 right. On the facts page `7 × 8` shows a slow boost, and it comes up more often than its neighbours. Over a few
-sessions he answers it in 3 seconds three times running, its smoothed time falls under where the slow boost starts,
+sessions he answers it in 3 seconds four times running, its smoothed time falls under where the slow boost starts,
 and its weight drops back to that of the other facts.
 
 # Behaviour
@@ -84,9 +84,11 @@ With `M` = 2 s the slow boost starts at 4 s and is full at 8 s. With `M` = 0.8 s
       about equally often.
 - [ ] Over many tasks with no misses and no slow facts, every fact in the domain is asked about equally often, and a
       fact added to the domain later is asked more until it catches up.
-- [ ] In a times-table task of 13 facts that have each been asked about equally often and never missed, a fact he
-      gets wrong comes up in roughly one question in four in his next attempts. After 5 right answers in a row it comes
-      up as often as the others.
+- [ ] *Changed in implementation:* In a times-table task of 13 facts that have each been asked about equally often
+      and never missed, a fact he gets wrong comes up in roughly one question in six in his next attempts. Its weight
+      gives it about 0.29 of the draws, but none of the last three questions is asked again, so it can come up at most
+      one question in four. After 5 right answers in a row its boost is gone, and it comes up no more often than the
+      others, a little less while they catch up with the extra times it was asked.
 - [ ] A fact whose smoothed time is past the slow boost's start comes up more often than its neighbours, and stops
       coming up more often once its smoothed time falls back under the start.
 - [ ] None of the last three questions in the attempt is asked again while another question is possible, as before.
@@ -94,10 +96,12 @@ With `M` = 2 s the slow boost starts at 4 s and is full at 8 s. With `M` = 0.8 s
 
 ## Policy file and task editing
 
-- [ ] An arithmetic `first` or `operands` entry may leave out `weight`, as in `- { from: 3, to: 9 }`. A weight already
-      in a file still loads and is ignored. Every other check on these lists is as before.
-- [ ] The portal's arithmetic task page shows no weight for `first` and `operands` rows. Saving the task writes its
-      lists without weights.
+- [ ] *Changed in implementation:* An arithmetic `first` or `operands` entry may leave out `weight`, as in
+      `- { from: 3, to: 9 }`. A weight already in a file still loads and is ignored, whatever its value, so a weight
+      such as `0` that used to fail the load now loads. Every other check on these lists is as before.
+- [ ] *Changed in implementation:* The portal's arithmetic task page shows no weight for `first` and `operands`
+      rows. Saving the task writes a changed list without weights. A list the save does not change keeps its text, so
+      a weight already in it stays, ignored, until that list is next changed.
 - [ ] The MCP task write tools accept arithmetic rows without `weight`, ignore a weight given, and their description
       no longer asks for one.
 - The arithmetic section of `docs/hierarchical-policy.md` says the lists set which facts can be asked and that
@@ -106,15 +110,21 @@ With `M` = 2 s the slow boost starts at 4 s and is full at 8 s. With `M` = 0.8 s
 
 ## Facts page
 
-- [ ] The facts list and the cell readout from S035.2 add All-time asked, Run, Smoothed time, Miss boost, Slow boost,
-      and Weight. These come from his whole record, whatever the Period and filters, and are labelled as all-time.
-      Each new list column sorts like the others.
+- [ ] *Changed in implementation:* The facts list and the cell readout from S035.2 add All-time asked, Run, Smoothed
+      time, Miss boost, Slow boost, and Weight. These come from his whole record, whatever the Period and filters. The
+      list heads them All time, beside In this period over the S035.2 columns, and the readout's lines for them start
+      "All time:". The list and grid still show the facts asked in the period, each with its all-time figures. Each
+      new list column sorts like the others.
+- [ ] *Added in implementation:* At phone width the facts list scrolls sideways inside its own box, and the page does
+      not scroll sideways.
 - [ ] The grid has a third shading, Weight, beside Misses and Time, kept in the address with a key like the others.
 - [ ] The page shows the operation's median smoothed time and where the slow boost starts and is full, such as
-      "Median 2.0 s. Slow from 4.0 s, full at 8.0 s." When there are too few timed facts it says so, such as "Slow boost
-      starts once 10 facts each have 3 right answers."
+      "All time: Median 2.0 s. Slow from 4.0 s, full at 8.0 s.", even when nothing was asked in the period. When there
+      are too few timed facts it says so, such as "All time: Slow boost starts once 10 facts each have 3 right answers.
+      4 have so far."
 - Weight shading levels are proposals: under 0.5, 0.5 to 1, 1 to 2, 2 to 4, and 4 or more. Their colours are role
-  properties in the theme, as in S035.2.
+  properties in the theme, as in S035.2. They run from ivory through gold to brick, so they do not look like the
+  Misses shading.
 
 ## MCP
 
@@ -152,3 +162,105 @@ between turned-around facts.
 Sized at 13 against S033 (8), which had a ledger, a rebuild, weighted choice, and a command-line tool. This adds the
 smoothed times and the median, a weighted draw over a domain that may not be listed one by one, the facts page columns,
 shading, and median line, and removing weights from the task editor and MCP write tools.
+
+# Implementation
+
+## Files Added
+
+- `policy/fact_figures.py`: the fact ledger, its one-time rebuild, each fact's all-time figures (asked, run, smoothed
+  time), the operation's median and slow boost line, and the weight formulas. `operation_of`, which reads a question's
+  operation from its sign, moved here from `arithmetic_facts.py`.
+- `tests/test_arithmetic_weighting.py`: counting, idempotence, reopening, the rebuild, smoothing, the weight table, the
+  slow boost's thresholds, the draws over many simulated attempts, a huge domain, the last-three rule, an attempt's own
+  answers through the quiz page, and the facts report's all-time figures.
+
+## Files Changed
+
+- `policy/arithmetic.py`: `first` and `operands` load without weights and ignore any given. `draw` weights each fact by
+  its figures over the task's domain without listing it, and `Session.issue` takes the figures to draw with.
+- `policy/quiz.py`: `weighted` can make a list whose entries need no weight, and `WeightedList.has`.
+- `policy/tasks.py`: `AttemptStore` builds the fact ledger once, records an arithmetic attempt's answered questions on
+  every `save`, `finish`, and `record`, reads figures with `store.facts`, and gives an attempt the figures of every
+  other attempt with `draw_figures`.
+- `policy/arithmetic_page.py`: issues each question with the attempt's `draw_figures`.
+- `policy/arithmetic_facts.py`, `policy/review.py`: each fact on the facts page has `all_time`, and the report has
+  `slow`, the median line, whatever the period.
+- `policy/number_lists_admin.py`: an arithmetic table has no weight column, a weight in the file is not shown, and one
+  sent with a row is ignored.
+- `policy/mcp_tools.py`, `policy/mcp_writes.py`: `get_arithmetic_facts` says which figures are all-time. The task write
+  tools describe rows without weights for arithmetic.
+- `policy/portal/src/facts.ts`, `pages/Facts.tsx`, `components/FactGrid.tsx`: the all-time columns under their own
+  heading, their sorts, the readout's all-time lines, the median line, and the Weight shading and key.
+- `policy/portal/src/numberTable.ts`, `components/WeightedTable.tsx`, `arithmetic.ts`, `pages/Arithmetic.tsx`,
+  `skipCounting.ts`: a table can have no Weight column, and the arithmetic tables have none.
+- `policy/portal/src/styles/layout.css`, `styles/theme.css`: the list's own sideways scrolling, its group headings, the
+  median line, and the Weight levels as role properties.
+- `docs/hierarchical-policy.md`, `docs/parent-portal.md`, `README.md`: the lists set which facts can be asked and
+  questions are weighted from his record, a difference still needs a weight, and a grid can have more than one
+  shading.
+- Tests: `tests/test_arithmetic.py` (draws without weights, and the last-three rule with figures),
+  `tests/test_arithmetic_admin.py`, `tests/test_task_create.py`, and `tests/test_mcp_writes.py` (lists without
+  weights), `tests/test_mcp_server.py`
+  (`get_arithmetic_facts` matches the page), and the portal's `facts.test.tsx`, `arithmetic.test.tsx`,
+  `numberTable.test.ts`, and `test/portal.tsx`.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The ledger has one row for each question with an outcome, keyed by its attempt (id and start, as in S033) and its
+place in the attempt's questions, holding the client group, operation, `m`, `n`, outcome, and time taken. Recording
+inserts only questions not yet recorded, so saving again, giving up, and coming back count nothing twice. A question
+still showing waits until it has an outcome. Figures are worked out from the rows in the order they were recorded,
+when they are asked for, so a fact's run and smoothed time follow the order he answered. Rows are never deleted. The
+first start fills the ledger from stored arithmetic attempts in start order, guarded by a marker row written in the
+same transaction.
+
+The draw works on the domain as ranges. Every fact with figures gets its own chance, `base + unit × boost`, and the
+rest of the domain weighs 1 each and is drawn evenly by walking the ranges and stepping over the facts that have
+figures or are recent, as the old weighted draw stepped over recent questions. So a domain of a hundred million
+million facts draws as quickly as a times table. The figures an attempt draws with leave out that attempt's own rows,
+so they are the same whether he gets its questions right or wrong. Each question reads the ledger again. With 50,000
+rows, about three years of daily practice, issuing a question takes about 50 ms.
+
+The weight constants in the story, used as written, give a missed fact in a 13-fact times table 0.29 of the draws. The
+unchanged rule against repeating any of the last three questions caps it at one question in four, and in practice it
+comes up about one question in six. The checks say so now. Raising the miss boost would bring it nearer one in four, if
+that is wanted. Similarly, from a smoothed time of 7 or 8 seconds it takes four 3-second answers, not three, to fall
+under a 4-second start, so the scenario says four.
+
+Not checked in a browser: no browser was connected, so the Weight colours, the list's group headings, and its
+sideways scrolling at phone width were checked only in jsdom and by a production build of the portal.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S037
+
+Rebuild and start with `make up` on a database that already has a few weeks of arithmetic attempts, including a
+multiplication task, and sign in to the parent pages. Make a times-table task, such as `first: [{ value: 7 }]` and
+`operands: [{ from: 0, to: 12 }]`, with a pass cooldown of 0.
+
+1. **The facts page's all-time figures.** Open the multiplication facts page with Past week. Check the All time
+   columns, their counts against older attempts, the readout's All time lines, and the median line, or the too-few
+   message with its count. Sort by each new column, shade by Weight and check the key, reload, and narrow the window
+   to phone width. Run `dw restart` and check nothing doubles. Covers the Facts page area and the rebuild check.
+2. **A miss.** In the times-table task answer `7 × 8` wrong. Check the facts page at once: Run 0, Miss boost 4.000.
+   Keep going and check `7 × 8` comes up no more than the others in the same attempt, including after giving up and
+   coming back within the hour. In the next two or three attempts it comes up about one question in six. Answer it
+   right 5 times running and check its miss boost is 0. Covers What is counted and the miss checks.
+3. **The weights.** Compare a few facts' Run, Smoothed time, boosts, and Weight with the formulas and table, and the
+   median line's start and full with the median. Covers the formula and table check.
+4. **A slow fact.** Once the median line shows numbers, answer one fact right but slowly, waiting about 8 seconds,
+   three or four times. Check its slow boost and that it comes up more often. Answer it in about 3 seconds four times
+   and check the boost is 0. Covers the slow checks and the scenario.
+5. **Policy file and editing.** In a task file, leave out the weights of one list and give another entry `weight: 0`,
+   and check `dw check` passes. For a new operation or client group with no history, give `operands` 1 a weight of 1
+   and 3 a weight of 10, and check `n` = 1 and 3 come up about equally. Open the task in the portal: no Weight column.
+   Change a row and save, and check the file has no weights. Check a skip counting task still has Weight. Ask the MCP
+   agent to update the task with a weight, and check it is written without one. Covers Policy file and task editing.
+6. **Groups, removal, and MCP.** Practise a fact as `older` and check `younger`'s figures do not change. Run
+   `bin/rm-attempts --client younger --type arithmetic --older-than 7d --yes` and check All-time asked is unchanged for
+   facts asked this week. Ask the MCP agent for `get_arithmetic_facts` and compare with the page. Covers the client
+   group, removal, and MCP checks.

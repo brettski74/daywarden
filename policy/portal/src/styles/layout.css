@@ -2570,9 +2570,45 @@ p.task-gone {
   background: var(--row-chosen-bg);
 }
 
-.facts-list th[scope="col"]:not(:first-child):not(:last-child),
-.facts-list td:not(:first-child):not(:last-child) {
+/* The list scrolls sideways in its own box, so the page never does. */
+.facts-list-box {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.facts-list th[scope="col"],
+.facts-list td {
   text-align: right;
+  white-space: nowrap;
+}
+
+.facts-list th.facts-list-text,
+.facts-list td.facts-list-text {
+  text-align: left;
+}
+
+.facts-list th[scope="colgroup"] {
+  position: static;
+  text-align: center;
+}
+
+.facts-list th[scope="colgroup"] + th[scope="colgroup"],
+.facts-list th[scope="col"]:nth-child(9),
+.facts-list td:nth-child(9) {
+  border-left: 0.06rem solid var(--border);
+}
+
+.facts-slow {
+  margin: 0 0 0.75rem;
+}
+
+.facts-cell-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.facts-slow-label {
+  font-weight: 600;
 }
 
 /* An arithmetic attempt's runs. */
@@ -2686,6 +2722,37 @@ p.task-gone {
 .facts-swatch[data-level="none"] {
   background: var(--fact-none-bg);
   color: var(--fact-none-text);
+}
+
+/* Shading by Weight has its own levels. */
+.facts-grid[data-shade="weight"] td[data-level="0"],
+.facts-key[data-shade="weight"] .facts-swatch[data-level="0"] {
+  background: var(--fact-weight-0-bg);
+  color: var(--fact-weight-0-text);
+}
+
+.facts-grid[data-shade="weight"] td[data-level="1"],
+.facts-key[data-shade="weight"] .facts-swatch[data-level="1"] {
+  background: var(--fact-weight-1-bg);
+  color: var(--fact-weight-1-text);
+}
+
+.facts-grid[data-shade="weight"] td[data-level="2"],
+.facts-key[data-shade="weight"] .facts-swatch[data-level="2"] {
+  background: var(--fact-weight-2-bg);
+  color: var(--fact-weight-2-text);
+}
+
+.facts-grid[data-shade="weight"] td[data-level="3"],
+.facts-key[data-shade="weight"] .facts-swatch[data-level="3"] {
+  background: var(--fact-weight-3-bg);
+  color: var(--fact-weight-3-text);
+}
+
+.facts-grid[data-shade="weight"] td[data-level="4"],
+.facts-key[data-shade="weight"] .facts-swatch[data-level="4"] {
+  background: var(--fact-weight-4-bg);
+  color: var(--fact-weight-4-text);
 }
 
 /* The MCP Server page: the server and durations side by side, then the permission matrix and the connections. */

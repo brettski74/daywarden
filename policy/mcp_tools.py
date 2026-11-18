@@ -491,7 +491,11 @@ READ_TOOLS: tuple[Tool, ...] = (
     ),
     Tool(
         "get_arithmetic_facts", "attempts", "read",
-        "One arithmetic operation's facts for a client group over a period: each fact's tries, misses, and time, as the facts page shows them.",
+        "One arithmetic operation's facts for a client group, as the facts page shows them. Each fact's asked, right, wrong, "
+        "timeouts, and median time are for the period and filters. Its all_time figures (asked, run, smoothed time, miss boost, "
+        "slow boost, and weight, the weight that chooses his questions) and slow (the operation's median smoothed time and "
+        "where the slow boost starts and is full, or that too few facts are timed yet) are all-time, from his whole record "
+        "whatever the period and filters.",
         get_arithmetic_facts,
         {"operation": {"type": "string", "description": "The operation, such as multiplication."}, **_ATTEMPT_FILTERS},
         ("client", "operation"), lambda arguments: str(arguments.get("operation", "")),

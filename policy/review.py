@@ -26,9 +26,9 @@ from datetime import datetime
 from policy.accounts import Accounts
 from policy.arithmetic import ARITHMETIC, OPERATIONS
 from policy.arithmetic_facts import attempt_runs, facts, no_questions
-from policy.arithmetic_facts import operation_of as question_operation
 from policy.attempt_trends import listed, no_attempts, overview, period_json, period_of, read_view, trend
 from policy.child_page import FAVICON_PATH
+from policy.fact_figures import operation_of as question_operation
 from policy.report import format_day, format_duration, timezone_note
 from policy.tasks import (
     PARENT_CHECK,
@@ -184,7 +184,10 @@ def facts_report(
 
     ``message`` says why there is nothing to show: no group chosen, a group
     not in the household, an operation the service does not have, a Custom
-    period that is not real days, or no questions of that operation.
+    period that is not real days, or no questions of that operation. Each
+    fact's ``all_time`` figures, and ``slow``, the operation's median
+    smoothed time and where the slow boost starts and is full, come from his
+    whole record whatever the period and filters.
     """
     view, notes = read_view(pairs)
     chosen = view.client
@@ -201,23 +204,36 @@ def facts_report(
         "operation": {"name": operation, "label": OPERATIONS[operation].label if known else operation},
         "operations": [{"name": name, "label": each.label} for name, each in OPERATIONS.items()],
         "message": None,
+        "slow": None,
         "facts": None,
     }
     if not known:
         report["message"] = f"{operation} is not an arithmetic operation."
-    elif not chosen:
+        return report
+    if not chosen:
         report["message"] = "Choose a client group."
-    elif clients and chosen not in clients:
+        return report
+    if clients and chosen not in clients:
         report["message"] = NOT_IN_HOUSEHOLD
-    elif period is None:
+        return report
+    all_time = attempts.facts.book(chosen, operation)
+    report["slow"] = all_time.slow.as_json()
+    if period is None:
         report["message"] = "Fix the period to show the facts."
+        return report
+    found = facts(
+        attempts.attempts(chosen),
+        operation,
+        view,
+        period,
+        household_day(now),
+        lambda attempt: _local(attempt.started_at),
+        all_time,
+    )
+    if found["facts"]:
+        report["facts"] = found
     else:
-        today = household_day(now)
-        found = facts(attempts.attempts(chosen), operation, view, period, today, lambda attempt: _local(attempt.started_at))
-        if found["facts"]:
-            report["facts"] = found
-        else:
-            report["message"] = no_questions(operation, chosen)
+        report["message"] = no_questions(operation, chosen)
     return report
 
 

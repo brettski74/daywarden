@@ -22,6 +22,7 @@ from policy.arithmetic import (  # noqa: E402
     parse_settings,
 )
 from policy.engine import decide  # noqa: E402
+from policy.fact_figures import NO_FIGURES, book_of  # noqa: E402
 from policy.hierarchy import ConfigError, load  # noqa: E402
 from policy.review import attempt_report  # noqa: E402
 from policy.sounds import load_sounds  # noqa: E402
@@ -35,13 +36,14 @@ START = datetime(2026, 11, 2, 16, 0, tzinfo=ZONE)
 SAMPLES = 60_000
 TOLERANCE = 0.01
 
+# An older file's weights still load, and are ignored (S037).
 EXAMPLE = [
     {"value": 1, "weight": 5},
     {"value": 2, "weight": 7},
     {"from": 3, "to": 9, "weight": 10},
     {"value": 10, "weight": 5},
 ]
-EXAMPLE_SHARE = {1: 5 / 87, 2: 7 / 87, **{value: 10 / 87 for value in range(3, 10)}, 10: 5 / 87}
+EVEN_SHARE = {value: 1 / 10 for value in range(1, 11)}
 
 
 def _body(**fields) -> dict:
@@ -68,83 +70,66 @@ def _close(found: dict[int, float], expected: dict[int, float]) -> None:
         assert abs(found[value] - share) < TOLERANCE, (value, found[value], share)
 
 
-def _sample(settings, recent=(), count=SAMPLES, seed=4):
+def _sample(settings, recent=(), count=SAMPLES, seed=4, figures=NO_FIGURES):
     rng = random.Random(seed)
-    return [draw(settings, list(recent), rng) for _ in range(count)]
+    return [draw(settings, list(recent), rng, figures) for _ in range(count)]
 
 
 # Configuration and draws
 
 
-def test_a_large_sample_follows_the_example_weights():
+def test_with_no_figures_every_fact_is_as_likely_whatever_weights_the_file_gives():
     pairs = _sample(parse_settings(_body()))
-    _close(_shares(m for m, _n in pairs), EXAMPLE_SHARE)
-    _close(_shares(n for _m, n in pairs), EXAMPLE_SHARE)
+    _close(_shares(m for m, _n in pairs), EVEN_SHARE)
+    _close(_shares(n for _m, n in pairs), EVEN_SHARE)
+    weighted = parse_settings(_body(first=[{"value": 7}], operands=[{"value": 1, "weight": 1}, {"value": 3, "weight": 10}]))
+    _close(_shares(n for _m, n in _sample(weighted)), {1: 0.5, 3: 0.5})
 
 
-def test_a_range_gives_every_value_the_full_weight_like_separate_values():
-    ranged = parse_settings(_body(operands=[{"from": 3, "to": 9, "weight": 10}]))
-    listed = parse_settings(_body(operands=[{"value": value, "weight": 10} for value in range(3, 10)]))
-    assert [ranged.operands.weight(value) for value in range(3, 10)] == [10] * 7
-    assert ranged.operands.total == listed.operands.total == 70
+def test_a_range_draws_like_its_values_listed_one_by_one():
+    ranged = parse_settings(_body(operands=[{"from": 3, "to": 9}]))
+    listed = parse_settings(_body(operands=[{"value": value} for value in range(3, 10)]))
+    assert ranged.operands.count == listed.operands.count == 7
     assert _sample(ranged, count=500) == _sample(listed, count=500)
 
 
 def test_first_draws_the_left_number_and_operands_still_draw_the_right():
     settings = parse_settings(
         _body(
-            first=[{"value": 7, "weight": 1}],
-            operands=[
-                {"value": 1, "weight": 2},
-                {"from": 2, "to": 9, "weight": 5},
-                {"value": 10, "weight": 2},
-                {"from": 11, "to": 12, "weight": 5},
-            ],
+            first=[{"value": 7}],
+            operands=[{"value": 1}, {"from": 2, "to": 9}, {"value": 10, "weight": 2}, {"from": 11, "to": 12}],
         )
     )
     pairs = _sample(settings)
     assert {m for m, _n in pairs} == {7}
-    total = 2 + 8 * 5 + 2 + 2 * 5
-    expected = {1: 2 / total, 10: 2 / total, **{v: 5 / total for v in (*range(2, 10), 11, 12)}}
-    _close(_shares(n for _m, n in pairs), expected)
+    _close(_shares(n for _m, n in pairs), {n: 1 / 12 for n in range(1, 13)})
 
 
-def test_first_with_two_weights_splits_the_left_number_one_to_three():
-    settings = parse_settings(_body(first=[{"value": 2, "weight": 1}, {"value": 3, "weight": 3}]))
-    pairs = _sample(settings)
-    _close(_shares(m for m, _n in pairs), {2: 0.25, 3: 0.75})
-    _close(_shares(n for _m, n in pairs), EXAMPLE_SHARE)
-
-
-def test_a_value_may_be_in_first_and_operands_with_different_weights():
-    settings = parse_settings(_body(first=[{"value": 3, "weight": 2}], operands=[{"value": 3, "weight": 9}]))
-    assert settings.lefts.weight(3) == 2
-    assert settings.operands.weight(3) == 9
+def test_an_entry_may_leave_out_its_weight_and_any_weight_given_is_ignored():
+    settings = parse_settings(
+        _body(first=[{"value": 3, "weight": 2}], operands=[{"value": 3, "weight": 0}, {"from": 4, "to": 5, "weight": "x"}, {"value": 6}])
+    )
+    assert settings.lefts.weight(3) == 1
+    assert [settings.operands.weight(value) for value in (3, 4, 5, 6)] == [1, 1, 1, 1]
 
 
 @pytest.mark.parametrize(
     "first",
     [
         [],
-        [{"value": 4, "weight": 1}, {"value": 4, "weight": 2}],
-        [{"value": 4, "weight": 0}],
+        [{"value": 4}, {"value": 4}],
+        [{"value": -4}],
     ],
-    ids=["empty", "repeated", "zero-weight"],
+    ids=["empty", "repeated", "negative"],
 )
 def test_first_follows_the_same_rules_as_operands(first):
     with pytest.raises(ValueError, match="^first"):
         parse_settings(_body(first=first))
 
 
-@pytest.mark.parametrize("weight", [0, -1, 1.5, "3", True])
-def test_a_weight_must_be_a_whole_number_of_one_or_more(weight):
-    with pytest.raises(ValueError, match="weight"):
-        parse_settings(_body(operands=[{"value": 1, "weight": weight}]))
-
-
-def test_a_positive_weight_and_an_operand_of_zero_are_accepted():
-    settings = parse_settings(_body(operands=[{"value": 0, "weight": 1}, {"from": 1, "to": 2, "weight": 3}]))
-    assert settings.operands.weight(0) == 1
+def test_an_operand_of_zero_is_accepted():
+    settings = parse_settings(_body(operands=[{"value": 0}, {"from": 1, "to": 2}]))
+    assert settings.operands.has(0)
 
 
 @pytest.mark.parametrize(
@@ -229,12 +214,15 @@ def test_a_long_run_never_repeats_the_last_three_but_can_repeat_the_fourth():
 
 
 def test_with_three_questions_left_out_the_rest_keep_their_relative_weights():
-    settings = parse_settings(
-        _body(first=[{"value": 1, "weight": 1}], operands=[{"value": v, "weight": v} for v in range(1, 7)])
-    )
+    settings = parse_settings(_body(first=[{"value": 1}], operands=[{"from": 1, "to": 6}]))
+    # 1 + 2 was missed on its last answer. The other facts were each asked once and right.
+    rows = [(1, n, "correct", 2000) for n in range(1, 7)] + [(1, 2, "incorrect", 2000)]
+    figures = book_of(rows)
     recent = [(1, 1), (1, 3), (1, 6)]
-    pairs = _sample(settings, recent=recent)
-    left = {2: 2, 4: 4, 5: 5}
+    pairs = _sample(settings, recent=recent, figures=figures)
+    # Six facts, so unit is the average base: (5 × 1/2 + 1/3) / 6. 1 + 2 has a base of 1/3 and a miss boost of 4.
+    unit = (5 / 2 + 1 / 3) / 6
+    left = {2: 1 / 3 + 4 * unit, 4: 1 / 2, 5: 1 / 2}
     _close(_shares(n for _m, n in pairs), {n: weight / sum(left.values()) for n, weight in left.items()})
 
 

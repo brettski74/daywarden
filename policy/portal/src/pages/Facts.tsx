@@ -7,13 +7,16 @@ import { ViewFilters } from "../components/ViewFilters";
 import {
   COLUMNS,
   PAGE_KEYS,
+  SHADES,
   factLines,
   factsAddress,
   medianText,
   pageChoice,
   shading,
+  smoothedText,
   sortFacts,
   sortedBy,
+  weightText,
   withChoice,
   type Fact,
   type FactsData,
@@ -44,9 +47,9 @@ export function factsShouldRevalidate({ currentUrl, nextUrl, defaultShouldRevali
 const keyOf = (fact: Fact) => `${fact.m},${fact.n}`;
 
 /** The shading key, so nothing relies on colour alone. */
-function ShadeKey({ bands, none }: { bands: { level: number; label: string }[]; none: string | null }) {
+function ShadeKey({ kind, bands, none }: { kind: Shade; bands: { level: number; label: string }[]; none: string | null }) {
   return (
-    <ul className="facts-key" aria-label="Shading">
+    <ul className="facts-key" aria-label="Shading" data-shade={kind}>
       {bands.map((band) => (
         <li key={band.level}>
           <span className="facts-swatch" data-level={band.level} aria-hidden="true" />
@@ -161,6 +164,11 @@ export function Facts() {
         </ul>
       </nav>
 
+      {report.slow !== null && (
+        <p className="facts-slow">
+          <span className="facts-slow-label">All time:</span> {report.slow.text}
+        </p>
+      )}
       {report.message !== null && <p>{report.message}</p>}
       {data !== null && (
         <>
@@ -168,12 +176,16 @@ export function Facts() {
             <label className="bar-field">
               Shade by
               <select value={choice.shade} onChange={(event) => navigate({ search: withChoice(location.search, { shade: event.target.value as Shade }) }, { preventScrollReset: true })}>
-                <option value="misses">Misses</option>
-                <option value="time">Time</option>
+                {SHADES.map(({ key, label }) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </label>
-            <ShadeKey bands={shade.bands} none={shade.none} />
+            <ShadeKey kind={shade.kind} bands={shade.bands} none={shade.none} />
           </div>
+          <p className="facts-cell-note">Under each question: times right / times asked in this period, such as 3/5.</p>
           <div className="facts-top">
             <FactGrid data={data} label={`${operation.label} facts`} shading={shade} chosen={chosenKey} href={(fact) => href(fact).search} onPoint={setPointed} />
             <div className="facts-readout" aria-live="polite">
@@ -186,55 +198,76 @@ export function Facts() {
           </div>
 
           <h2>Facts</h2>
-          <table className="records facts-list" aria-label="Facts">
-            <thead>
-              <tr>
-                {COLUMNS.map(({ key, label }) => {
-                  const active = choice.sort === key;
-                  const arrow = active ? (choice.dir === "asc" ? " ↑" : " ↓") : "";
+          <div className="facts-list-box">
+            <table className="records facts-list" aria-label="Facts">
+              <thead>
+                <tr>
+                  <th scope="colgroup" colSpan={COLUMNS.filter((column) => !column.allTime).length}>
+                    In this period
+                  </th>
+                  <th scope="colgroup" colSpan={COLUMNS.filter((column) => column.allTime).length}>
+                    All time
+                  </th>
+                </tr>
+                <tr>
+                  {COLUMNS.map(({ key, label }) => {
+                    const active = choice.sort === key;
+                    const arrow = active ? (choice.dir === "asc" ? " ↑" : " ↓") : "";
+                    return (
+                      <th
+                        key={key}
+                        scope="col"
+                        className={key === "fact" || key === "last" ? "facts-list-text" : undefined}
+                        aria-sort={active ? (choice.dir === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        <button type="button" className="records-sort" onClick={() => navigate({ search: sortedBy(location.search, key) }, { preventScrollReset: true })}>
+                          <span className="records-sort-label">{label}</span>
+                          {arrow && (
+                            <span className="records-sort-arrow" aria-hidden="true">
+                              {arrow}
+                            </span>
+                          )}
+                        </button>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((fact) => {
+                  const to = href(fact);
                   return (
-                    <th key={key} scope="col" aria-sort={active ? (choice.dir === "asc" ? "ascending" : "descending") : "none"}>
-                      <button type="button" className="records-sort" onClick={() => navigate({ search: sortedBy(location.search, key) }, { preventScrollReset: true })}>
-                        <span className="records-sort-label">{label}</span>
-                        {arrow && (
-                          <span className="records-sort-arrow" aria-hidden="true">
-                            {arrow}
-                          </span>
-                        )}
-                      </button>
-                    </th>
+                    <tr
+                      key={keyOf(fact)}
+                      data-chosen={keyOf(fact) === chosenKey || undefined}
+                      onClick={(event) => {
+                        if (!(event.target instanceof Element) || !event.target.closest("a")) navigate(to, { preventScrollReset: true });
+                      }}
+                    >
+                      <td className="facts-list-text">
+                        <Link to={to} preventScrollReset aria-current={keyOf(fact) === chosenKey ? "true" : undefined}>
+                          {fact.text}
+                        </Link>
+                      </td>
+                      <td>{fact.asked}</td>
+                      <td>{fact.right}</td>
+                      <td>{fact.wrong}</td>
+                      <td>{fact.timeouts}</td>
+                      <td>{fact.missed_percent}%</td>
+                      <td>{medianText(fact)}</td>
+                      <td className="facts-list-text">{fact.last_missed ?? ""}</td>
+                      <td>{fact.all_time.asked}</td>
+                      <td>{fact.all_time.run}</td>
+                      <td>{smoothedText(fact)}</td>
+                      <td>{weightText(fact.all_time.miss_boost)}</td>
+                      <td>{weightText(fact.all_time.slow_boost)}</td>
+                      <td>{weightText(fact.all_time.weight)}</td>
+                    </tr>
                   );
                 })}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((fact) => {
-                const to = href(fact);
-                return (
-                  <tr
-                    key={keyOf(fact)}
-                    data-chosen={keyOf(fact) === chosenKey || undefined}
-                    onClick={(event) => {
-                      if (!(event.target instanceof Element) || !event.target.closest("a")) navigate(to, { preventScrollReset: true });
-                    }}
-                  >
-                    <td>
-                      <Link to={to} preventScrollReset aria-current={keyOf(fact) === chosenKey ? "true" : undefined}>
-                        {fact.text}
-                      </Link>
-                    </td>
-                    <td>{fact.asked}</td>
-                    <td>{fact.right}</td>
-                    <td>{fact.wrong}</td>
-                    <td>{fact.timeouts}</td>
-                    <td>{fact.missed_percent}%</td>
-                    <td>{medianText(fact)}</td>
-                    <td>{fact.last_missed ?? ""}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
 
           {chosen !== null && <FactAttempts fact={chosen} data={data} />}
         </>

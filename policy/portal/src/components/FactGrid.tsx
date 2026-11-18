@@ -63,7 +63,7 @@ export function FactGrid({ data, label, shading, chosen, href, onPoint }: Props)
 
   return (
     <div className="facts-grid-box">
-      <table className="facts-grid" aria-label={label}>
+      <table className="facts-grid" aria-label={label} data-shade={shading.kind}>
         <thead>
           <tr>
             <td />
@@ -93,7 +93,7 @@ export function FactGrid({ data, label, shading, chosen, href, onPoint }: Props)
                       to={href(fact)}
                       preventScrollReset
                       tabIndex={key === current ? 0 : -1}
-                      aria-label={`${fact.text}, missed ${fact.missed} of ${fact.asked}`}
+                      aria-label={`${fact.text}, right ${fact.right} of ${fact.asked}`}
                       aria-current={key === chosen ? "true" : undefined}
                       onKeyDown={(event) => keyDown(event, fact)}
                       onFocus={() => {
@@ -106,7 +106,7 @@ export function FactGrid({ data, label, shading, chosen, href, onPoint }: Props)
                     >
                       <span className="facts-cell-question">{fact.cell}</span>
                       <span className="facts-cell-count">
-                        {fact.missed}/{fact.asked}
+                        {fact.right}/{fact.asked}
                       </span>
                     </Link>
                   </td>

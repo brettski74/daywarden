@@ -120,5 +120,16 @@
   /* Asked, but nothing to shade by, such as no right answers when shading by Time. */
   --fact-none-bg: var(--palette-white);
   --fact-none-text: var(--palette-navy);
+  /* The facts grid shaded by Weight, the chance of being asked: ivory through gold to brick. Navy text, ivory on brick. */
+  --fact-weight-0-bg: color-mix(in srgb, var(--palette-ivory) 50%, var(--palette-white));
+  --fact-weight-0-text: var(--palette-navy);
+  --fact-weight-1-bg: color-mix(in srgb, var(--palette-gold) 35%, var(--palette-white));
+  --fact-weight-1-text: var(--palette-navy);
+  --fact-weight-2-bg: color-mix(in srgb, var(--palette-gold) 70%, var(--palette-white));
+  --fact-weight-2-text: var(--palette-navy);
+  --fact-weight-3-bg: color-mix(in srgb, var(--palette-brick) 35%, var(--palette-gold));
+  --fact-weight-3-text: var(--palette-navy);
+  --fact-weight-4-bg: var(--palette-brick);
+  --fact-weight-4-text: var(--palette-ivory);
   --row-chosen-bg: color-mix(in srgb, var(--palette-teal) 35%, var(--palette-ivory));
 }

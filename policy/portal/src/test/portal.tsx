@@ -148,6 +148,7 @@ const fact = (m: number, n: number, counts: { asked: number; right: number; wron
   last_missed: null as string | null,
   last_missed_day: null as string | null,
   attempts: [] as { id: number; answers: string[] }[],
+  all_time: { asked: counts.asked, run: 0, smoothed_ms: null as number | null, miss_boost: 0, slow_boost: 0, weight: 1 / (counts.asked + 1) },
   ...extra,
 });
 
@@ -169,13 +170,33 @@ export const FACTS = {
     { name: "division", label: "Division" },
   ],
   message: null as string | null,
+  slow: {
+    median_ms: 2000,
+    start_ms: 4000,
+    full_ms: 8000,
+    timed_facts: 12,
+    facts_needed: 10,
+    answers_needed: 3,
+    text: "Median 2.0 s. Slow from 4.0 s, full at 8.0 s.",
+  } as Record<string, unknown> | null,
   facts: {
     rows: [6, 7],
     columns: [6, 8],
     facts: [
-      fact(6, 8, { asked: 4, right: 3, wrong: 1, timeouts: 0 }, { median_ms: 4000, last_missed: "Monday 9 November 2026", last_missed_day: "2026-11-09", attempts: [{ id: 7, answers: ["46"] }] }),
-      fact(7, 6, { asked: 2, right: 2, wrong: 0, timeouts: 0 }, { median_ms: 2000, attempts: [{ id: 7, answers: ["42", "42"] }] }),
+      fact(6, 8, { asked: 4, right: 3, wrong: 1, timeouts: 0 }, {
+        median_ms: 4000,
+        last_missed: "Monday 9 November 2026",
+        last_missed_day: "2026-11-09",
+        attempts: [{ id: 7, answers: ["46"] }],
+        all_time: { asked: 9, run: 2, smoothed_ms: 6000, miss_boost: 1, slow_boost: 2, weight: 3.1 },
+      }),
+      fact(7, 6, { asked: 2, right: 2, wrong: 0, timeouts: 0 }, {
+        median_ms: 2000,
+        attempts: [{ id: 7, answers: ["42", "42"] }],
+        all_time: { asked: 12, run: 12, smoothed_ms: 1900, miss_boost: 0, slow_boost: 0, weight: 0.077 },
+      }),
       fact(7, 8, { asked: 5, right: 3, wrong: 1, timeouts: 1 }, {
+        all_time: { asked: 6, run: 1, smoothed_ms: 3100, miss_boost: 2, slow_boost: 0, weight: 2.143 },
         median_ms: 3000,
         last_missed: "Friday 13 November 2026",
         last_missed_day: "2026-11-13",

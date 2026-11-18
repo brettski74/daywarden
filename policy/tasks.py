@@ -36,12 +36,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
+from policy import fact_figures
+from policy.fact_figures import ARITHMETIC, Book, FactStats, ensure_facts
 from policy.spelling_words import SPELLING, WordStats, ensure_words, tally
 
 PARENT_CHECK = "parent_check"
@@ -472,6 +474,8 @@ class AttemptStore:
         ensure_attempts(self.connection)
         ensure_words(self.connection)
         self.words = WordStats(self.connection)
+        ensure_facts(self.connection)
+        self.facts = FactStats(self.connection)
 
     def __enter__(self) -> AttemptStore:
         return self
@@ -785,10 +789,17 @@ class AttemptStore:
         """Return the revision points this client group scored on this day."""
         return pass_count(self.connection, client_group, day, tasks)
 
+    def draw_figures(self, attempt: Attempt) -> Callable[[str], Book]:
+        """Return the fact figures an arithmetic attempt draws with, for an operation: every other attempt's."""
+        leave_out = (attempt.id, _stamp(attempt.started_at))
+        return lambda operation: self.facts.book(attempt.client_group, operation, leave_out=leave_out)
+
     def _counted(self, attempt: Attempt) -> Attempt:
-        """Add the words a spelling attempt has asked so far to the word figures, and return the attempt."""
+        """Add what a spelling or arithmetic attempt has asked so far to the all-time figures, and return the attempt."""
         if attempt.task_type == SPELLING:
             tally(self.connection, attempt.id, attempt.client_group, _stamp(attempt.started_at), attempt.detail)
+        elif attempt.task_type == ARITHMETIC:
+            fact_figures.tally(self.connection, attempt.id, attempt.client_group, _stamp(attempt.started_at), attempt.detail)
         return attempt
 
     def _by_id(self, attempt_id: int) -> Attempt:

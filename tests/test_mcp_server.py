@@ -734,6 +734,31 @@ def test_list_attempts_and_get_usage_match_their_portal_pages(service):
     assert tool_answer(service, access, "list_requests") == expected
 
 
+def test_get_arithmetic_facts_gives_the_facts_page_with_its_all_time_figures(service):
+    from policy.tasks import AttemptStore, TaskKey
+
+    now = datetime(2026, 11, 17, 18, 0, tzinfo=ZONE)
+    at(service, now)
+    questions = [
+        {"run": 1, "m": 7, "n": 8, "question": "7 × 8 =", "expected": 56, "answer": answer, "outcome": outcome,
+         "allowed_ms": 10_000, "taken_ms": 3000}
+        for answer, outcome in (("56", "correct"), ("54", "incorrect"))
+    ]
+    with AttemptStore(service.state.database) as store:
+        for days, asked in ((60, questions[:1]), (2, questions[1:])):
+            started = now - timedelta(days=days)
+            detail = {"settings": {"operation": "multiplication"}, "runs": [{"run": 1}], "questions": asked}
+            store.record("younger", TaskKey("arithmetic", "times"), "abandoned", started, started_at=started, detail=detail)
+    cookie = sign_in(service)
+    _client, tokens = connect(service, cookie)
+    found = tool_answer(service, tokens["access_token"], "get_arithmetic_facts", {"client": "younger", "operation": "multiplication", "period": "past_week"})
+    _status, body, _headers = call(service, "GET", "/parent/api/attempts/facts/multiplication", query="client=younger&range=past-week", cookie=cookie)
+    assert found == json.loads(body)
+    fact = found["facts"]["facts"][0]
+    assert (fact["asked"], fact["all_time"]["asked"], fact["all_time"]["run"], fact["all_time"]["weight"]) == (1, 2, 0, 4.333)
+    assert found["slow"]["text"].startswith("Slow boost starts once 10 facts")
+
+
 def test_a_custom_period_is_from_and_to(service):
     _client, tokens = connect(service)
     found = tool_answer(service, tokens["access_token"], "list_attempts", {"client": "younger", "from": "2026-11-01", "to": "2026-11-07"})

@@ -18,7 +18,7 @@ export type SkipData = {
 export const FIX_ON_PAGE = "Fix the problems marked on the page first.";
 export const NO_DIFFERENCES = "Add a difference, or use the default list.";
 export const DEFAULT_NOTE = "This task uses the default list of differences.";
-export const DIFFERENCE_RULES: TableRules = { bounds: true, negatives: true, noZero: true };
+export const DIFFERENCE_RULES: TableRules = { weights: true, bounds: true, negatives: true, noZero: true };
 
 export const QUESTION_SETTINGS = ["sequence_length", "completed", "minimum_value", "maximum_value", "consecutive", "multiples_only"];
 export const SESSION_SETTINGS = ["timeout", "correct_answers_required", "minimum_questions", "maximum_questions"];

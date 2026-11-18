@@ -21,25 +21,12 @@ from datetime import date, datetime
 from policy.arithmetic import ARITHMETIC, OPERATIONS
 from policy.attempt_figures import figures
 from policy.attempt_trends import Period, View, chosen
+from policy.fact_figures import NO_FIGURES, Book, operation_of
 from policy.quiz import CORRECT, INCORRECT, TIMEOUT
 from policy.report import format_day
 from policy.tasks import Attempt
 
-# The sign each operation writes between its numbers, as Operation.text does.
-SIGNS = {"addition": "+", "subtraction": "−", "multiplication": "×", "division": "÷"}
-_BY_SIGN = {sign: name for name, sign in SIGNS.items()}
 OUTCOME_WORDS = {CORRECT: "Right", INCORRECT: "Wrong", TIMEOUT: "Timeout"}
-
-
-def operation_of(question: Mapping, settings: Mapping | None = None) -> str | None:
-    """Return the operation a stored question asked, from the sign in its text, or else the stored settings."""
-    text = question.get("question")
-    if isinstance(text, str):
-        for part in text.split():
-            if part in _BY_SIGN:
-                return _BY_SIGN[part]
-    named = settings.get("operation") if isinstance(settings, Mapping) else None
-    return named if named in OPERATIONS else None
 
 
 def _whole(value: object) -> int | None:
@@ -85,14 +72,17 @@ def facts(
     period: Period,
     today: date,
     started: Callable[[Attempt], str],
+    all_time: Book = NO_FIGURES,
 ) -> dict:
     """Return the operation's facts over the chosen arithmetic attempts.
 
     ``rows`` and ``columns`` are the ``m`` and ``n`` values asked, smallest
     first. Each fact has its counts, the share missed as a whole percentage,
     the median time of its right answers, the day it was last missed, and the
-    attempts that asked it, newest first, with each answer he gave.
-    ``attempts`` describes each of those attempts by id.
+    attempts that asked it, newest first, with each answer he gave. Its
+    ``all_time`` figures and weight come from ``all_time``, his whole record
+    whatever the period and filters. ``attempts`` describes each of those
+    attempts by id.
     """
     found: dict[tuple[int, int], dict] = {}
     asked_in: dict[tuple[int, int], dict[int, list[str]]] = {}
@@ -157,6 +147,7 @@ def facts(
                 "last_missed": None if last is None else format_day(last),
                 "last_missed_day": None if last is None else last.isoformat(),
                 "attempts": [{"id": number, "answers": answers} for number, answers in asked_in[key].items()],
+                "all_time": all_time.all_time(*key),
             }
         )
     return {

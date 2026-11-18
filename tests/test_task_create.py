@@ -26,7 +26,7 @@ SUMS = {
     "fields": {"pass_cooldown": "2"},
     "groups": ["younger"],
     "settings": {"operation": "addition", "max_timeout": "10s", "min_timeout": "4s", "correct_answers_required": "3"},
-    "lists": {"operands": [{"from": "7", "to": "", "weight": ""}]},
+    "lists": {"operands": [{"from": "7", "to": ""}]},
 }
 
 
@@ -242,7 +242,7 @@ def test_a_new_task_gets_its_own_file_tasks_d_and_an_include_in_one_commit(kept)
         "        min_timeout: 4s\n"
         "        correct_answers_required: 3\n"
         "        operands:\n"
-        "          - { value: 7, weight: 1 }\n"
+        "          - { value: 7 }\n"
     )
     assert kept.policy.read_text() == root_before.replace("  - extra.yaml\n", "  - extra.yaml\n  - tasks.d\n")
     assert kept.catalogue() == ["arithmetic/Café Sums", "parent_check/check", "spelling/spelling", "worksheet/sums"]

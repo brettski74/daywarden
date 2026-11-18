@@ -169,7 +169,7 @@ tasks:
   arithmetic:
     week-1:
       group: younger
-      body: { operation: addition, max_timeout: 10s, min_timeout: 4s, correct_answers_required: 10, operands: [{ from: 1, to: 9, weight: 1 }] }
+      body: { operation: addition, max_timeout: 10s, min_timeout: 4s, correct_answers_required: 10, operands: [{ from: 1, to: 9 }] }
   spelling:
     week-1:
       group: younger
@@ -183,7 +183,7 @@ The same type may appear on more than one task. `parts-of-speech-1` and `parts-o
 
 ### Editing a task from the parent portal
 
-Each task has a page in the parent portal, at `/parent/tasks/<type>/<name>`. Task Administration lists the tasks by name, adding the type in brackets where two tasks share a name. Saving it rewrites that task in whichever file defines it, including a file brought in by `include`. Only the fields that changed are rewritten. The file's comments, its layout, and every other entry stay exactly as they were, and a cleared field is removed from the file. A weighted list that changed, such as a skip counting task's `difference` or an arithmetic task's `first` and `operands`, is written again whole, one flow mapping per entry such as `- { from: 3, to: 9, weight: 10 }`, and loses any comments inside it. So the `decisions` service mounts the config directory writable. The other services still mount it read-only. Each file it writes keeps its owner and mode.
+Each task has a page in the parent portal, at `/parent/tasks/<type>/<name>`. Task Administration lists the tasks by name, adding the type in brackets where two tasks share a name. Saving it rewrites that task in whichever file defines it, including a file brought in by `include`. Only the fields that changed are rewritten. The file's comments, its layout, and every other entry stay exactly as they were, and a cleared field is removed from the file. A list of numbers that changed, such as a skip counting task's `difference` or an arithmetic task's `first` and `operands`, is written again whole, one flow mapping per entry, such as `- { from: 3, to: 9, weight: 10 }` for a difference and `- { from: 3, to: 9 }` for arithmetic, which has no weights, and loses any comments inside it. So the `decisions` service mounts the config directory writable. The other services still mount it read-only. Each file it writes keeps its owner and mode.
 
 Before anything is written, the whole policy is checked with the changed file and with any spelling words already in their new pools, exactly as `dw check` would. A save that would not load is refused, and nothing changes. A good save is applied to every service as `dw reload` applies it, and committed to the config history as the signed-in parent, such as `2026-11-08 21:15 -0500 brett: saved task spelling/spelling`. A save first commits any hand edits it finds in the config directory, as `<time> hand edits found before a portal save`, when they pass the check, and refuses to save when they do not. A file changed on the server since the page was opened is not saved over: the page has to be reloaded first.
 
@@ -320,10 +320,10 @@ An `arithmetic` task is a timed quiz. Its `body` is checked when the file is loa
 | `max_timeout` | Yes | The time for the first question. A duration greater than zero. |
 | `min_timeout` | Yes | The time once `correct_answers_required - 1` answers are right. Greater than zero and no longer than `max_timeout`. |
 | `correct_answers_required` | Yes | The number of right answers that pass the attempt. 1 or more. |
-| `operands` | Yes | The weighted list the right-hand number `n` is drawn from, and `m` too when `first` is left out. |
-| `first` | No | A weighted list for the left-hand number `m` only, such as a single `7` to drill the seven times table. An empty list is an error. |
+| `operands` | Yes | The numbers the right-hand number `n` can be, and `m` too when `first` is left out. |
+| `first` | No | The numbers the left-hand number `m` can be, such as a single `7` to drill the seven times table. An empty list is an error. |
 
-A duration is a whole number with `h`, `m`, `s`, or `ms`, such as `10s` or `7500ms`. A bare number such as `10` is an error. Each list entry has a `weight`, a whole number 1 or more, and either one `value` or an inclusive `from` and `to`. Every number in a range gets the full weight. Operands are whole numbers, 0 or more. A value may appear once in a list. A repeated value, overlapping ranges, `from` above `to`, an entry with both `value` and `from`, and any other field are errors. `first` and `operands` are separate lists, so the same value may appear in both with different weights.
+A duration is a whole number with `h`, `m`, `s`, or `ms`, such as `10s` or `7500ms`. A bare number such as `10` is an error. Each list entry is either one `value` or an inclusive `from` and `to`, such as `- { from: 3, to: 9 }`. Operands are whole numbers, 0 or more. A value may appear once in a list. A repeated value, overlapping ranges, `from` above `to`, an entry with both `value` and `from`, and any other field are errors. An entry may still have the `weight` that lists had before S037, which loads and is ignored. `first` and `operands` are separate lists, so the same value may appear in both.
 
 ```yaml
 tasks:
@@ -337,10 +337,7 @@ tasks:
         min_timeout: 4s
         correct_answers_required: 20
         operands:
-          - { value: 1, weight: 5 }
-          - { value: 2, weight: 7 }
-          - { from: 3, to: 9, weight: 10 }
-          - { value: 10, weight: 5 }
+          - { from: 1, to: 10 }
 ```
 
 Each operation asks a question built from `m` and `n`, with the signs used on paper:
@@ -352,9 +349,9 @@ Each operation asks a question built from `m` and `n`, with the signs used on pa
 | `multiplication` | `m × n =` | `m × n` | `6 × 7 =`, answer 42 |
 | `division` | `(m × n) ÷ m =` | `n` | `42 ÷ 6 =`, answer 7 |
 
-So `first` sets the number taken away or divided by in subtraction and division, such as a single `7` for every question to take away or divide by 7. The weights apply to `m` and `n`, never to the sum or product shown. Division cannot divide by 0, so a division task with a 0 in the list `m` is drawn from, `first`, or `operands` when there is no `first`, as a `value` or inside a range, fails the load, naming the task and the field. A 0 in `operands` with a `first` free of 0 is allowed, and asks questions such as `0 ÷ 7 =`.
+So `first` sets the number taken away or divided by in subtraction and division, such as a single `7` for every question to take away or divide by 7. Division cannot divide by 0, so a division task with a 0 in the list `m` is drawn from, `first`, or `operands` when there is no `first`, as a `value` or inside a range, fails the load, naming the task and the field. A 0 in `operands` with a `first` free of 0 is allowed, and asks questions such as `0 ÷ 7 =`.
 
-`m` and `n` are drawn independently. A question is the ordered pair, so `6 + 7` and `7 + 6` are different questions. None of the last three questions in the attempt is asked again while another question is possible. After `k` right answers the time allowed is `max_timeout * (min_timeout / max_timeout) ^ (k / (correct_answers_required - 1))`. Wrong answers and timeouts do not shorten it.
+The lists set which facts can be asked: every `m` in `first`, or in `operands` when there is no `first`, with every `n` in `operands`. A fact is the ordered pair under its operation, so `6 + 7` and `7 + 6` are different facts. Which fact is asked is weighted from his record, kept for each client group across every arithmetic task: a fact asked less often comes up more, every fact gets its turn, and a fact he missed lately or answers slowly comes up more until he has it. An attempt's own answers never change its own draws, so a miss comes up more from the next attempt on. Story S037 gives the formulas, and the parent portal's facts page shows each fact's figures and weight. None of the last three questions in the attempt is asked again while another question is possible. After `k` right answers the time allowed is `max_timeout * (min_timeout / max_timeout) ^ (k / (correct_answers_required - 1))`. Wrong answers and timeouts do not shorten it.
 
 The server issues each question, times it from that moment, and judges the answer. An answer it receives more than half a second after the time allowed is a timeout, whatever it says. When the timer bar runs out, the page sends what is in the box: the right answer is correct, and anything else is a timeout. Reaching `correct_answers_required` passes the attempt at that answer. Wrong answers never fail it.
 
@@ -384,7 +381,7 @@ A `skip_counting` task shows a row of numbers that count up or down by the same 
 
 When `correct_answers_required` is left out, it is the larger of 8 and `ceil(0.8 × minimum_questions)`, or 8 when `minimum_questions` is also left out, and no more than `maximum_questions`. `minimum_questions` then defaults to `correct_answers_required`.
 
-`difference` entries follow the arithmetic `operands` rules, except that values may be negative and zero is not allowed. A range that includes 0 is an error, so both directions are two ranges, such as `{ from: -5, to: -1 }` and `{ from: 1, to: 5 }`. An entry may also set its own `minimum_value`, `maximum_value`, and `multiples_only`, which replace the body's for every difference in that entry, such as `{ value: 2, weight: 1, maximum_value: 99 }` or `{ value: 25, weight: 1, multiples_only: true }`. Any of the three an entry leaves out comes from the body. Its maximum must be greater than its minimum. An entry's range may go outside the body's. Each box is wide enough for the longest number any difference allows.
+`difference` entries follow the arithmetic `operands` rules, except that values may be negative, zero is not allowed, and each entry needs a `weight`, a whole number 1 or more, which every difference in its range gets in full. A range that includes 0 is an error, so both directions are two ranges, such as `{ from: -5, to: -1 }` and `{ from: 1, to: 5 }`. An entry may also set its own `minimum_value`, `maximum_value`, and `multiples_only`, which replace the body's for every difference in that entry, such as `{ value: 2, weight: 1, maximum_value: 99 }` or `{ value: 25, weight: 1, multiples_only: true }`. Any of the three an entry leaves out comes from the body. Its maximum must be greater than its minimum. An entry's range may go outside the body's. Each box is wide enough for the longest number any difference allows.
 
 The default list caps counting by 2 at 99, by 5 at 199, and by 10 at 499, in both directions. Counting by 25 and 100 uses `maximum_value`. Counting by 25 and -25 always starts on a multiple of 25. The other defaults use the body's `multiples_only`. When `maximum_value` is lower than a cap, the lower one wins, so a parent who narrows the range is never overridden by a default they did not write. Every default difference uses `minimum_value`. A `minimum_value` at or above a cap fails the load, and the error says to write a difference list. The load also fails when `minimum_questions` or `correct_answers_required` is more than `maximum_questions`. It fails when one difference allows fewer than 3 distinct sequences in its range, with the error naming that difference. It fails when all the differences together allow fewer sequences than `maximum_questions`, or than the larger of `correct_answers_required` and `minimum_questions` when there is no maximum. Counting by 100 with 8 numbers between 1 and 999 starts anywhere from 1 to 299. With `multiples_only` it can only start on 100 or 200, so the load fails.
 

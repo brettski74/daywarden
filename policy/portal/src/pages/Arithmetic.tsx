@@ -58,6 +58,7 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
         <WeightedTable
           label="First"
           field="first"
+          weights={false}
           rows={shown.first.rows}
           originals={shown.first.originals}
           problems={shown.firstProblems}
@@ -67,6 +68,7 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
         <WeightedTable
           label="Operands"
           field="operands"
+          weights={false}
           rows={shown.operands.rows}
           originals={shown.operands.originals}
           problems={shown.operandProblems}

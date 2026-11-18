@@ -1,6 +1,6 @@
 import { CircleX, SquareMinus, SquarePlus } from "lucide-react";
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
-import { BOX_FIELDS, BOX_LABELS, boxChanged, isEmpty, newRow, type Box, type NumberRow } from "../numberTable";
+import { BOX_FIELDS, BOX_LABELS, boxChanged, isEmpty, newRow, tableBoxes, type Box, type NumberRow } from "../numberTable";
 
 type Props = {
   /** The table's name, such as Differences, and the field it writes, such as difference. */
@@ -11,6 +11,8 @@ type Props = {
   originals: NumberRow[] | null;
   /** Each row's problems, in table order. */
   problems: string[][];
+  /** Whether rows have a Weight. An arithmetic task's do not. */
+  weights?: boolean;
   /** Whether rows have their own Min, Max, and Multiples Only. */
   bounds?: boolean;
   /** What an empty Min and Max stand for, and the task's own Multiples Only. */
@@ -27,19 +29,19 @@ type Props = {
 type Focus = { key: string; select?: boolean };
 
 /**
- * A weighted list of numbers, one row per entry, filled in from the keyboard.
+ * A list of numbers, one row per entry, filled in from the keyboard.
  *
  * Enter moves to the next row's From, and adds a row after the last one that
  * is not empty. A row left empty is removed as soon as the focus leaves it.
  */
 export function WeightedTable(props: Props) {
-  const { label, field, rows, originals, problems, bounds = false, placeholders } = props;
+  const { label, field, rows, originals, problems, weights = true, bounds = false, placeholders } = props;
   const root = useRef<HTMLDivElement>(null);
   const focusing = useRef<Focus | null>(null);
   const [, setTick] = useState(0);
   const latest = useRef(props);
   latest.current = props;
-  const boxes: Box[] = bounds ? ["from", "to", "weight", "min", "max"] : ["from", "to", "weight"];
+  const boxes = tableBoxes(weights, bounds);
   const columns = boxes.length + (bounds ? 2 : 1);
 
   const focusOn = useCallback((key: string, select = false) => {

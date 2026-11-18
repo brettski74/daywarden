@@ -56,6 +56,9 @@ class WeightedList:
         """Return how many distinct values the list holds."""
         return sum(entry.high - entry.low + 1 for entry in self.entries)
 
+    def has(self, value: int) -> bool:
+        return self.weight(value) > 0
+
     def weight(self, value: int) -> int:
         for entry in self.entries:
             if entry.low <= value <= entry.high:
@@ -209,13 +212,16 @@ def weighted(
     number: Callable[[object, str], int],
     check: Callable[[Entry, str, Mapping], None] | None = None,
     extra: frozenset[str] = frozenset(),
+    *,
+    weights: bool = True,
 ) -> WeightedList:
     """Return a weighted list of entries.
 
     ``number`` checks each ``value``, ``from``, and ``to``. ``extra`` names
     any other keys an entry may have. ``check`` looks at each finished entry
     and the mapping it was written as. Both raise ``ValueError`` naming the
-    entry.
+    entry. Without ``weights``, an entry may leave out ``weight``, a weight
+    given is ignored, and every value weighs 1.
     """
     if not isinstance(value, list):
         raise ValueError(f"{field}: must be a list of entries")
@@ -224,7 +230,7 @@ def weighted(
     entries = []
     for position, item in enumerate(value, start=1):
         where = f"{field} entry {position}"
-        entry = _entry(item, where, number, extra)
+        entry = _entry(item, where, number, extra, weights)
         if check is not None:
             check(entry, where, item)
         entries.append(entry)
@@ -239,17 +245,21 @@ def weighted(
     return WeightedList(tuple(entry for _number, entry in ordered))
 
 
-def _entry(item: object, where: str, number: Callable[[object, str], int], extra: frozenset[str]) -> Entry:
+def _entry(item: object, where: str, number: Callable[[object, str], int], extra: frozenset[str], weights: bool) -> Entry:
     if not isinstance(item, Mapping):
-        raise ValueError(f"{where}: must be a mapping with weight and value, or weight, from, and to")
+        if weights:
+            raise ValueError(f"{where}: must be a mapping with weight and value, or weight, from, and to")
+        raise ValueError(f"{where}: must be a mapping with value, or from and to")
     unknown = sorted(set(item) - _ENTRY_KEYS - extra)
     if unknown:
         raise ValueError(f"{where}: unknown setting {unknown[0]}")
-    if "weight" not in item:
-        raise ValueError(f"{where}: weight is required")
-    weight = item["weight"]
-    if not is_whole(weight) or weight < 1:
-        raise ValueError(f"{where}: weight must be a whole number, 1 or more")
+    weight = 1
+    if weights:
+        if "weight" not in item:
+            raise ValueError(f"{where}: weight is required")
+        weight = item["weight"]
+        if not is_whole(weight) or weight < 1:
+            raise ValueError(f"{where}: weight must be a whole number, 1 or more")
     has_value = "value" in item
     has_from = "from" in item
     has_to = "to" in item

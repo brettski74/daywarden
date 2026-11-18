@@ -1,16 +1,18 @@
-"""The weighted number tables of a task page: a skip counting task's differences and an arithmetic task's numbers.
+"""The number tables of a task page: a skip counting task's differences and an arithmetic task's numbers.
 
-Each entry of a weighted list is one row of text: From, To, and Weight, and
-for a skip counting difference its own Min, Max, and Multiples Only. A
-``value`` entry shows its number in From with To empty. A ``from``/``to``
-range shows both.
+Each entry of a list is one row of text: From and To, a skip counting
+difference's Weight, and its own Min, Max, and Multiples Only. A ``value``
+entry shows its number in From with To empty. A ``from``/``to`` range shows
+both. An arithmetic task's ``first`` and ``operands`` have no weight (S037):
+a weight in the file is not shown, and a weight sent with a row is ignored.
 
 A save sends each changed list back as rows. A list whose rows hold the same
-numbers as the file's keeps its text exactly. Any other list is written again
-whole, one flow mapping per row in table order, with its keys in the order
-``value`` or ``from`` and ``to``, then ``weight``, ``minimum_value``,
-``maximum_value``, and ``multiples_only``. A row whose To is empty or equal
-to From is written with ``value``, and an empty Weight as ``weight: 1``.
+numbers as the file's keeps its text exactly, any weight in it included. Any
+other list is written again whole, one flow mapping per row in table order,
+with its keys in the order ``value`` or ``from`` and ``to``, then ``weight``,
+``minimum_value``, ``maximum_value``, and ``multiples_only``. A row whose To
+is empty or equal to From is written with ``value``, and an empty difference
+Weight as ``weight: 1``.
 
 The page's own checks only catch typing mistakes on the row where they
 happen. The policy check stays the one judge of a save.
@@ -44,33 +46,41 @@ ARITHMETIC_SETTINGS = ("operation", "max_timeout", "min_timeout", "correct_answe
 # A skip counting save sends this in place of rows to go back to the default list.
 DEFAULT = "default"
 
-_RANGE_KEYS = ("from", "to", "weight")
+_RANGE_KEYS = ("from", "to")
+_WEIGHT_KEYS = ("weight",)
 _BOUND_KEYS = ("minimum_value", "maximum_value", "multiples_only")
 _NUMBER = re.compile(r"-?[0-9]+")
 
 
 @dataclass(frozen=True)
 class Table:
-    """One weighted list a page shows as a table.
+    """One list of numbers a page shows as a table.
 
-    ``bounds`` gives each row its own minimum, maximum, and multiples only.
-    ``default`` lets a save go back to the default list by removing the
-    field. ``optional`` removes the field when the table has no rows.
+    ``weights`` gives each row a weight. ``bounds`` gives each row its own
+    minimum, maximum, and multiples only. ``default`` lets a save go back to
+    the default list by removing the field. ``optional`` removes the field
+    when the table has no rows.
     """
 
     field: str
+    weights: bool = True
     bounds: bool = False
     default: bool = False
     optional: bool = False
 
     @property
     def keys(self) -> tuple[str, ...]:
-        return _RANGE_KEYS + (_BOUND_KEYS if self.bounds else ())
+        return _RANGE_KEYS + (_WEIGHT_KEYS if self.weights else ()) + (_BOUND_KEYS if self.bounds else ())
+
+    @property
+    def ignored(self) -> tuple[str, ...]:
+        """Keys a row or file entry may have that the table neither shows nor writes."""
+        return () if self.weights else _WEIGHT_KEYS
 
 
 DIFFERENCE = Table("difference", bounds=True, default=True)
-FIRST = Table("first", optional=True)
-OPERANDS = Table("operands")
+FIRST = Table("first", weights=False, optional=True)
+OPERANDS = Table("operands", weights=False)
 SKIP_COUNTING_TABLES = (DIFFERENCE,)
 ARITHMETIC_TABLES = (FIRST, OPERANDS)
 
@@ -146,16 +156,18 @@ def _rows(listed: object, table: Table) -> tuple[list[dict], list[str]]:
     for number, item in enumerate(listed, 1):
         where = f"{table.field} entry {number}"
         if not isinstance(item, Mapping):
-            problems.append(f"{where}: must be a mapping with weight and value, or weight, from, and to")
+            shape = "weight and value, or weight, from, and to" if table.weights else "value, or from and to"
+            problems.append(f"{where}: must be a mapping with {shape}")
             continue
-        unknown = sorted(str(key) for key in set(item) - set(table.keys) - {"value"})
+        unknown = sorted(str(key) for key in set(item) - set(table.keys) - set(table.ignored) - {"value"})
         if unknown:
             problems.append(f"{where}: unknown setting {unknown[0]}, which saving from this page leaves out")
         row = {
             "from": _text(item.get("value", item.get("from"))),
             "to": "" if "value" in item else _text(item.get("to")),
-            "weight": _text(item.get("weight")),
         }
+        if table.weights:
+            row["weight"] = _text(item.get("weight"))
         if table.bounds:
             row["minimum_value"] = _text(item.get("minimum_value"))
             row["maximum_value"] = _text(item.get("maximum_value"))
@@ -180,16 +192,17 @@ def _entry(row: object, where: str, table: Table) -> dict:
     """Return the entry a row is written as."""
     if not isinstance(row, Mapping):
         raise ValueError(f"{where} must be a mapping")
-    unknown = sorted(str(key) for key in set(row) - set(table.keys))
+    unknown = sorted(str(key) for key in set(row) - set(table.keys) - set(table.ignored))
     if unknown:
         raise ValueError(f"{where}: {unknown[0]} is not a column of this table")
     low = _number(row.get("from"), f"{where}: from")
     if low is None:
         raise ValueError(f"{where}: from is needed")
     high = _number(row.get("to"), f"{where}: to")
-    weight = _number(row.get("weight"), f"{where}: weight")
     entry: dict = {"value": low} if high is None or high == low else {"from": low, "to": high}
-    entry["weight"] = 1 if weight is None else weight
+    if table.weights:
+        weight = _number(row.get("weight"), f"{where}: weight")
+        entry["weight"] = 1 if weight is None else weight
     if table.bounds:
         for key in ("minimum_value", "maximum_value"):
             bound = _number(row.get(key), f"{where}: {key}")

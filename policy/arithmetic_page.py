@@ -118,7 +118,7 @@ def respond_api(
         store.save(attempt.id, session.detail)
         return json_response(200, {"correct": session.correct, "required": session.settings.required})
     if action == QUESTION:
-        question = session.issue(now, rng or _RNG)
+        question = session.issue(now, rng or _RNG, store.draw_figures(attempt))
         store.save(attempt.id, session.detail)
         return json_response(
             200,

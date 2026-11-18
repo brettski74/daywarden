@@ -17,10 +17,10 @@ const TIMES = {
       { name: "multiplication", label: "Multiplication" },
       { name: "division", label: "Division" },
     ],
-    first: [{ from: "0", to: "", weight: "1" }],
+    first: [{ from: "0", to: "" }],
     operands: [
-      { from: "0", to: "", weight: "1" },
-      { from: "2", to: "12", weight: "10" },
+      { from: "0", to: "" },
+      { from: "2", to: "12" },
     ],
     problems: [],
   },
@@ -45,14 +45,15 @@ const save = () => screen.getByRole("button", { name: "Save" });
 const posted = (calls: Call[]) => calls.filter((call) => call.method === "POST").map((call) => call.body as Record<string, unknown>);
 
 describe("the arithmetic area of a task page", () => {
-  it("shows the operation, the timer and target, and the First and Operands tables with three columns", async () => {
+  it("shows the operation, the timer and target, and the First and Operands tables with no Weight", async () => {
     await openTimes();
     expect(operation()).toHaveValue("addition");
     expect(within(operation()).getAllByRole("option").map((option) => option.textContent)).toEqual(["Addition", "Subtraction", "Multiplication", "Division"]);
     expect(screen.getByText("Operation")).toHaveAttribute("title", "operation");
     expect(screen.getByRole("textbox", { name: "Max Timeout" })).toHaveValue("10s");
     expect(screen.getByText("Min Timeout")).toHaveAttribute("title", "min_timeout");
-    expect(within(table("Operands")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["From", "To", "Weight", ""]);
+    expect(within(table("Operands")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["From", "To", ""]);
+    expect(within(table("First")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["From", "To", ""]);
     expect(box("Operands", 2, "To")).toHaveValue("12");
     expect(box("First", 1, "From")).toHaveValue("0");
     expect(status()).toHaveTextContent("No problems.");
@@ -126,18 +127,18 @@ describe("the arithmetic area of a task page", () => {
     expect(screen.queryByText(NO_ZERO_DIVISOR)).not.toBeInTheDocument();
   });
 
-  it("writes a changed table's rows from the keyboard, as in the skip counting table", async () => {
+  it("writes a changed table's rows from the keyboard, as in the skip counting table, without weights", async () => {
     const calls = await openTimes();
-    await userEvent.click(box("Operands", 2, "Weight"));
+    await userEvent.click(box("Operands", 2, "To"));
     await userEvent.keyboard("{Enter}13{Tab}15{Enter}{Enter}");
     expect(screen.getAllByRole("button", { name: "Add row" })[1]).toHaveFocus();
     await userEvent.keyboard("{Control>}s{/Control}");
     await screen.findByText("Saved times.");
     expect(posted(calls)[0].lists).toEqual({
       operands: [
-        { from: "0", to: "", weight: "1" },
-        { from: "2", to: "12", weight: "10" },
-        { from: "13", to: "15", weight: "" },
+        { from: "0", to: "" },
+        { from: "2", to: "12" },
+        { from: "13", to: "15" },
       ],
     });
   });

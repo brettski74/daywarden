@@ -32,7 +32,8 @@ SUMS = f"""\
           - {{ from: 2, to: 12, weight: 10 }}
 """
 TEXT = HOUSE + SUMS
-OPERANDS = [{"from": "1", "to": "", "weight": "5"}, {"from": "2", "to": "12", "weight": "10"}]
+# The page shows no weight, so the file's weights are not in the rows.
+OPERANDS = [{"from": "1", "to": ""}, {"from": "2", "to": "12"}]
 
 
 @pytest.fixture
@@ -54,17 +55,17 @@ def test_the_page_shows_the_settings_the_operations_and_both_lists(house):
             {"name": "multiplication", "label": "Multiplication"},
             {"name": "division", "label": "Division"},
         ],
-        "first": [{"from": "7", "to": "", "weight": "1"}],
+        "first": [{"from": "7", "to": ""}],
         "operands": OPERANDS,
         "problems": [],
     }
 
 
-def test_choosing_an_operation_writes_it_and_keeps_both_lists_as_written(house):
+def test_choosing_an_operation_writes_it_and_keeps_both_lists_as_written_weights_and_all(house):
     status, body = house.save(
         "arithmetic/times",
         settings={"operation": "multiplication", "max_timeout": "10s"},
-        lists={"first": [{"from": "7", "to": "7", "weight": ""}], "operands": OPERANDS},
+        lists={"first": [{"from": "7", "to": "7"}], "operands": OPERANDS},
     )
     assert status == 200, body
     assert house.policy.read_text(encoding="utf-8") == TEXT.replace("operation: addition", "operation: multiplication")
@@ -72,10 +73,10 @@ def test_choosing_an_operation_writes_it_and_keeps_both_lists_as_written(house):
 
 
 def test_a_changed_list_is_written_whole_and_an_empty_first_list_is_removed(house):
-    status, body = house.save("arithmetic/times", lists={"first": [], "operands": [{"from": "0", "to": "10", "weight": ""}]})
+    status, body = house.save("arithmetic/times", lists={"first": [], "operands": [{"from": "0", "to": "10"}]})
     assert status == 200, body
     assert house.policy.read_text(encoding="utf-8").endswith(
-        "        correct_answers_required: 20\n        operands:\n          - { from: 0, to: 10, weight: 1 }\n"
+        "        correct_answers_required: 20\n        operands:\n          - { from: 0, to: 10 }\n"
     )
     assert "first" not in _body(house)
     assert check.main(["--quiet"]) == 0
@@ -84,8 +85,19 @@ def test_a_changed_list_is_written_whole_and_an_empty_first_list_is_removed(hous
     assert (status, body["message"]) == (200, "Nothing has changed, so nothing was saved.")
 
 
+def test_a_changed_list_is_written_without_weights_and_a_weight_sent_with_a_row_is_ignored(house):
+    status, body = house.save(
+        "arithmetic/times", lists={"operands": [{"from": "1", "to": "", "weight": "5"}, {"from": "2", "to": "13", "weight": "9"}]}
+    )
+    assert status == 200, body
+    assert _body(house)["operands"] == [{"value": 1}, {"from": 2, "to": 13}]
+    assert "weight" not in house.policy.read_text(encoding="utf-8").split("operands:")[1]
+    assert house.page("arithmetic/times")["arithmetic"]["operands"] == [{"from": "1", "to": ""}, {"from": "2", "to": "13"}]
+    assert check.main(["--quiet"]) == 0
+
+
 def test_division_with_zero_in_the_first_numbers_list_is_refused_naming_the_field(house):
-    status, body = house.save("arithmetic/times", settings={"operation": "division"}, lists={"first": [{"from": "0", "to": "3", "weight": ""}]})
+    status, body = house.save("arithmetic/times", settings={"operation": "division"}, lists={"first": [{"from": "0", "to": "3"}]})
     assert status == 400
     assert any("body.first: division cannot divide by 0" in problem for problem in body["errors"]), body
     assert house.policy.read_text(encoding="utf-8") == TEXT

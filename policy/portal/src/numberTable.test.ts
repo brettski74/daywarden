@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ZERO_DIFFERENCE, newRow, sameRows, tableProblems, toService, type NumberRow, type TableRules } from "./numberTable";
 import { defaultRequired } from "./skipCounting";
 
-const DIFFERENCES: TableRules = { bounds: true, negatives: true, noZero: true };
-const OPERANDS: TableRules = { bounds: false, negatives: false, noZero: false };
+const DIFFERENCES: TableRules = { weights: true, bounds: true, negatives: true, noZero: true };
+const OPERANDS: TableRules = { weights: false, bounds: false, negatives: false, noZero: false };
 const TASK = { minimum: 1, maximum: 999 };
 
 function row(from: string, to = "", more: Partial<NumberRow> = {}): NumberRow {
@@ -66,6 +66,8 @@ describe("comparing and sending rows", () => {
       { from: "5", to: "", weight: "", minimum_value: "", maximum_value: "", multiples_only: false },
     ]);
     expect(toService(rows, false)[0]).toEqual({ from: "3", to: "9", weight: "10" });
+    // An arithmetic table has no weight to send.
+    expect(toService(rows, false, false)[0]).toEqual({ from: "3", to: "9" });
   });
 });
 

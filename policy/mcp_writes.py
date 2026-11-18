@@ -104,11 +104,11 @@ def _setting_text(value: object, name: str) -> str | None:
 
 
 def _rows(value: object, name: str) -> object:
-    """Return a weighted list as the page's rows. A row may be written as the file writes it, with ``value``."""
+    """Return a list of numbers as the page's rows. A row may be written as the file writes it, with ``value``."""
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
-        raise ValueError(f"{name} must be a list of rows, such as [{{\"from\": 2, \"to\": 12, \"weight\": 1}}].")
+        raise ValueError(f"{name} must be a list of rows, such as [{{\"from\": 2, \"to\": 12}}].")
     rows = []
     for row in value:
         if isinstance(row, Mapping) and "value" in row:
@@ -371,8 +371,11 @@ _SETTINGS = {
     "description": (
         "The task's settings by name, as get_task shows them: groups, pass_cooldown, failure_cooldown, max_skips, "
         "max_passes, available_from, due_date, and the type's own, such as operation, max_timeout, min_timeout, "
-        "correct_answers_required, operands, and first for arithmetic. A weighted list is rows such as "
-        "{\"from\": 2, \"to\": 12, \"weight\": 1} or {\"value\": 7, \"weight\": 1}. A parts of speech task's pools are "
+        "correct_answers_required, operands, and first for arithmetic. A list of numbers is rows such as "
+        "{\"from\": 2, \"to\": 12} or {\"value\": 7}. A skip counting difference row also has a weight, such as "
+        "{\"value\": 5, \"weight\": 2}. Arithmetic rows take no weight, and one given is ignored, because questions are "
+        "weighted from his record. "
+        "A parts of speech task's pools are "
         "pool ids from list_sentence_pools. A spelling task's directories are existing paths from the data directory. "
         "null clears a setting."
     ),

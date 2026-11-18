@@ -16,11 +16,11 @@ export type NumberRow = {
   multiples: Multiples;
 };
 
-/** A row as the service sends and takes it. */
+/** A row as the service sends and takes it. An arithmetic task's rows have no weight. */
 export type ServiceRow = {
   from: string;
   to: string;
-  weight: string;
+  weight?: string;
   minimum_value?: string;
   maximum_value?: string;
   multiples_only?: boolean | null;
@@ -40,6 +40,8 @@ export const BOX_FIELDS: Record<Box | "multiples", string> = {
 
 /** What a table's numbers may be. */
 export type TableRules = {
+  /** Whether rows have a Weight. An arithmetic task's do not (S037). */
+  weights: boolean;
   /** Whether rows have their own Min, Max, and Multiples Only. */
   bounds: boolean;
   negatives: boolean;
@@ -73,21 +75,21 @@ export function fromService(rows: ServiceRow[], prefix: string): NumberRow[] {
     origin: index,
     from: row.from,
     to: row.to,
-    weight: row.weight,
+    weight: row.weight ?? "",
     min: row.minimum_value ?? "",
     max: row.maximum_value ?? "",
     multiples: row.multiples_only === true ? "yes" : row.multiples_only === false ? "no" : "",
   }));
 }
 
-/** The rows a save sends: every row that is not empty. */
-export function toService(rows: NumberRow[], bounds: boolean): ServiceRow[] {
+/** The rows a save sends: every row that is not empty, with a weight only when the table has them. */
+export function toService(rows: NumberRow[], bounds: boolean, weights = true): ServiceRow[] {
   return rows
     .filter((row) => !isEmpty(row))
     .map((row) => ({
       from: row.from.trim(),
       to: row.to.trim(),
-      weight: row.weight.trim(),
+      ...(weights ? { weight: row.weight.trim() } : {}),
       ...(bounds
         ? {
             minimum_value: row.min.trim(),
@@ -131,7 +133,7 @@ export function tableProblems(rows: NumberRow[], rules: TableRules, bounds: Boun
 
 function boxProblems(row: NumberRow, rules: TableRules, bounds: Bounds): string[] {
   const found: string[] = [];
-  const boxes: Box[] = rules.bounds ? ["from", "to", "weight", "min", "max"] : ["from", "to", "weight"];
+  const boxes = tableBoxes(rules.weights, rules.bounds);
   const good: Partial<Record<Box, number>> = {};
   if (row.from.trim() === "") found.push("From is needed.");
   for (const box of boxes) {
@@ -152,6 +154,11 @@ function boxProblems(row: NumberRow, rules: TableRules, bounds: Bounds): string[
     if (low !== null && high !== null && high <= low) found.push(`Max ${high} is not above Min ${low}.`);
   }
   return found;
+}
+
+/** The boxes a table's rows have, in order. */
+export function tableBoxes(weights: boolean, bounds: boolean): Box[] {
+  return [...(["from", "to"] as Box[]), ...(weights ? (["weight"] as Box[]) : []), ...(bounds ? (["min", "max"] as Box[]) : [])];
 }
 
 /** The row as a save would write it, to compare two lists by what they hold. */

@@ -198,12 +198,12 @@ def test_update_changes_only_the_fields_it_names_and_is_in_force_at_once(house):
     assert house.commit().endswith(" ada via Claude Code: saved task arithmetic/times-6\n")
 
 
-def test_a_number_is_taken_as_the_page_takes_its_text(house):
+def test_a_number_is_taken_as_the_page_takes_its_text_and_an_arithmetic_weight_is_ignored(house):
     house.ok("update_task", {**TIMES_6, "settings": {"correct_answers_required": 5, "first": [{"value": 7, "weight": 2}], "operands": [{"from": 1, "to": 12}]}})
     text = house.text("tasks.d/times-6.yaml")
     assert "correct_answers_required: 5   # three right" in text
-    assert yaml.safe_load(text)["tasks"]["arithmetic"]["times-6"]["body"]["first"] == [{"value": 7, "weight": 2}]
-    assert "- { from: 1, to: 12, weight: 1 }" in text
+    assert yaml.safe_load(text)["tasks"]["arithmetic"]["times-6"]["body"]["first"] == [{"value": 7}]
+    assert "- { from: 1, to: 12 }" in text
 
 
 def test_a_dry_run_checks_and_writes_nothing(house):
@@ -276,7 +276,7 @@ def test_create_task_makes_it_as_the_new_task_page_does(house):
     }
     found = house.ok("create_task", {"type": "arithmetic", "name": "times-7", "settings": settings})
     assert found["task"]["name"] == "times-7" and found["task"]["fields"]["pass_cooldown"] == "1"
-    assert found["task"]["arithmetic"]["first"] == [{"from": "7", "to": "", "weight": "1"}]
+    assert found["task"]["arithmetic"]["first"] == [{"from": "7", "to": ""}]
     status, body, _headers = call(house.app, "GET", "/parent/api/tasks", cookie=house.cookie)
     assert {"type": "arithmetic", "name": "times-7"} in json.loads(body)["tasks"]
     assert "times-7" in {task.name for task in house.in_force().tasks}
