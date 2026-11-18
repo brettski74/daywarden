@@ -98,7 +98,12 @@ class PoolAdmin:
     # Changing
 
     def create(self, request: Mapping, username: str) -> Answer:
-        """Write a new, empty pool at the default level of difficulty, and return its id."""
+        """Write a new pool, and return its id.
+
+        The page makes it empty, at the default level of difficulty. An agent
+        may send its ``sentences`` and ``level_of_difficulty`` too, in the form
+        a save sends them, and they are written and checked as a save's are.
+        """
         name = request.get("name")
         if not isinstance(name, str):
             return Answer(400, {"error": "Send the pool's name."})
@@ -110,6 +115,19 @@ class PoolAdmin:
         pool_id = sentence_pools.pool_id(name, directory)
         path = directory / f"{pool_id}.yaml"
         text = f"name: {text_value(name)}\nsentences: []\n"
+        if request.get("sentences") is not None or request.get(LEVEL) is not None:
+            try:
+                changes = _changes({"name": name, "sentences": []}, request)
+                added = changes.pop(LEVEL, None)
+                if changes:
+                    text = rewrite_root(text, path, changes)
+                if added is not None:
+                    text = add_root_entry_after(text, path, "name", LEVEL, str(added))
+            except (EditError, ValueError) as error:
+                return Answer(400, {"error": str(error)})
+            problems = check_pool(path, text)
+            if problems:
+                return Answer(400, {"error": BROKEN, "errors": problems})
         steps = [Step(lambda: _write_new(path, text), lambda: path.unlink(missing_ok=True), f"{path} could not be written, so no pool was made")]
         answer = self.tasks.change(
             TaskKey(_KIND, pool_id), {path.resolve(): text}, [], steps, username,
@@ -223,7 +241,7 @@ class PoolAdmin:
         return self.tasks.change(
             TaskKey(_KIND, pool_id), {}, [], steps, username,
             confirmed=True, moved=None, failed="", done=f"Deleted {name}.",
-            commit=f"deleted parts of speech pool {name}", paths=[path],
+            commit=f"deleted parts of speech pool {name}", paths=[path], removed=[path],
         )
 
     # Helpers

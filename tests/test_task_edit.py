@@ -241,3 +241,45 @@ def test_a_flow_list_edit_adds_a_missing_list_and_writes_a_flow_body_as_a_block(
 
 def test_reading_a_task_gives_the_body_as_the_loader_reads_it():
     assert read_task(LISTED, SOURCE, LISTED_WORDS).body_data["sentences"][2] == {"sentence": "Three.", "parts": {"noun": ["Three"]}}
+
+
+# Removing a task (S036.2's retire_task)
+
+SHARED = """\
+# Tasks.
+tasks:
+  arithmetic:
+    sums:   # first
+      group: younger
+    more: { group: younger }
+  spelling:
+    words:
+      group: younger
+other: 1
+"""
+
+
+def test_remove_task_takes_out_only_the_tasks_lines():
+    from policy.task_edit import remove_task
+
+    assert remove_task(SHARED, Path("t.yaml"), TaskKey("arithmetic", "sums")) == SHARED.replace("    sums:   # first\n      group: younger\n", "")
+
+
+def test_remove_task_takes_out_a_type_left_empty_and_then_tasks():
+    from policy.task_edit import has_entries, remove_task
+
+    source = Path("t.yaml")
+    text = remove_task(SHARED, source, TaskKey("spelling", "words"))
+    assert text == SHARED.replace("  spelling:\n    words:\n      group: younger\n", "")
+    alone = "tasks:\n  spelling:\n    words:\n      group: younger\n"
+    assert remove_task(alone, source, TaskKey("spelling", "words")) == ""
+    assert not has_entries("# only a comment\n", source)
+
+
+def test_remove_task_refuses_a_task_it_cannot_find_or_one_inside_a_flow_mapping():
+    from policy.task_edit import EditError, remove_task
+
+    with pytest.raises(EditError):
+        remove_task(SHARED, Path("t.yaml"), TaskKey("arithmetic", "nope"))
+    with pytest.raises(EditError):
+        remove_task("tasks: { arithmetic: { sums: {} } }\n", Path("t.yaml"), TaskKey("arithmetic", "sums"))

@@ -25,13 +25,16 @@ commit them without sudo.
 
 from __future__ import annotations
 
+import contextvars
+import difflib
 import errno
 import hashlib
 import os
 import shutil
 import sqlite3
 import stat
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -87,6 +90,54 @@ class Step:
     make: Callable[[], object]
     undo: Callable[[], object]
     failed: str
+
+
+@dataclass(frozen=True)
+class Agent:
+    """An MCP agent making a change for the parent who approved it.
+
+    While ``acting`` holds one, a change's commit names the agent after the
+    parent, such as ``ada via Claude Code``, and a ``dry_run`` change is
+    checked as usual and then stops before anything is written.
+    """
+
+    name: str
+    dry_run: bool = False
+
+
+_AGENT: contextvars.ContextVar[Agent | None] = contextvars.ContextVar("task_admin_agent", default=None)
+
+
+@contextmanager
+def acting(agent: Agent) -> Iterator[None]:
+    """Make every change in the block for ``agent``."""
+    token = _AGENT.set(agent)
+    try:
+        yield
+    finally:
+        _AGENT.reset(token)
+
+
+def file_changes(overrides: Mapping[Path, str], removed: Sequence[Path] = ()) -> str:
+    """Return a unified diff of each file from its text on disk to its text in ``overrides``, and of each removed file."""
+    parts = []
+    for path, after in [*overrides.items(), *((path, "") for path in removed)]:
+        try:
+            before = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            before = ""
+        if before == after:
+            continue
+        gone = path in removed
+        parts.extend(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=str(path) if before else "/dev/null",
+                tofile="/dev/null" if gone else str(path),
+            )
+        )
+    return "".join(line if line.endswith("\n") else line + "\n" for line in parts)
 
 
 @dataclass
@@ -284,6 +335,7 @@ class TaskAdmin:
         commit: str,
         paths: Sequence[Path],
         moved_all: Callable[[], None] | None = None,
+        removed: Sequence[Path] = (),
     ) -> Answer:
         """Check and make one change to the policy files and the data directory.
 
@@ -296,7 +348,12 @@ class TaskAdmin:
         service reloads, and ``paths`` are committed with ``commit``, after
         the time and the parent, such as ``saved task spelling/spelling``.
         ``done`` begins the message, such as ``Saved spelling.``.
+
+        For an agent's dry run (``acting``), the change is checked and the
+        answer describes it, with a diff of ``overrides`` and the ``removed``
+        files, and nothing is written, moved, reloaded, or committed.
         """
+        agent = _AGENT.get()
         history = self.history
         try:
             hand = history.changed() if history.kept else []
@@ -316,8 +373,20 @@ class TaskAdmin:
             passed = [group for group in task.groups if stored_passes(key, group, self.attempts.history(group))]
             if passed:
                 return Answer(409, {"confirm": _due_warning(key.name, passed), "groups": passed})
+        if agent is not None and agent.dry_run:
+            return Answer(
+                200,
+                {
+                    "message": f"The change passes every check, and nothing was written. It would be: {commit}.",
+                    "dry_run": True,
+                    "changes": file_changes(overrides, removed),
+                    "moves": [f"{source} -> {target}" for source, target in moves],
+                    "warnings": [],
+                },
+            )
         warnings: list[str] = []
         when = self.now()
+        signature = username if agent is None else f"{username} via {agent.name}"
         if hand:
             self._commit(f"{stamp(when)} hand edits found before a portal save", username, when, None, warnings)
         try:
@@ -350,7 +419,7 @@ class TaskAdmin:
         if steps:
             relative = [found for found in (_within(path, self.policy_file.parent) for path in paths) if found is not None]
             if relative and history.kept:
-                self._commit(f"{stamp(when)} {username}: {commit}", username, when, relative, warnings)
+                self._commit(f"{stamp(when)} {signature}: {commit}", username, when, relative, warnings)
         return Answer(200, {"message": " ".join(parts), "warnings": warnings})
 
     def retire(self, task: TaskKey, key: object) -> Answer:

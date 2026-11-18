@@ -46,8 +46,9 @@ from policy import mcp_settings
 from policy.accounts import Accounts
 from policy.history import History, HistoryError, stamp
 from policy.mcp_settings import CLASSES, FIRST_TIME, McpSettings, SettingsError
-from policy.mcp_store import REFUSED, REVOKED, Client, McpStore, Refused
-from policy.mcp_tools import TOOLS, Sources, ToolProblem, answer_text, visible
+from policy.mcp_store import CHECKED, DONE, FAILED, REFUSED, REVOKED, Client, McpStore, Refused
+from policy.mcp_tools import READ_TOOLS, Sources, Tool, ToolProblem, WriteFailed, WriteRefused, Writer, answer_text, visible
+from policy.mcp_writes import WRITE_TOOLS
 from policy.owned import make_directory, own_like
 from policy.portal import PortalGate
 from policy.selection import published_port, task_port
@@ -64,6 +65,8 @@ _STALE = "mcp.yaml has changed on the server since this page was opened. Reload 
 _UNKNOWN_REQUEST = "This approval request is not known, or has expired. Start again from the agent."
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
+ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS
+TOOLS: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
 # Some hosts, claude.ai among them, refuse urllib's default Python-urllib user agent with 403.
 _USER_AGENT = "daywarden-mcp/1.0"
 
@@ -171,7 +174,7 @@ class McpServer:
 
     async def _list_tools(self, _context, _params) -> types.ListToolsResult:
         settings = self.settings
-        tools = [] if settings is None else visible(settings)
+        tools = [] if settings is None else visible(settings, ALL_TOOLS)
         return types.ListToolsResult(
             tools=[types.Tool(name=tool.name, description=tool.description, input_schema=tool.schema()) for tool in tools]
         )
@@ -186,6 +189,8 @@ class McpServer:
         target = tool.target(arguments) if isinstance(arguments, Mapping) else ""
         if settings is None or not tool.allowed(settings):
             return self._refuse(caller, tool.name, target, f"This needs {tool.needs}.")
+        if tool.write:
+            return self._write(caller, tool, target, arguments)
         try:
             found = tool.run(self.sources, arguments)
         except ToolProblem as problem:
@@ -193,6 +198,29 @@ class McpServer:
         except Exception as error:  # noqa: BLE001 - an agent gets a sentence, not a dropped request
             print(f"mcp tool {tool.name} failed: {error!r}", flush=True)
             return _tool_error(f"{tool.name} failed: {error}")
+        return types.CallToolResult(content=[types.TextContent(type="text", text=answer_text(found))], is_error=False)
+
+    def _write(self, caller: Caller, tool: Tool, target: str, arguments: Mapping) -> types.CallToolResult:
+        """Run a write tool, and log it: Done, Checked for a dry run, Refused with every reason, or Failed."""
+        dry_run = arguments.get("dry_run", False)
+        if not isinstance(dry_run, bool):
+            return self._refuse(caller, tool.name, target, "dry_run must be true or false.")
+        writer = Writer(caller.parent, caller.agent, dry_run)
+        try:
+            found = tool.run(self.sources, arguments, writer)
+        except WriteFailed as failure:
+            self.store.log(caller.agent, caller.parent, tool.name, target, FAILED, failure.reasons, self.now())
+            return _tool_error(str(failure))
+        except WriteRefused as refusal:
+            self.store.log(caller.agent, caller.parent, tool.name, target, REFUSED, refusal.reasons, self.now())
+            return _tool_error(str(refusal))
+        except ToolProblem as problem:
+            return self._refuse(caller, tool.name, target, str(problem))
+        except Exception as error:  # noqa: BLE001 - an agent gets a sentence, not a dropped request
+            print(f"mcp tool {tool.name} failed: {error!r}", flush=True)
+            self.store.log(caller.agent, caller.parent, tool.name, target, FAILED, [str(error)], self.now())
+            return _tool_error(f"{tool.name} failed: {error}")
+        self.store.log(caller.agent, caller.parent, tool.name, target, CHECKED if dry_run else DONE, [], self.now())
         return types.CallToolResult(content=[types.TextContent(type="text", text=answer_text(found))], is_error=False)
 
     def _refuse(self, caller: Caller, tool: str, target: str, reason: str) -> types.CallToolResult:

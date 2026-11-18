@@ -2,14 +2,23 @@ tasks:
   parts_of_speech:
     Parts of Speech:
       group: younger
-      pass_cooldown: 1
+      pass_cooldown: 3
       body:
-        pools: ["Year 3 Basic"]
+        pools: ["Year 3 Level 1"]
         parts_of_speech: [noun, verb, adjective]
+        minimum_questions: 10
+        maximum_questions: 10
+        correct_answers_required: 7
+      failure_cooldown: 1
+      max_skips: 3
     Parts of Speech (Nouns):
       group: younger
-      pass_cooldown: 21
+      pass_cooldown: 3
       failure_cooldown: 1
       body:
-        pools: ["Year 3 Basic"]
+        pools: ["Year 3 Level 1"]
         parts_of_speech: [noun]
+        minimum_questions: 10
+        maximum_questions: 10
+        correct_answers_required: 7
+      max_skips: 3

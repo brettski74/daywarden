@@ -23,6 +23,7 @@ from policy.pool_admin import PoolAdmin
 from policy.portal import client_names
 from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, trend_report
 from policy.task_admin import TaskAdmin
+from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
 from policy.usage import UsageStore
 from policy.usage_graph import RANGES, UNITS, Presets, usage_graph
@@ -38,6 +39,32 @@ class ToolProblem(Exception):
     """A call that cannot be answered, and why, in a sentence the agent can show."""
 
 
+class WriteRefused(ToolProblem):
+    """A write refused by its checks. ``reasons`` lists every reason, for the agent and the activity log."""
+
+    def __init__(self, reasons: Sequence[str], heading: str | None = None) -> None:
+        self.reasons = [str(reason) for reason in reasons]
+        shown = self.reasons if heading is None or self.reasons == [heading] else [heading, *("- " + reason for reason in self.reasons)]
+        super().__init__("\n".join(shown))
+
+
+class WriteFailed(ToolProblem):
+    """A write that passed its checks but could not be made, such as a file that could not be written."""
+
+    def __init__(self, reasons: Sequence[str]) -> None:
+        self.reasons = [str(reason) for reason in reasons]
+        super().__init__("\n".join(self.reasons))
+
+
+@dataclass(frozen=True)
+class Writer:
+    """Who a write is made for: the parent who approved the agent, the agent, and whether it is a dry run."""
+
+    parent: str
+    agent: str
+    dry_run: bool = False
+
+
 @dataclass
 class Sources:
     """Where the tools read from. ``loaded`` returns the policy in force and the household clock."""
@@ -48,6 +75,7 @@ class Sources:
     presets: Presets
     tasks: TaskAdmin | None = None
     pools: PoolAdmin | None = None
+    changes: TaskChanges | None = None
 
 
 @dataclass(frozen=True)
@@ -56,11 +84,13 @@ class Tool:
     kind: str
     permission: str
     description: str
-    run: Callable[[Sources, Mapping], object]
+    # A read tool is run with the sources and the arguments, a write tool with its ``Writer`` too.
+    run: Callable[..., object]
     properties: Mapping[str, dict] = field(default_factory=dict)
     required: tuple[str, ...] = ()
     # What the call names, such as ``arithmetic/times-7``, for the activity log.
     target: Callable[[Mapping], str] = lambda _arguments: ""
+    write: bool = False
 
     @property
     def needs(self) -> str:
@@ -497,12 +527,9 @@ READ_TOOLS: tuple[Tool, ...] = (
     ),
 )
 
-TOOLS: dict[str, Tool] = {tool.name: tool for tool in READ_TOOLS}
-
-
 def answer_text(found: object) -> str:
     return json.dumps(found, ensure_ascii=False, default=str)
 
 
-def visible(settings: McpSettings, tools: Sequence[Tool] = READ_TOOLS) -> list[Tool]:
+def visible(settings: McpSettings, tools: Sequence[Tool]) -> list[Tool]:
     return [tool for tool in tools if tool.allowed(settings)]

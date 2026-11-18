@@ -11,6 +11,7 @@ const OUTCOMES: Record<string, string> = {
   lapsed: "Lapsed",
   refused: "Refused",
   done: "Done",
+  checked: "Checked",
   failed: "Failed",
 };
 

@@ -3,5 +3,11 @@ tasks:
     Parts of Speech (Verbs):
       groups: [younger, default]
       body:
-        pools: ["Year 3 Basic"]
+        pools: ["Year 3 Level 1"]
         parts_of_speech: [verb]
+        minimum_questions: 10
+        maximum_questions: 10
+        correct_answers_required: 7
+      failure_cooldown: 1
+      pass_cooldown: 3
+      max_skips: 3

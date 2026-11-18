@@ -1,0 +1,548 @@
+name: Year 3 Level 1
+sentences:
+  - sentence: The big black dog chased a red ball quickly.
+    parts:
+      adjective: [big, black, red]
+      noun: [dog, ball]
+      verb: [chased]
+      adverb: [quickly]
+  - sentence: A small cat drank the milk slowly.
+    parts:
+      adjective: [small]
+      noun: [cat, milk]
+      verb: [drank]
+      adverb: [slowly]
+  - sentence: The tall girl kicked the ball hard.
+    parts:
+      adjective: [tall]
+      noun: [girl, ball]
+      verb: [kicked]
+      adverb: [hard]
+  - sentence: A happy boy rode a shiny blue bike to the park.
+    parts:
+      adjective: [happy, shiny, blue]
+      noun: [boy, bike, park]
+      verb: [rode]
+  - sentence: The old man fixed the rusty gate.
+    parts:
+      adjective: [old, rusty]
+      noun: [man, gate]
+      verb: [fixed]
+  - sentence: The little bird built a small soft nest in the tall tree.
+    parts:
+      adjective: [little, small, soft, tall]
+      noun: [bird, nest, tree]
+      verb: [built]
+  - sentence: A fat pink pig dug a deep hole in the wet mud.
+    parts:
+      adjective: [fat, pink, deep, wet]
+      noun: [pig, hole, mud]
+      verb: [dug]
+  - sentence: The teacher loudly read a long funny story.
+    parts:
+      noun: [teacher, story]
+      verb: [read]
+      adjective: [long, funny]
+      adverb: [loudly]
+  - sentence: The brown cow ate the grass happily.
+    parts:
+      adjective: [brown]
+      noun: [cow, grass]
+      verb: [ate]
+      adverb: [happily]
+  - sentence: The busy, yellow bee soon found a flower.
+    parts:
+      adjective: [busy, yellow]
+      noun: [bee, flower]
+      adverb: [soon]
+      verb: [found]
+  - sentence: The sleepy baby suddenly dropped the toy.
+    parts:
+      adjective: [sleepy]
+      noun: [baby, toy]
+      adverb: [suddenly]
+      verb: [dropped]
+  - sentence: The quick fox jumped over the low fence.
+    parts:
+      adjective: [quick, low]
+      noun: [fox, fence]
+      verb: [jumped]
+  - sentence: The young farmer fed the hungry hens early.
+    parts:
+      adjective: [young, hungry]
+      noun: [farmer, hens]
+      verb: [fed]
+      adverb: [early]
+  - sentence: The green frog caught a tiny fly easily.
+    parts:
+      adjective: [green, tiny]
+      noun: [frog, fly]
+      verb: [caught]
+      adverb: [easily]
+  - sentence: The brave knight rode his magnificent, white horse proudly.
+    parts:
+      adjective: [brave, magnificent, white]
+      noun: [knight, horse]
+      verb: [rode]
+      adverb: [proudly]
+  - sentence: The kids built a big fort on the sandy beach.
+    parts:
+      noun: [kids, fort, beach]
+      verb: [built]
+      adjective: [big, sandy]
+  - sentence: A shy mouse nibbled the yellow cheese quietly.
+    parts:
+      adjective: [shy, yellow]
+      noun: [mouse, cheese]
+      verb: [nibbled]
+      adverb: [quietly]
+  - sentence: The noisy crowd cheered loudly for their team.
+    parts:
+      adjective: [noisy, their]
+      noun: [crowd, team]
+      verb: [cheered]
+      adverb: [loudly]
+  - sentence: The red car safely passed the slow bus.
+    parts:
+      adjective: [red, slow]
+      noun: [car, bus]
+      adverb: [safely]
+      verb: [passed]
+  - sentence: A clever girl solved the hard puzzle quickly.
+    parts:
+      adjective: [clever, hard]
+      noun: [girl, puzzle]
+      verb: [solved]
+      adverb: [quickly]
+  - sentence: The wet dog shook water on the clean floor.
+    parts:
+      adjective: [wet, clean]
+      noun: [dog, water, floor]
+      verb: [shook]
+  - sentence: The cook baked a warm pie.
+    parts:
+      noun: [cook, pie]
+      verb: [baked]
+      adjective: [warm]
+  - sentence: The tiny ant carried a big crumb slowly.
+    parts:
+      adjective: [tiny, big]
+      noun: [ant, crumb]
+      verb: [carried]
+      adverb: [slowly]
+  - sentence: The wise old sailor tied a thick rope to the dock.
+    parts:
+      adjective: [wise, old, thick]
+      noun: [sailor, rope, dock]
+      verb: [tied]
+  - sentence: The happy children sang a sweet song.
+    parts:
+      adjective: [happy, sweet]
+      noun: [children, song]
+      verb: [sang]
+  - sentence: A gray owl silently watched the dark woods.
+    parts:
+      adjective: [gray, dark]
+      noun: [owl, woods]
+      verb: [watched]
+      adverb: [silently]
+  - sentence: The hungry bear always ate the sweetest honey.
+    parts:
+      adjective: [hungry, sweetest]
+      noun: [bear, honey]
+      adverb: [always]
+      verb: [ate]
+  - sentence: The little duck swam across the calm pond.
+    parts:
+      adjective: [little, calm]
+      noun: [duck, pond]
+      verb: [swam]
+  - sentence: A strong man lifted the big heavy box easily.
+    parts:
+      adjective: [strong, big, heavy]
+      noun: [man, box]
+      verb: [lifted]
+      adverb: [easily]
+  - sentence: The friendly driver waved at the kids.
+    parts:
+      adjective: [friendly]
+      noun: [driver, kids]
+      verb: [waved]
+  - sentence: The cat finally caught a mouse.
+    parts:
+      noun: [cat, mouse]
+      adverb: [finally]
+      verb: [caught]
+  - sentence: The tall giraffe ate green leaves.
+    parts:
+      adjective: [tall, green]
+      noun: [giraffe, leaves]
+      verb: [ate]
+  - sentence: A little girl hugged the fluffy puppy gently.
+    parts:
+      adjective: [little, fluffy]
+      noun: [girl, puppy]
+      verb: [hugged]
+      adverb: [gently]
+  - sentence: The boys played a fun game outside.
+    parts:
+      noun: [boys, game]
+      verb: [played]
+      adjective: [fun]
+      adverb: [outside]
+  - sentence: The new doctor helped the sick boy.
+    parts:
+      adjective: [new, sick]
+      noun: [doctor, boy]
+      verb: [helped]
+  - sentence: A loud storm shook the old house.
+    parts:
+      adjective: [loud, old]
+      noun: [storm, house]
+      verb: [shook]
+  - sentence: The baker made fresh bread early.
+    parts:
+      noun: [baker, bread]
+      verb: [made]
+      adjective: [fresh]
+      adverb: [early]
+  - sentence: The pretty horse jumped the wide ditch.
+    parts:
+      adjective: [pretty, wide]
+      noun: [horse, ditch]
+      verb: [jumped]
+  - sentence: The sad puppy missed the kind girl.
+    parts:
+      adjective: [sad, kind]
+      noun: [puppy, girl]
+      verb: [missed]
+  - sentence: A young bird sang a happy song softly.
+    parts:
+      adjective: [young, happy]
+      noun: [bird, song]
+      verb: [sang]
+      adverb: [softly]
+  - sentence: The quick white rabbit ran into the dark hole.
+    parts:
+      adjective: [quick, white, dark]
+      noun: [rabbit, hole]
+      verb: [ran]
+  - sentence: Dad painted the wooden fence carefully.
+    parts:
+      noun: [Dad, fence]
+      verb: [painted]
+      adjective: [wooden]
+      adverb: [carefully]
+  - sentence: A lion chased the fast zebra.
+    parts:
+      noun: [lion, zebra]
+      verb: [chased]
+      adjective: [fast]
+  - sentence: The kind nurse gave the sick girl a warm drink.
+    parts:
+      adjective: [kind, sick, warm]
+      noun: [nurse, girl, drink]
+      verb: [gave]
+  - sentence: The small boat sailed slowly across the blue sea.
+    parts:
+      adjective: [small, blue]
+      noun: [boat, sea]
+      verb: [sailed]
+      adverb: [slowly]
+  - sentence: The silly clown dropped the big cake again.
+    parts:
+      adjective: [silly, big]
+      noun: [clown, cake]
+      verb: [dropped]
+      adverb: [again]
+  - sentence: The dog buried a bone in the soft dirt.
+    parts:
+      noun: [dog, bone, dirt]
+      verb: [buried]
+      adjective: [soft]
+  - sentence: A cold wind blew the dry leaves away.
+    parts:
+      adjective: [cold, dry]
+      noun: [wind, leaves]
+      verb: [blew]
+      adverb: [away]
+  - sentence: The proud mum gently kissed the baby.
+    parts:
+      adjective: [proud]
+      noun: [mum, baby]
+      adverb: [gently]
+      verb: [kissed]
+  - sentence: The farmer planted the small seeds neatly.
+    parts:
+      noun: [farmer, seeds]
+      verb: [planted]
+      adjective: [small]
+      adverb: [neatly]
+  - sentence: The bright moon lit the dark road.
+    parts:
+      adjective: [bright, dark]
+      noun: [moon, road]
+      verb: [lit]
+  - sentence: A brave girl climbed the steep hill.
+    parts:
+      adjective: [brave, steep]
+      noun: [girl, hill]
+      verb: [climbed]
+  - sentence: The grumpy cat hissed at the dog.
+    parts:
+      adjective: [grumpy]
+      noun: [cat, dog]
+      verb: [hissed]
+  - sentence: The old truck carried the heavy logs awkwardly.
+    parts:
+      adjective: [old, heavy]
+      noun: [truck, logs]
+      verb: [carried]
+      adverb: [awkwardly]
+  - sentence: The cute little kitten chased a long string playfully.
+    parts:
+      adjective: [cute, little, long]
+      noun: [kitten, string]
+      verb: [chased]
+      adverb: [playfully]
+  - sentence: A tired dog slept on the soft rug.
+    parts:
+      adjective: [tired, soft]
+      noun: [dog, rug]
+      verb: [slept]
+  - sentence: The kids ate hot soup for lunch.
+    parts:
+      noun: [kids, soup, lunch]
+      verb: [ate]
+      adjective: [hot]
+  - sentence: The wise owl told a long story.
+    parts:
+      adjective: [wise, long]
+      noun: [owl, story]
+      verb: [told]
+  - sentence: The tall man opened the heavy door slowly.
+    parts:
+      adjective: [tall, heavy]
+      noun: [man, door]
+      verb: [opened]
+      adverb: [slowly]
+  - sentence: A small fish swam under the big rock.
+    parts:
+      adjective: [small, big]
+      noun: [fish, rock]
+      verb: [swam]
+  - sentence: The girl often wore a pink dress.
+    parts:
+      noun: [girl, dress]
+      adverb: [often]
+      verb: [wore]
+      adjective: [pink]
+  - sentence: The happy dog licked the little boy.
+    parts:
+      adjective: [happy, little]
+      noun: [dog, boy]
+      verb: [licked]
+  - sentence: The busy young mum washed the dirty dishes quickly.
+    parts:
+      adjective: [busy, young, dirty]
+      noun: [mum, dishes]
+      verb: [washed]
+      adverb: [quickly]
+  - sentence: The red hen quietly laid a brown egg.
+    parts:
+      adjective: [red, brown]
+      noun: [hen, egg]
+      adverb: [quietly]
+      verb: [laid]
+  - sentence: A big wave hit the wide sandy shore.
+    parts:
+      adjective: [big, wide, sandy]
+      noun: [wave, shore]
+      verb: [hit]
+  - sentence: The boy threw the ball far.
+    parts:
+      noun: [boy, ball]
+      verb: [threw]
+      adverb: [far]
+  - sentence: The black crow sneakily stole a shiny coin.
+    parts:
+      adjective: [black, shiny]
+      noun: [crow, coin]
+      adverb: [sneakily]
+      verb: [stole]
+  - sentence: The young king wore a golden crown proudly.
+    parts:
+      adjective: [young, golden]
+      noun: [king, crown]
+      verb: [wore]
+      adverb: [proudly]
+  - sentence: The little lamb followed the big sheep.
+    parts:
+      adjective: [little, big]
+      noun: [lamb, sheep]
+      verb: [followed]
+  - sentence: The cheeky monkey noisily ate a ripe yellow banana.
+    parts:
+      adjective: [cheeky, ripe, yellow]
+      noun: [monkey, banana]
+      adverb: [noisily]
+      verb: [ate]
+  - sentence: The class planted a small tree together.
+    parts:
+      noun: [class, tree]
+      verb: [planted]
+      adjective: [small]
+      adverb: [together]
+  - sentence: The old lady fed the hungry ducks often.
+    parts:
+      adjective: [old, hungry]
+      noun: [lady, ducks]
+      verb: [fed]
+      adverb: [often]
+  - sentence: The strong wind broke the thin branch easily.
+    parts:
+      adjective: [strong, thin]
+      noun: [wind, branch]
+      verb: [broke]
+      adverb: [easily]
+  - sentence: A train passed the quiet town.
+    parts:
+      noun: [train, town]
+      verb: [passed]
+      adjective: [quiet]
+  - sentence: The tiny bug crawled up the green leaf.
+    parts:
+      adjective: [tiny, green]
+      noun: [bug, leaf]
+      verb: [crawled]
+  - sentence: The kind boy shared the sweet apple happily.
+    parts:
+      adjective: [kind, sweet]
+      noun: [boy, apple]
+      verb: [shared]
+      adverb: [happily]
+  - sentence: The small dog barked loudly at the black cat.
+    parts:
+      adjective: [small, black]
+      noun: [dog, cat]
+      verb: [barked]
+      adverb: [loudly]
+  - sentence: The big truck moved the dirt.
+    parts:
+      adjective: [big]
+      noun: [truck, dirt]
+      verb: [moved]
+  - sentence: The sick girl drank warm tea.
+    parts:
+      adjective: [sick, warm]
+      noun: [girl, tea]
+      verb: [drank]
+  - sentence: The happy team won the big game.
+    parts:
+      adjective: [happy, big]
+      noun: [team, game]
+      verb: [won]
+  - sentence: The cold rain soon soaked the new shoes.
+    parts:
+      adjective: [cold, new]
+      noun: [rain, shoes]
+      adverb: [soon]
+      verb: [soaked]
+  - sentence: The little boy lost a red sock.
+    parts:
+      adjective: [little, red]
+      noun: [boy, sock]
+      verb: [lost]
+  - sentence: The hungry chicks ate the fat worms.
+    parts:
+      adjective: [hungry, fat]
+      noun: [chicks, worms]
+      verb: [ate]
+  - sentence: A white goat ate the old hat.
+    parts:
+      adjective: [white, old]
+      noun: [goat, hat]
+      verb: [ate]
+  - sentence: The tall boy kicked the rock.
+    parts:
+      adjective: [tall]
+      noun: [boy, rock]
+      verb: [kicked]
+  - sentence: The neat girl cleaned the messy room.
+    parts:
+      adjective: [neat, messy]
+      noun: [girl, room]
+      verb: [cleaned]
+  - sentence: The happy puppy chewed a soft shoe.
+    parts:
+      adjective: [happy, soft]
+      noun: [puppy, shoe]
+      verb: [chewed]
+  - sentence: The pilot flew the plane safely.
+    parts:
+      noun: [pilot, plane]
+      verb: [flew]
+      adverb: [safely]
+  - sentence: A small child picked a red rose.
+    parts:
+      adjective: [small, red]
+      noun: [child, rose]
+      verb: [picked]
+  - sentence: The cat sat on the warm mat.
+    parts:
+      noun: [cat, mat]
+      verb: [sat]
+      adjective: [warm]
+  - sentence: The big brown dog dug a hole.
+    parts:
+      adjective: [big, brown]
+      noun: [dog, hole]
+      verb: [dug]
+  - sentence: A tiny gray mouse ran quickly under the bed.
+    parts:
+      adjective: [tiny, gray]
+      noun: [mouse, bed]
+      verb: [ran]
+      adverb: [quickly]
+  - sentence: The old green bus stopped at the busy corner.
+    parts:
+      adjective: [old, green, busy]
+      noun: [bus, corner]
+      verb: [stopped]
+  - sentence: The kind old man gave the boy a shiny coin.
+    parts:
+      adjective: [kind, old, shiny]
+      noun: [man, boy, coin]
+      verb: [gave]
+  - sentence: A big red kite flew high in the blue sky.
+    parts:
+      adjective: [big, red, blue]
+      noun: [kite, sky]
+      verb: [flew]
+      adverb: [high]
+  - sentence: The little girl ate a cold juicy pear.
+    parts:
+      adjective: [little, cold, juicy]
+      noun: [girl, pear]
+      verb: [ate]
+  - sentence: The tall thin man carried a long stick.
+    parts:
+      adjective: [tall, thin, long]
+      noun: [man, stick]
+      verb: [carried]
+  - sentence: The fluffy white cat slept in the sun.
+    parts:
+      adjective: [fluffy, white]
+      noun: [cat, sun]
+      verb: [slept]
+  - sentence: A fast black horse won the long race easily.
+    parts:
+      adjective: [fast, black, long]
+      noun: [horse, race]
+      verb: [won]
+      adverb: [easily]
+  - sentence: The boy found a smooth flat stone by the lake.
+    parts:
+      noun: [boy, stone, lake]
+      verb: [found]
+      adjective: [smooth, flat]

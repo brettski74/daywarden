@@ -37,7 +37,7 @@ from policy.task_admin import (
     _version,
     replace_text,
 )
-from policy.task_edit import EditError, WrittenTask, add_include, included, new_task_text, rename_task
+from policy.task_edit import EditError, WrittenTask, add_include, has_entries, included, new_task_text, remove_task, rename_task
 from policy.task_names import free_file, name_problem
 from policy.tasks import TaskKey
 from policy.week import Weeks
@@ -190,6 +190,44 @@ class TaskChanges:
         if answer.status == 200:
             answer.body["task"] = new._asdict()
         return answer
+
+    # Retiring
+
+    def retire(self, key: TaskKey, username: str) -> Answer:
+        """Take a task out of the policy, checked and applied as a save is.
+
+        A file in ``tasks.d`` left with nothing in it is removed. The task's
+        stored attempts are kept, as when a task is taken out by hand.
+        """
+        found = self.tasks._read(key)
+        if isinstance(found, Answer):
+            return found
+        path, text, _written = found
+        try:
+            new_text = remove_task(text, path, key)
+            emptied = path.parent == self.directory.resolve() and not has_entries(new_text, path)
+        except EditError as error:
+            return Answer(400, {"error": str(error)})
+        if emptied:
+            status = path.stat()
+
+            def put_back() -> None:
+                create_text(path, text)
+                own_like(path, status)
+
+            # An empty mapping loads as a file that defines nothing.
+            overrides, removed = {path: "{}\n"}, [path]
+            steps = [Step(path.unlink, put_back, f"{path} could not be removed, so nothing was retired")]
+        else:
+            overrides, removed = {path: new_text}, []
+            steps = [
+                Step(lambda: replace_text(path, new_text), lambda: replace_text(path, text), f"{path} could not be written, so nothing was retired")
+            ]
+        return self.tasks.change(
+            key, overrides, [], steps, username,
+            confirmed=True, moved=None, failed="", done=f"Retired {key.name}. Its attempts are kept.",
+            commit=f"retired task {key}", paths=[path], removed=removed,
+        )
 
     # Names
 

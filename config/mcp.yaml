@@ -1,17 +1,17 @@
 # The MCP server's settings. See /parent/settings/mcp.
 enabled: true
-access_token: 1h        # how long an access token lasts
+access_token: 4h        # how long an access token lasts
 refresh_idle: 30d       # a connection unused this long lapses
 refresh_lifetime: 90d   # a connection lapses this long after it was approved
 activity_days: 90       # how long the activity log keeps an entry
 permissions:
-  household: [read]
-  client_groups: [read]
-  site_groups: [read]
-  time_windows: [read]
-  quotas: [read]
-  rule_sets: [read]
-  tasks: [read]
-  sentence_pools: [read]
+  household: [read, update]
+  client_groups: [read, update]
+  site_groups: [read, update]
+  time_windows: [read, update]
+  quotas: [create, read, update]
+  rule_sets: [create, read, update]
+  tasks: [create, read, update]
+  sentence_pools: [create, read, update]
   attempts: [read]
   usage: [read]

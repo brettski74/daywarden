@@ -36,7 +36,7 @@ CODE_LIFETIME = timedelta(minutes=1)
 REQUEST_LIFETIME = timedelta(minutes=30)
 UNAPPROVED_CLIENT_LIFETIME = timedelta(hours=24)
 
-APPROVED, REVOKED, LAPSED, REFUSED, DONE, FAILED = "approved", "revoked", "lapsed", "refused", "done", "failed"
+APPROVED, REVOKED, LAPSED, REFUSED, DONE, FAILED, CHECKED = "approved", "revoked", "lapsed", "refused", "done", "failed", "checked"
 
 _TABLES = """
 CREATE TABLE IF NOT EXISTS mcp_clients (

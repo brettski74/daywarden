@@ -187,6 +187,43 @@ def rename_task(text: str, source: Path, key: TaskKey, name: str) -> str:
     return text[: name_node.start_mark.index] + _key(name) + text[name_node.end_mark.index :]
 
 
+def remove_task(text: str, source: Path, key: TaskKey) -> str:
+    """Return ``text`` without the task ``key``.
+
+    Only the task's own lines go. A type left with no task loses its line too,
+    and ``tasks`` left with no type loses its own. Comments and the rest of the
+    file stay as written.
+    """
+    root = _root(text, source)
+    if root is None:
+        raise EditError(f"{source} does not define the task {key}")
+    chain: list[tuple[yaml.MappingNode, yaml.Node, yaml.Node]] = []
+    for section, section_node, types in _entries(root):
+        if section != "tasks" or not isinstance(types, yaml.MappingNode):
+            continue
+        for kind, kind_node, names in _entries(types):
+            if kind.strip() != key.type or not isinstance(names, yaml.MappingNode):
+                continue
+            for name, name_node, body in _entries(names):
+                if name.strip() == key.name:
+                    chain = [(names, name_node, body), (types, kind_node, names), (root, section_node, types)]
+    if not chain:
+        raise EditError(f"{source} does not define the task {key}")
+    for parent, key_node, value in chain:
+        if parent.flow_style:
+            raise EditError(f"{source}: the task {key} is written inside a flow mapping; take it out by hand")
+        if len(parent.value) > 1 or parent is root:
+            start, end = _entry_span(text, key_node, value)
+            return text[:start] + text[end:]
+    raise AssertionError("the root is always the last of the chain")
+
+
+def has_entries(text: str, source: Path) -> bool:
+    """Whether a file's top-level mapping holds anything."""
+    root = _root(text, source)
+    return root is not None and bool(root.value)
+
+
 def new_task_text(key: TaskKey, changes: Mapping[str, object]) -> str:
     """Return a file that holds only ``tasks:`` and one task, written from ``changes`` as ``rewrite_task`` takes them."""
     if not _sets_anything(changes):
