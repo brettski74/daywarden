@@ -1,8 +1,8 @@
 Ticket: S035
 Title: Attempts Analytics
 Status: Draft
-Story Points: 55
-Last Updated: 2026-11-17 16:52:14
+Story Points: 68
+Last Updated: 2026-11-19 16:11:04
 ---
 
 # User Voice
@@ -34,7 +34,7 @@ page, where he answered 54 twice before getting it right.
 | S035.1 | Attempts overview and task trends | 13 |
 | S035.2 | Arithmetic facts and attempt page | 13 |
 | S035.3 | Parts of speech confusions and attempt page | 13 |
-| S035.4 | Spelling words and attempt page | 8 |
+| S035.4 | Spelling words and attempt page | 21 |
 | S035.5 | Skip counting breakdown and attempt page | 8 |
 
 # Notes
@@ -43,9 +43,9 @@ page, where he answered 54 twice before getting it right.
 
 The work goes in layers: an overview of every task over a period, a trend for each task, a breakdown for each task
 type, and a page for each attempt. The first two layers are shared by every task type. The breakdown and the attempt
-page are different for each type, and each type's pair is one child. S035.1 and S035.2 are refined. S035.3 to S035.5
-are Draft. Refine them once S035.1 and S035.2 have been used for a while, because what proves useful there should shape
-them. Their points are provisional, and their order after S035.2 can change.
+page are different for each type, and each type's pair is one child. S035.1, S035.2, and S035.4 are refined.
+S035.3 and S035.5 are Draft. Refine them once S035.1 and S035.2 have been used for a while, because what proves useful
+there should shape them. Their points are provisional, and their order after S035.2 can change.
 
 ## One model for every task type
 
