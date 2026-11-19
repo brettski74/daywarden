@@ -339,6 +339,7 @@ class TaskAdmin:
         paths: Sequence[Path],
         moved_all: Callable[[], None] | None = None,
         removed: Sequence[Path] = (),
+        after_reload: Callable[[], object] | None = None,
     ) -> Answer:
         """Check and make one change to the policy files and the data directory.
 
@@ -347,7 +348,9 @@ class TaskAdmin:
         they name and the planned moves already made, and refused when it
         would not load. Then the files move and each step is made in order.
         When a move or a step fails, everything already done is taken back.
-        ``moved_all`` runs once every step is made. With any steps, every
+        ``moved_all`` runs once every step is made. ``after_reload`` runs
+        once the services have reloaded, and a failure there takes every
+        step back and reloads again. With any steps, every
         service reloads, and ``paths`` are committed with ``commit``, after
         the time and the parent, such as ``saved task spelling/spelling``.
         ``done`` begins the message, such as ``Saved spelling.``. ``key`` is
@@ -419,6 +422,18 @@ class TaskAdmin:
             if applied is not None:
                 return applied
             parts.append(f"{done} The decisions, observations, and autoconfig services are using it.")
+            if after_reload is not None:
+                try:
+                    after_reload()
+                except (OSError, sqlite3.Error) as error:
+                    for earlier in reversed(made):
+                        try:
+                            earlier.undo()
+                        except (OSError, sqlite3.Error) as problem:
+                            print(f"task {key}: could not take back a step of a failed change: {problem}", flush=True)
+                    undo_moves(moved_files)
+                    self._reload([])
+                    return Answer(500, {"error": f"The change could not be finished after the services reloaded, so nothing was saved: {error}"})
         if moved:
             parts.append(moved)
         if steps:

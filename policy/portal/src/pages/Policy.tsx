@@ -1,16 +1,18 @@
-import { PencilLine, Plus, Save, Trash2, Undo2, X } from "lucide-react";
+import { PencilLine, Plus, Save, TextCursorInput, Trash2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Link,
   useBlocker,
   useFetcher,
   useLoaderData,
+  useRevalidator,
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import { ApiError, api, pageOf } from "../api";
 import { Dialog } from "../components/Dialog";
+import { NameDialog } from "../components/NameDialog";
 import { label } from "../labels";
 import {
   HOUSEHOLD_TEXT,
@@ -25,6 +27,7 @@ import {
   infoOf,
   normalizeClock,
   pageProblem,
+  policyPath,
   rowChanged,
   rowProblem,
   rowsFrom,
@@ -185,6 +188,66 @@ export function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLab
           onCancel={() => blocker.reset()}
         />
       )}
+    </>
+  );
+}
+
+// Renaming
+
+/** Why Rename is not available while the page has changes that are not saved. */
+export const RENAME_WHILE_DIRTY = "Save or undo the changes on this page first. A rename is made at once, and is not part of the next save.";
+
+type Renamed = { name: string; message: string; warnings?: string[] };
+
+/**
+ * Rename one saved item at once. Asks for the new name in a `NameDialog`, which stays open with the reason when the
+ * name is refused. A failure that left the policy as it was, after the checks passed, goes to `onFailed` for the
+ * status bar instead.
+ */
+export function RenameButton({ page, name, version, from, disabled, onRenamed, onFailed }: {
+  page: PageKey;
+  name: string;
+  version: string;
+  /** The address of the page the button is on, for signing in again. */
+  from: string;
+  /** True while the page has changes that are not saved. */
+  disabled: boolean;
+  onRenamed: (done: Renamed) => void;
+  onFailed: (result: Result) => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const info = infoOf(page);
+
+  async function submit(typed: string): Promise<string | null> {
+    try {
+      const done = await api<{ message: string; warnings?: string[]; name?: string }>(`/policy/${page}/rename`, {
+        page: from,
+        method: "POST",
+        body: { version, name, to: typed.trim() },
+        signedOut: "refuse",
+      });
+      setAsking(false);
+      onRenamed({ name: done.name ?? typed.trim(), message: done.message, warnings: done.warnings });
+      return null;
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      const errors = (error.data.errors as string[] | undefined) ?? [];
+      if (error.status >= 500) {
+        setAsking(false);
+        onFailed({ ok: false, error: error.message, errors });
+        return null;
+      }
+      return [error.message, ...errors].join(" ");
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="button button-quiet" disabled={disabled} title={disabled ? RENAME_WHILE_DIRTY : `Rename this ${info.item}`} onClick={() => setAsking(true)}>
+        <TextCursorInput aria-hidden="true" />
+        Rename
+      </button>
+      {asking && <NameDialog title={`Rename ${info.item}`} label="New name" initial={name} onSubmit={submit} onCancel={() => setAsking(false)} />}
     </>
   );
 }
@@ -420,6 +483,8 @@ export function ItemsPage({ page }: { page: ItemPage }) {
   const [rows, setRows] = useState<Row[]>(() => rowsFrom(page, data, nextId));
   const [pending, setPending] = useState(false);
   const [focus, setFocus] = useState<number | null>(null);
+  const [notice, setNotice] = useState<Result | null>(null);
+  const revalidator = useRevalidator();
   const shown = useRef(data);
   const info = infoOf(page);
 
@@ -475,6 +540,20 @@ export function ItemsPage({ page }: { page: ItemPage }) {
                   </span>
                 )}
                 {row.marked && <span className="policy-marked">Will be deleted when saved</span>}
+                {!row.isNew && !row.marked && (
+                  <RenameButton
+                    page={page}
+                    name={row.name}
+                    version={data.version}
+                    from={`/parent${policyPath(page)}`}
+                    disabled={dirty || pending}
+                    onRenamed={(done) => {
+                      setNotice({ ok: true, message: done.message, warnings: done.warnings });
+                      revalidator.revalidate();
+                    }}
+                    onFailed={setNotice}
+                  />
+                )}
                 {row.marked ? (
                   <button type="button" className="button button-quiet" onClick={() => change(row.id, (each) => ({ ...each, marked: false }))}>
                     <Undo2 aria-hidden="true" />
@@ -510,6 +589,7 @@ export function ItemsPage({ page }: { page: ItemPage }) {
           </section>
         )}
       </div>
+      <StatusBar>{notice && <Outcome result={notice} />}</StatusBar>
     </PolicyFrame>
   );
 }

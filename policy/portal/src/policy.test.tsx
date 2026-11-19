@@ -202,6 +202,76 @@ describe("the site groups page", () => {
   });
 });
 
+describe("Rename on a policy page", () => {
+  const renameButton = (name: string) => within(item(name)).getByRole("button", { name: "Rename" });
+  const renames = (calls: Call[]) => calls.filter((call) => call.method === "POST" && call.path.endsWith("/rename"));
+
+  it("is on each saved item, is disabled with its reason while the page has unsaved changes, and not on the default or a new item", async () => {
+    const user = userEvent.setup();
+    await open("site-groups", SITES);
+    expect(renameButton("school")).toBeEnabled();
+    expect(within(screen.getByRole("region", { name: "default" })).queryByRole("button", { name: "Rename" })).toBeNull();
+    await user.keyboard("{Alt>}n{/Alt}");
+    const fresh = screen.getByRole("region", { name: "New site group 3" });
+    expect(within(fresh).queryByRole("button", { name: "Rename" })).toBeNull();
+    expect(renameButton("school")).toBeDisabled();
+    expect(renameButton("school")).toHaveAttribute("title", expect.stringMatching(/Save or undo the changes.*not part of the next save/));
+  });
+
+  it("renames at once from a dialog that starts with the old name, sends nothing with the next save, and shows the item under its new name", async () => {
+    const user = userEvent.setup();
+    let renamed = false;
+    const after = { ...SITES, version: "v2", items: [{ ...SITES.items[0], name: "classes" }, SITES.items[1]] };
+    const { calls } = await open("site-groups", SITES, (call) => {
+      if (call.method === "POST") {
+        renamed = true;
+        return { body: { message: "Renamed the site group school to classes.", warnings: [], name: "classes" } };
+      }
+      return renamed && call.path === "/parent/api/policy/site-groups" ? { body: after } : undefined;
+    });
+    await user.click(renameButton("school"));
+    const box = screen.getByRole("textbox", { name: "New name" });
+    expect(box).toHaveValue("school");
+    await user.clear(box);
+    await user.type(box, "classes{Enter}");
+    expect(await screen.findByRole("region", { name: "classes" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "school" })).toBeNull();
+    expect(renames(calls)).toHaveLength(1);
+    expect(renames(calls)[0]).toMatchObject({ path: "/parent/api/policy/site-groups/rename", body: { version: "v1", name: "school", to: "classes" } });
+    expect(screen.getByText("Renamed the site group school to classes.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(save()).toBeDisabled();
+  });
+
+  it("keeps the dialog open with the reason when the name is refused, and Escape cancels without a request", async () => {
+    const user = userEvent.setup();
+    const { calls } = await open("site-groups", SITES, (call) =>
+      call.method === "POST" ? { status: 400, body: { error: "A site group named games already exists, in extra.yaml." } } : undefined,
+    );
+    await user.click(renameButton("school"));
+    await user.clear(screen.getByRole("textbox", { name: "New name" }));
+    await user.type(screen.getByRole("textbox", { name: "New name" }), "games{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("A site group named games already exists");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(renames(calls)).toHaveLength(1);
+  });
+
+  it("closes the dialog and gives the reason in the status bar when a step failed and everything was put back", async () => {
+    const user = userEvent.setup();
+    await open("quotas", QUOTAS, (call) =>
+      call.method === "POST" ? { status: 500, body: { error: "The stored history could not be moved, so nothing was renamed: database is locked" } } : undefined,
+    );
+    await user.click(renameButton("entertainment"));
+    await user.clear(screen.getByRole("textbox", { name: "New name" }));
+    await user.type(screen.getByRole("textbox", { name: "New name" }), "fun{Enter}");
+    expect(await screen.findByText(/nothing was renamed: database is locked/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "entertainment" })).toBeInTheDocument();
+  });
+});
+
 describe("the client groups page", () => {
   it("adds and removes addresses and says that default holds every address no other group holds", async () => {
     const user = userEvent.setup();

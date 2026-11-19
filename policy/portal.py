@@ -363,6 +363,16 @@ def install_portal(
         answer = policy_changes.save_page(page, body, username)
         return _json(answer.status, answer.body)
 
+    @app.post("/parent/api/policy/{page}/rename")
+    async def policy_rename(request: Request, page: str) -> Response:
+        body, username, refused = await acting(request)
+        if refused is not None:
+            return refused
+        if policy_changes is None:
+            return _json(404, {"error": f"{page} is not a policy page."})
+        answer = policy_changes.rename_page(page, body, username)
+        return _json(answer.status, answer.body)
+
     @app.get("/parent/api/tasks")
     async def task_list(request: Request) -> Response:
         _username, refused = guard(request)

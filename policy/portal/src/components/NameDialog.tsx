@@ -4,17 +4,19 @@ type Props = {
   title: string;
   /** The text box's label, such as "Name, under spelling/". */
   label: string;
+  /** The text the box starts with, such as the name being changed. It is selected, so typing replaces it. */
+  initial?: string;
   /** Send the name. Resolve to null when it was accepted, or to why it was refused, shown under the box. */
   onSubmit: (name: string) => Promise<string | null>;
   onCancel: () => void;
 };
 
 /** Ask for a name, such as a new directory's, with OK and Cancel. The box has the focus, so Enter is OK and Escape is Cancel. */
-export function NameDialog({ title, label, onSubmit, onCancel }: Props) {
+export function NameDialog({ title, label, initial = "", onSubmit, onCancel }: Props) {
   const heading = useId();
   const box = useId();
   const why = useId();
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initial);
   const [refused, setRefused] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,6 +48,7 @@ export function NameDialog({ title, label, onSubmit, onCancel }: Props) {
             value={name}
             spellCheck={false}
             autoFocus
+            onFocus={(event) => event.currentTarget.select()}
             aria-invalid={refused !== null || undefined}
             aria-describedby={refused !== null ? why : undefined}
             onChange={(event) => setName(event.target.value)}

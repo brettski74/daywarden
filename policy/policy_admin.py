@@ -26,14 +26,17 @@ one judge of whether it is right. A clock given as text is always written
 quoted, as the loader requires. One given as a number is written bare, so
 the loader refuses it with ``dw check``'s reason.
 
-Nothing is renamed: a new name is a delete and a create. ``config/bypass.txt``
-is never written.
+``rename`` changes an item's name and every reference to it, and moves the
+rows stored under it (``policy.rename_history``), as one change. It is a
+portal action only: an agent's new name is still a delete and a create.
+``config/bypass.txt`` is never written.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -55,7 +58,9 @@ from policy.hierarchy import (
     node_data,
     written,
 )
+from policy import rename_history
 from policy.pac import SWITCHES
+from policy.policy_rename import renamed_text
 from policy.task_admin import STALE, Answer, Step, TaskAdmin, replace_text
 from policy.task_edit import (
     EditError,
@@ -155,6 +160,70 @@ class PolicyChanges:
         label = SECTIONS[section].label
         return self.change(
             section, {}, {}, [str(name)], username, done=f"Deleted the {label} {name}.", commit=f"deleted {label} {name}"
+        )
+
+    def rename(self, section: str, old: object, new: object, username: str) -> Answer:
+        """Rename an item, every reference to it in every policy file, and the history stored under it, as one change.
+
+        Refused when the new name is taken in the section (case aside, so a
+        change of case alone is allowed), is ``default`` for a client group or
+        a site group, would not load, or is one that history is still stored
+        under from an item no longer in the policy. The rows move, the
+        services reload, and the rows move once more for anything filed under
+        the old name in between. Any failure puts every file and row back.
+        """
+        refused = _section_and_name(section, old, existing=True)
+        if refused is not None:
+            return refused
+        label = SECTIONS[section].label
+        if not isinstance(new, str) or not new.strip():
+            return Answer(400, {"error": f"Give the {label}'s new name."})
+        if section in _IMPLICIT and new.strip() == DEFAULT:
+            return Answer(400, {"error": reserved(label)})
+        refused = _section_and_name(section, new)
+        if refused is not None:
+            return refused
+        old, new = str(old), str(new)
+        places = self._written().places[section]
+        if old not in places:
+            return Answer(404, {"error": f"There is no {label} named {old}."})
+        if new == old:
+            return Answer(200, {"message": "The name has not changed, so nothing was saved.", "warnings": [], "name": new})
+        for other in places:
+            if other != old and other.casefold() == new.casefold():
+                return Answer(400, {"error": f"A {label} named {other} already exists, in {places[other]}."})
+        connection = self.tasks.attempts.connection
+        if rename_history.has_history(section):
+            try:
+                left = sorted(name for name in rename_history.stored_names(connection, section) if name != old and name.casefold() == new.casefold())
+            except sqlite3.Error as error:
+                return Answer(500, {"error": f"The stored history could not be read, so nothing was renamed: {error}"})
+            if left:
+                return Answer(
+                    400,
+                    {"error": f"History is still stored under {left[0]}, from a {label} no longer in the policy. Choose another name."},
+                )
+
+        def editor(path: Path):
+            return lambda text: renamed_text(text, path, section, old, new)
+
+        found = self._written()
+        paths = [self.root, *found.files]
+        edits = {path: editor(path) for path in dict.fromkeys(path.resolve() for path in paths)}
+        steps: list[Step] = []
+        after = None
+        if rename_history.has_history(section):
+            steps.append(
+                Step(
+                    lambda: rename_history.move(connection, section, old, new),
+                    lambda: rename_history.move(connection, section, new, old),
+                    "The stored history could not be moved, so nothing was renamed",
+                )
+            )
+            after = lambda: rename_history.move(connection, section, old, new)  # noqa: E731
+        return self._write(
+            edits, username, done=f"Renamed the {label} {old} to {new}.", commit=f"renamed {label} {old} to {new}",
+            steps=steps, after_reload=after, extra={"name": new},
         )
 
     def change(
@@ -338,6 +407,15 @@ class PolicyChanges:
             done, commit = _rule_set_words(list(creates), list(updates), deleted)
         return self.change(section, creates, updates, deleted, username, done=done, commit=commit)
 
+    def rename_page(self, page: str, request: Mapping, username: str) -> Answer:
+        """Rename an item from its policy page. A page open on files that have changed since is refused."""
+        section = PAGES.get(page, (None, ""))[0]
+        if section is None:
+            return Answer(404, {"error": f"{page} is not a policy page with items to rename."})
+        if request.get("version") != _version(self._texts(self._written())):
+            return Answer(409, {"error": STALE, "stale": True})
+        return self.rename(section, request.get("name"), request.get("to"), username)
+
     def _texts(self, found: Written) -> dict[Path, str]:
         """Return the text of the root file and of every file that holds an item or a setting."""
         paths = {self.root, *found.scalars.values()}
@@ -427,8 +505,22 @@ class PolicyChanges:
         except ConfigError:
             return written_nothing()
 
-    def _write(self, edits: Mapping[Path, object], username: str, *, done: str, commit: str) -> Answer:
-        """Make each file's edit as one change, checked, applied, and committed as a task save is."""
+    def _write(
+        self,
+        edits: Mapping[Path, object],
+        username: str,
+        *,
+        done: str,
+        commit: str,
+        steps: Sequence[Step] = (),
+        after_reload: object = None,
+        extra: Mapping[str, object] | None = None,
+    ) -> Answer:
+        """Make each file's edit as one change, checked, applied, and committed as a task save is.
+
+        ``steps`` are made after the files are written, and taken back with them. ``after_reload`` runs once
+        the services have reloaded. ``extra`` is added to an answer that succeeded.
+        """
         before: dict[Path, str] = {}
         after: dict[Path, str] = {}
         try:
@@ -441,7 +533,7 @@ class PolicyChanges:
         changed = [path for path in after if after[path] != before[path]]
         if not changed:
             return Answer(200, {"message": "That is already how the policy reads, so nothing was saved.", "warnings": []})
-        steps = [
+        written_steps = [
             Step(
                 lambda path=path: replace_text(path, after[path]),
                 lambda path=path: replace_text(path, before[path]),
@@ -449,10 +541,13 @@ class PolicyChanges:
             )
             for path in changed
         ]
-        return self.tasks.change(
-            None, {path: after[path] for path in changed}, [], steps, username,
-            confirmed=True, moved=None, failed="", done=done, commit=commit, paths=changed,
+        answer = self.tasks.change(
+            None, {path: after[path] for path in changed}, [], [*written_steps, *steps], username,
+            confirmed=True, moved=None, failed="", done=done, commit=commit, paths=changed, after_reload=after_reload,
         )
+        if extra and answer.status == 200:
+            answer.body.update(extra)
+        return answer
 
 
 DEFAULT = "default"

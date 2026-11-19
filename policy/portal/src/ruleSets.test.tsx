@@ -323,6 +323,52 @@ describe("Delete Rule Set", () => {
   });
 });
 
+describe("Rename Rule Set", () => {
+  it("is beside Save, disabled with its reason while the page has unsaved changes", async () => {
+    const user = userEvent.setup();
+    await open("/gate");
+    expect(screen.getByRole("button", { name: "Rename" })).toBeEnabled();
+    await user.keyboard("{Alt>}n{/Alt}");
+    expect(save()).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename" })).toHaveAttribute("title", expect.stringMatching(/Save or undo the changes/));
+  });
+
+  it("renames at once and opens the page at the new name, saying so", async () => {
+    const user = userEvent.setup();
+    let renamed = false;
+    const after = { ...DATA, version: "v2", items: DATA.items.map((each) => (each.name === "gate" ? { ...each, name: "front-door" } : each)) };
+    const { calls, router } = await open("/gate", (call) => {
+      if (call.method === "POST") {
+        renamed = true;
+        return { body: { message: "Renamed the rule set gate to front-door.", warnings: [], name: "front-door" } };
+      }
+      return renamed && call.path === "/parent/api/policy/rule-sets" ? { body: after } : undefined;
+    });
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(screen.getByRole("textbox", { name: "New name" })).toHaveValue("gate");
+    await user.clear(screen.getByRole("textbox", { name: "New name" }));
+    await user.type(screen.getByRole("textbox", { name: "New name" }), "front-door{Enter}");
+    await waitFor(() => expect(shown(router)).toBe("/parent/policy/rule-sets/front-door"));
+    expect(await screen.findByRole("heading", { level: 1, name: "front-door" })).toBeInTheDocument();
+    expect(screen.getByText("Renamed the rule set gate to front-door.")).toBeInTheDocument();
+    const sent = calls.find((call) => call.method === "POST");
+    expect(sent).toMatchObject({ path: "/parent/api/policy/rule-sets/rename", body: { version: "v1", name: "gate", to: "front-door" } });
+  });
+
+  it("keeps the dialog open with the loader's reasons when the name is refused", async () => {
+    const user = userEvent.setup();
+    const { router } = await open("/gate", (call) =>
+      call.method === "POST" ? { status: 400, body: { error: "A rule set named meter already exists, in policy.yaml." } } : undefined,
+    );
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "New name" }));
+    await user.type(screen.getByRole("textbox", { name: "New name" }), "meter{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("A rule set named meter already exists");
+    expect(shown(router)).toBe("/parent/policy/rule-sets/gate");
+  });
+});
+
 describe("an address with no rule set", () => {
   it("says there is no such rule set", async () => {
     await open("/missing");

@@ -33,7 +33,7 @@ import {
   type User,
 } from "../ruleSets";
 import { ContextBar, StatusBar, useTitle } from "../slots";
-import { PolicyFrame } from "./Policy";
+import { PolicyFrame, RenameButton } from "./Policy";
 import { Outcome } from "./Task";
 
 export const NEW_RULE_SET = "New Rule Set";
@@ -193,7 +193,10 @@ function RuleSetEditor({ data, item }: { data: RuleSetsData; item: RuleSetData }
   const [naming, setNaming] = useState<{ rules: Rule[]; apply: (name: string) => void } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [gone, setGone] = useState(false);
-  const [refusal, setRefusal] = useState<Reply | null>(null);
+  const [refusal, setRefusal] = useState<Reply | null>(() => {
+    const message = (location.state as { renamed?: string } | null)?.renamed;
+    return message ? { ok: true, message } : null;
+  });
   const shown = useRef(data);
   const [focus, setFocus] = useState<number | null>(null);
 
@@ -266,10 +269,21 @@ function RuleSetEditor({ data, item }: { data: RuleSetsData; item: RuleSetData }
         onAdd={add}
         addLabel="Add a rule"
         actions={
-          <button type="button" className="button button-quiet" onClick={() => setDeleting(true)}>
-            <Trash2 aria-hidden="true" />
-            Delete Rule Set
-          </button>
+          <>
+            <RenameButton
+              page="rule-sets"
+              name={item.name}
+              version={data.version}
+              from={`/parent${location.pathname}`}
+              disabled={dirty || pending}
+              onRenamed={(done) => navigate(ruleSetPath(done.name), { state: { renamed: done.message } })}
+              onFailed={(result) => setRefusal(result)}
+            />
+            <button type="button" className="button button-quiet" onClick={() => setDeleting(true)}>
+              <Trash2 aria-hidden="true" />
+              Delete Rule Set
+            </button>
+          </>
         }
       >
         <div className="policy-items">

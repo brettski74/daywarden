@@ -505,6 +505,8 @@ class Written:
     rule_sets: Mapping[str, tuple[Rule, ...]]
     quota_rule_sets: Mapping[str, str]
     task_groups: Mapping[TaskKey, tuple[str, ...]]
+    # Every policy file that was read: the root, each include, and each file in ``tasks.d``.
+    files: tuple[Path, ...] = ()
 
     def users(self, section: str, name: str) -> list[str]:
         """Return each thing that names ``name`` of ``section``, such as ``rule set bedtime-rules, rule 2``."""
@@ -547,6 +549,7 @@ def written(path: str | Path) -> Written:
         rule_sets=dict(build.rule_sets),
         quota_rule_sets={name: raw.ruleset for name, raw in build.quotas.items() if isinstance(raw.ruleset, str)},
         task_groups={key: task.groups for key, task in build.tasks.items()},
+        files=tuple(Path(name) for name in build.files),
     )
 
 
