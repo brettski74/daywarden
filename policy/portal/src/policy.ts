@@ -1,7 +1,7 @@
 /** The policy pages: Client Groups, Site Groups, Time Windows, Quotas, and Household. */
 
 export type ItemPage = "client-groups" | "site-groups" | "time-windows" | "quotas";
-export type PageKey = ItemPage | "household";
+export type PageKey = ItemPage | "rule-sets" | "household";
 
 export type PageInfo = {
   key: PageKey;
@@ -15,6 +15,7 @@ export const POLICY_PAGES: PageInfo[] = [
   { key: "site-groups", title: "Site Groups", item: "site group" },
   { key: "time-windows", title: "Time Windows", item: "time window" },
   { key: "quotas", title: "Quotas", item: "quota" },
+  { key: "rule-sets", title: "Rule Sets", item: "rule set" },
   { key: "household", title: "Household", item: "household" },
 ];
 

@@ -99,6 +99,7 @@ PAGES: dict[str, tuple[str | None, str]] = {
     "site-groups": ("site_groups", "site groups"),
     "time-windows": ("time_windows", "time windows"),
     "quotas": ("quotas", "quotas"),
+    "rule-sets": ("rule_sets", "rule sets"),
     "household": (None, "household"),
 }
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -219,11 +220,16 @@ class PolicyChanges:
                 items: dict[str, object] = {}
                 for name, fields in work.get("update", {}).items():
                     node = _entry_node(text, path, section, name)
-                    items[name] = _item_change(section, fields, node, new=False)
+                    change = _item_change(section, fields, node, new=False)
+                    # A rule set that already holds these rules is left as the file writes it.
+                    if change is not _KEEP:
+                        items[name] = change
                 for name, fields in work.get("create", {}).items():
                     items[name] = _item_change(section, fields, None, new=True)
                 for name in work.get("delete", {}):
                     items[name] = None
+                if not items:
+                    return text
                 new_text = rewrite_root(text, path, {section: items})
                 # A file left holding nothing is still a mapping, with its comments kept.
                 if work.get("delete") and not has_entries(new_text, path):
@@ -290,6 +296,15 @@ class PolicyChanges:
         if section == "site_groups":
             items.sort(key=lambda item: (_priority(item["priority"]), item["name"]))
         body["items"] = items
+        if section == "rule_sets":
+            for item in items:
+                item["users"] = [_user(text) for text in found.users("rule_sets", item["name"])]
+            body["choices"] = {
+                "time_window": list(found.places["time_windows"]),
+                "site_group": [*found.places["site_groups"], DEFAULT],
+                "client_group": [*found.places["client_groups"], DEFAULT],
+                "quota": list(found.places["quotas"]),
+            }
         if section == "quotas":
             body["rule_sets"] = list(found.places["rule_sets"])
             body["defaults"] = self._grace_defaults()
@@ -318,7 +333,10 @@ class PolicyChanges:
         for each in [*creates, *updates, *deleted]:
             if not isinstance(each, str):
                 return Answer(400, {"error": "Every item has a name."})
-        return self.change(section, creates, updates, deleted, username, done=f"Saved the {name}.", commit=f"saved {name}")
+        done, commit = f"Saved the {name}.", f"saved {name}"
+        if section == _LISTED:
+            done, commit = _rule_set_words(list(creates), list(updates), deleted)
+        return self.change(section, creates, updates, deleted, username, done=done, commit=commit)
 
     def _texts(self, found: Written) -> dict[Path, str]:
         """Return the text of the root file and of every file that holds an item or a setting."""
@@ -350,6 +368,10 @@ class PolicyChanges:
         data = _data_or_none(node) if node is not None else None
         data = data if isinstance(data, Mapping) else {}
         item: dict[str, object] = {"name": name, "file": self._shown_file(path)}
+        if section == _LISTED:
+            rules = _data_or_none(node) if node is not None else None
+            item["rules"] = rules if isinstance(rules, list) else []
+            return item
         if section in _SCALAR_LISTS_OF:
             item[_SCALAR_LISTS_OF[section]] = _texts_of(data.get(_SCALAR_LISTS_OF[section]))
         if section == "site_groups":
@@ -431,6 +453,32 @@ class PolicyChanges:
             None, {path: after[path] for path in changed}, [], steps, username,
             confirmed=True, moved=None, failed="", done=done, commit=commit, paths=changed,
         )
+
+
+DEFAULT = "default"
+
+
+def _rule_set_words(created: list[str], saved: list[str], deleted: list) -> tuple[str, str]:
+    """Return the message and the commit for a rule set page's save: each rule set saved, created, or deleted, named."""
+    parts = [
+        *(("saved", name) for name in saved),
+        *(("created", name) for name in created),
+        *(("deleted", name) for name in deleted),
+    ]
+    commit = ", ".join(f"{verb} rule set {name}" for verb, name in parts)
+    if len(parts) == 1:
+        verb, name = parts[0]
+        return f"{verb.capitalize()} the rule set {name}.", commit
+    return "Saved the rule sets.", commit
+
+
+def _user(text: str) -> dict[str, str]:
+    """Return what names a rule set as a link to give it: ``{"kind", "name", "text"}``, from ``Written.users``."""
+    if text.startswith("quota "):
+        return {"kind": "quota", "name": text[len("quota "):], "text": text}
+    if text.startswith("rule set "):
+        return {"kind": "rule_set", "name": text[len("rule set "):].partition(", ")[0], "text": text}
+    return {"kind": "entry", "name": "", "text": text}
 
 
 def _version(texts: Mapping[Path, str]) -> str:

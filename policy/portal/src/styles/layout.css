@@ -3010,3 +3010,107 @@ p.task-gone {
 .policy-add {
   justify-self: start;
 }
+
+/* Rule sets: the list, and a rule set's rules, each with its condition, its two actions, and any inline rules beneath. */
+
+.rule-users {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-list {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.rule-list > ol {
+  display: grid;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-list > ol > li {
+  border-radius: 0.35rem;
+}
+
+.rule-list > ol > li[data-over] {
+  outline: 0.12rem dashed var(--focus-ring);
+  outline-offset: 0.1rem;
+}
+
+.rule {
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.35rem;
+}
+
+.rule[data-changed] {
+  background: var(--changed-bg);
+}
+
+.rule-head,
+.rule-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 1rem;
+}
+
+.rule-head {
+  margin-bottom: 0.4rem;
+}
+
+.rule-number {
+  align-self: center;
+  font-weight: 600;
+}
+
+.rule-handle {
+  align-self: center;
+  cursor: grab;
+}
+
+.rule-buttons {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.setting-inline {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.rule-action {
+  margin-top: 0.4rem;
+}
+
+.rule-link {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.rule-inline {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: start;
+  margin: 0.2rem 0 0 1.5rem;
+  padding-left: 0.8rem;
+  border-left: 0.15rem solid var(--border);
+}
+
+.rule-inline .fold {
+  width: 100%;
+  margin-top: 0;
+}

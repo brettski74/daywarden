@@ -1,6 +1,7 @@
 import { PencilLine, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Link,
   useBlocker,
   useFetcher,
   useLoaderData,
@@ -68,8 +69,14 @@ export function policyShouldRevalidate({ actionResult, defaultShouldRevalidate }
 }
 
 /** The context bar, status bar, Save, Ctrl+S, and the leave prompt that every policy page has. */
-function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLabel, children }: {
+export function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLabel, title, parent, actions, children }: {
   page: PageKey;
+  /** The page's own heading, such as a rule set's name, when it is not the section's. */
+  title?: string;
+  /** The section's list page, shown before the heading. */
+  parent?: { to: string; label: string };
+  /** More buttons for the context bar, before Save. */
+  actions?: ReactNode;
   dirty: boolean;
   /** Why Save cannot be pressed yet, or null. */
   held: string | null;
@@ -80,7 +87,7 @@ function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLabel, chi
   children: ReactNode;
 }) {
   const info = infoOf(page);
-  useTitle(info.title);
+  useTitle(title ?? info.title);
   const fetcher = useFetcher<Result>();
   const handled = useRef<Result | undefined>(undefined);
   const [result, setResult] = useState<Result | null>(null);
@@ -136,8 +143,13 @@ function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLabel, chi
         <nav className="crumbs" aria-label="Where you are">
           <ol>
             <li>Policy</li>
+            {parent && (
+              <li>
+                <Link to={parent.to}>{parent.label}</Link>
+              </li>
+            )}
             <li>
-              <h1 className="bar-title">{info.title}</h1>
+              <h1 className="bar-title">{title ?? info.title}</h1>
             </li>
           </ol>
         </nav>
@@ -148,6 +160,7 @@ function PolicyFrame({ page, dirty, held, request, onSaved, onAdd, addLabel, chi
               Unsaved changes
             </span>
           )}
+          {actions}
           {onAdd && (
             <button type="button" className="button button-quiet" onClick={onAdd} disabled={busy} title={`${addLabel} (Alt+N)`}>
               <Plus aria-hidden="true" />

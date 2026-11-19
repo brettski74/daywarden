@@ -7,6 +7,7 @@ import { Login, loginLoader } from "./pages/Login";
 import { Mcp, mcpAction, mcpLoader, mcpShouldRevalidate } from "./pages/Mcp";
 import { McpActivity, mcpActivityLoader } from "./pages/McpActivity";
 import { McpConnect, mcpConnectLoader } from "./pages/McpConnect";
+import { RuleSetPage, RuleSetsPage } from "./pages/RuleSets";
 import { HouseholdPage, ItemsPage, policyAction, policyLoader, policyShouldRevalidate } from "./pages/Policy";
 import { Pool, poolAction, poolLoader, poolShouldRevalidate } from "./pages/Pool";
 import { Pools, poolsLoader } from "./pages/Pools";
@@ -20,11 +21,13 @@ import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 
 export const BASENAME = "/parent";
 
-/** The five policy pages, each loading and saving its whole section at /parent/api/policy/<page>. */
+/** The policy pages, each loading and saving its whole section at /parent/api/policy/<page>. */
 function policyRoutes(): RouteObject[] {
   const common = (key: PageKey) => ({ path: `policy/${key}`, loader: policyLoader(key), action: policyAction(key), shouldRevalidate: policyShouldRevalidate });
   return [
     ...(["client-groups", "site-groups", "time-windows", "quotas"] as const).map((key) => ({ ...common(key), element: <ItemsPage key={key} page={key} /> })),
+    { ...common("rule-sets"), element: <RuleSetsPage key="list" /> },
+    { ...common("rule-sets"), path: "policy/rule-sets/:name", element: <RuleSetPage /> },
     { ...common("household"), element: <HouseholdPage key="household" /> },
   ];
 }
