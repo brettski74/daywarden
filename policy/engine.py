@@ -111,6 +111,29 @@ class MemoryLedger(Ledger):
         return self._bytes.get((client_group, quota, _day(when)), 0)
 
 
+class FixtureLedger(Ledger):
+    """Counts a caller states, for a test of what the proxy would do.
+
+    The ledger answers for the one client group being judged, on whatever
+    household day the judge asks about. It never reads the usage store, and
+    nothing it holds is written anywhere. ``quotas`` maps a quota name to its
+    ``(seconds, bytes)`` balance. A quota left out counts as 0.
+    """
+
+    def __init__(self, tasks_completed: int = 0, quotas: dict[str, tuple[int, int]] | None = None) -> None:
+        self._completed = tasks_completed
+        self._quotas = dict(quotas or {})
+
+    def successes(self, client_group: str, day: date, tasks: tuple[Task, ...] = ()) -> int:
+        return self._completed
+
+    def ended_seconds(self, client_group: str, quota: str, when: date | datetime) -> int:
+        return self._quotas.get(quota, (0, 0))[0]
+
+    def stored_bytes(self, client_group: str, quota: str, when: date | datetime) -> int:
+        return self._quotas.get(quota, (0, 0))[1]
+
+
 @dataclass(frozen=True)
 class _Facts:
     policy: Policy

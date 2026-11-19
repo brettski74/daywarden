@@ -1,6 +1,6 @@
 Ticket: S041
 Title: MCP Test Proxy Request
-Status: Refined
+Status: Done
 Story Points: 8
 Last Updated: 2026-11-18 10:15:00
 ---
@@ -91,7 +91,9 @@ leaves out counts as 0.
 - [ ] For an allow, the answer says when the proxy would look at the request again, `recheck_at` as a household-local
       time, or says it has none, so the agent can see which clock the allow depends on.
 - [ ] The rule set and number are the same as those `list_rule_sets` shows, so the agent can find the rule. A rule
-      inside another rule's branch is named as the engine names it, such as `entry rule 3 then`.
+      inside another rule's branch is named as the engine names it, such as `entry rule 3 when_true`. *Changed in
+      implementation:* the engine, the decision log, and so this tool, write the branch as `when_true` or `when_false`,
+      not `then`.
 
 # Notes
 
@@ -106,3 +108,51 @@ than the count of revision tasks completed, and the child's real usage, as input
 already in progress or the volume ceiling of an allow.
 
 Sized at 8: one tool over existing engine functions, a fixture ledger, and tests, with no new page.
+
+# Implementation
+
+## Files Added
+
+- `tests/test_mcp_test_proxy.py`: the tool's permission and refusal, argument checks, time handling, fixture, leak, and
+  proxy-equivalence tests.
+
+## Files Changed
+
+- `policy/engine.py`: `FixtureLedger`, a `Ledger` answering from the call's `tasks_completed` and quota balances.
+- `policy/mcp_tools.py`: the `test_proxy_request` read tool under `rule_sets: read`.
+- `stories/S041-mcp-test-proxy-request.md`: this section, and the branch name in the last Behaviour check.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The tool builds a request document from the allowed fields only and runs it through `parse_request`, so the decisions
+service's own messages are used. It then calls `judge` with a `FixtureLedger`. Nothing in the HTTP decisions path builds
+a fixture, so `/v1/decisions` ignores `tasks_completed`, `quotas`, and `at` as unknown fields. The tool never touches the
+usage store, decision log, saved transfers, or return-to-page notes, so a test leaves no trace.
+
+The fixture ledger answers for whatever client group is judged and whatever day `judge` asks about. The day boundary of
+S009 is therefore followed once `household_day` implements it, as the proxy does. Until then the day is the local date.
+
+The answer holds `action` with `status`, `message`, or `location`, `local_time`, `client_group`, `site_group`,
+`rule_set`, `rule_index` (both null when no rule matched), `summary`, and for an allow `recheck_at` (null when none).
+
+### Acceptance test cases for S041
+
+1. In `config/mcp.yaml` grant `rule_sets: [read]`, connect Claude Code, and confirm `test_proxy_request` is listed and a
+   call leaves no activity-log entry. Remove the permission and confirm the tool is gone, a call says "This needs
+   rule_sets: read.", and the log shows it as refused. Covers The tool.
+2. Call with `client_ip` of `not-an-ip`, a missing `url`, an `at` of `last Tuesday`, and a quota name the policy lacks.
+   Covers the argument refusals.
+3. With a time window ending at 19:00, call at `T16:30`, `T19:30`, and `T06:30:00+00:00` for an address and URL it governs,
+   and compare a browser from that address. Covers The time and the proxy equivalence, including a redirect to the
+   revision task.
+4. Call a rule needing `tasks_required: 2` with `tasks_completed` of 0, 1, 2, and left out, and a quota rule with
+   `seconds_used` of 3599 and 3600 and `bytes_used` just below and at the limit. Covers The test fixture.
+5. After tests ending in an allow with `tasks_completed` of 5, load the same URL in a browser from that address, which
+   must still be denied or redirected, and check the usage graph, request table, quiz and attempts pages, `dw logs
+   decisions`, and quota balances are unchanged. Covers Nothing leaks to the proxy path.
+6. Call for an address and URL in no group, and for an allow, and read `client_group`, `site_group`, `rule_set`,
+   `rule_index`, `summary`, and `recheck_at` against `list_rule_sets`. Covers The answer.

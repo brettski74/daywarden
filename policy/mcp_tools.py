@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import datetime, time
 
 from policy.check import size, span
+from policy.decisions import FETCH_KEYS, parse_request
+from policy.engine import FixtureLedger, judge
 from policy.hierarchy import Action, Period, Policy, Rule
 from policy.mcp_settings import McpSettings
 from policy.pac import SWITCHES
@@ -320,6 +322,78 @@ def list_rule_sets(sources: Sources, _arguments: Mapping) -> dict:
     return {"entry": policy.entry, "rule_sets": [{"name": name, "rules": [_rule(rule) for rule in rules]} for name, rules in policy.rule_sets]}
 
 
+# Testing a request
+
+
+def _count(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ToolProblem(f"{name} must be a whole number of 0 or more.")
+    return value
+
+
+def _fixture_quotas(policy: Policy, given: object) -> dict[str, tuple[int, int]]:
+    if given is None:
+        return {}
+    if not isinstance(given, Mapping):
+        raise ToolProblem("quotas must map a quota's name to its seconds_used and bytes_used.")
+    found: dict[str, tuple[int, int]] = {}
+    for name, balance in given.items():
+        if policy.quota(name) is None:
+            known = ", ".join(quota.name for quota in policy.quotas) or "none"
+            raise ToolProblem(f"There is no quota named {name}. The policy's quotas are {known}.")
+        if not isinstance(balance, Mapping) or not set(balance) <= {"seconds_used", "bytes_used"}:
+            raise ToolProblem(f"quotas.{name} takes seconds_used and bytes_used.")
+        found[name] = (_count(balance.get("seconds_used", 0), f"{name} seconds_used"), _count(balance.get("bytes_used", 0), f"{name} bytes_used"))
+    return found
+
+
+def _sentence(decision: Mapping, rule_set: str | None, recheck: str | None) -> str:
+    kind = decision["action"]
+    if kind == "allow":
+        return "Allowed. " + (f"The proxy would look at it again at {recheck}." if recheck else "No clock makes the proxy look at it again.")
+    if kind == "redirect":
+        return f"Redirected with {decision['status']} to {decision['location']}."
+    message = decision.get("message", "")
+    if rule_set is None:
+        return f"No rule matched, so the proxy would block with {decision['status']}: {message}"
+    return f"Blocked with {decision['status']}: {message}"
+
+
+def test_proxy_request(sources: Sources, arguments: Mapping) -> dict:
+    policy = _policy(sources)
+    document = {key: arguments.get(key) for key in ("client_ip", "method", "url", *FETCH_KEYS) if arguments.get(key) is not None}
+    try:
+        request = parse_request(document)
+    except ValueError as problem:
+        raise ToolProblem(str(problem)) from problem
+    raw = arguments.get("at")
+    moment = None
+    if raw is not None:
+        try:
+            if not isinstance(raw, str):
+                raise ValueError(raw)
+            moment = datetime.fromisoformat(raw)
+        except ValueError as problem:
+            raise ToolProblem("at must be an ISO 8601 time, such as 2026-11-14T19:30.") from problem
+    local = sources.loaded().clock.local(moment)
+    completed = 0 if arguments.get("tasks_completed") is None else _count(arguments["tasks_completed"], "tasks_completed")
+    ledger = FixtureLedger(completed, _fixture_quotas(policy, arguments.get("quotas")))
+    trace, assumption = judge(policy, client_ip=request.client_ip, url=request.url, at=local, ledger=ledger)
+    recheck = assumption.recheck_at.strftime("%Y-%m-%d %H:%M:%S") if assumption.recheck_at is not None else None
+    found: dict = dict(trace.decision)
+    found.update(
+        local_time=local.strftime("%Y-%m-%d %H:%M:%S"),
+        client_group=trace.client_group,
+        site_group=trace.site_group,
+        rule_set=trace.rule_set,
+        rule_index=trace.rule_index,
+        summary=_sentence(trace.decision, trace.rule_set, recheck),
+    )
+    if trace.decision["action"] == "allow":
+        found["recheck_at"] = recheck
+    return found
+
+
 # Tasks and pools
 
 
@@ -495,6 +569,32 @@ READ_TOOLS: tuple[Tool, ...] = (
     Tool("list_time_windows", "time_windows", "read", "Each time window and its periods. An end such as 09:00+1 is on a later day.", list_time_windows),
     Tool("list_quotas", "quotas", "read", "Each quota's time, bytes, grace, and the rule set it meters.", list_quotas),
     Tool("list_rule_sets", "rule_sets", "read", "Each named rule set's rules in order, and the entry rule set.", list_rule_sets),
+    Tool(
+        "test_proxy_request", "rule_sets", "read",
+        "What the proxy would do with one request under the policy in force: its action, the groups it falls in, and the rule set and rule number that decided. "
+        "Nothing is recorded. at is an ISO 8601 time, household-local when it has no offset, and now when left out. "
+        "tasks_completed and quotas (name to seconds_used and bytes_used) are the day's balances to test with, and count as 0 when left out. "
+        "They apply to the client group the address falls in, and the child's real usage is never read.",
+        test_proxy_request,
+        {
+            "client_ip": {"type": "string", "description": "The child's address."},
+            "method": {"type": "string", "description": "The HTTP method, such as GET."},
+            "url": {"type": "string", "description": "The full URL."},
+            **{key: {"type": "string", "description": "Fetch metadata header, optional."} for key in FETCH_KEYS},
+            "at": {"type": "string", "description": "ISO 8601 time to test at."},
+            "tasks_completed": {"type": "integer", "minimum": 0, "description": "Revision tasks the client group completed that day."},
+            "quotas": {
+                "type": "object",
+                "description": "Quota name to its balance that day.",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {"seconds_used": {"type": "integer", "minimum": 0}, "bytes_used": {"type": "integer", "minimum": 0}},
+                    "additionalProperties": False,
+                },
+            },
+        },
+        ("client_ip", "method", "url"), lambda arguments: str(arguments.get("url", "")),
+    ),
     Tool("list_tasks", "tasks", "read", "Every task's type and name, as Task Administration lists them.", list_tasks),
     Tool(
         "get_task", "tasks", "read",

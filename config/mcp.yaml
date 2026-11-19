@@ -6,13 +6,13 @@ refresh_lifetime: 90d   # a connection lapses this long after it was approved
 activity_days: 90       # how long the activity log keeps an entry
 permissions:
   household: [read, update]
-  client_groups: [read, update]
-  site_groups: [read, update]
-  time_windows: [read, update]
+  client_groups: [create, read, update]
+  site_groups: [create, read, update]
+  time_windows: [create, read, update]
   quotas: [create, read, update]
-  rule_sets: [create, read, update]
   tasks: [create, read, update]
   sentence_pools: [create, read, update]
   capitalisation_pools: [create, read, update]
   attempts: [read]
   usage: [read]
+  rule_sets: [create, read, update]
