@@ -59,6 +59,7 @@ __all__ = [
     "OPERATIONS",
     "Operation",
     "PracticeJudged",
+    "PracticeOwed",
     "Session",
     "Settings",
     "StaleQuestion",
@@ -78,6 +79,7 @@ _BODY_KEYS = {
     "operands",
     "first",
     "practice_fallback",
+    "practice_required",
 }
 _REQUIRED_KEYS = ("operation", "max_timeout", "min_timeout", "correct_answers_required", "operands")
 _DIGITS = re.compile(r"^[0-9]+$")
@@ -115,6 +117,7 @@ class Settings:
     operands: WeightedList
     first: WeightedList | None = None
     practice_fallback: int = DEFAULT_FALLBACK
+    practice_required: bool = False
 
     @property
     def lefts(self) -> WeightedList:
@@ -163,12 +166,17 @@ def parse_settings(body: Mapping) -> Settings:
         fields.add("practice_fallback: must be a whole number, 1 or more")
     first = fields.take(_numbers, body["first"], "first") if "first" in body else None
     operands = fields.take(_numbers, body["operands"], "operands") if "operands" in body else None
+    needed = body.get("practice_required", False)
+    if "practice_required" in body and not isinstance(needed, bool):
+        fields.add("practice_required: must be true or false")
+    elif needed and operands is not None and operands.count < MIN_OPERANDS:
+        fields.add(f"practice_required: needs {MIN_OPERANDS} or more values in operands, or there is no practice to do")
     if name == DIVISION:
         lefts, field = (first, "first") if "first" in body else (operands, "operands")
         if lefts is not None and lefts.has(0):
             fields.add(f"{field}: division cannot divide by 0, so 0 cannot be in the list the first number is drawn from")
     fields.finish()
-    return Settings(OPERATIONS[name], longest, shortest, required, operands, first, fallback)
+    return Settings(OPERATIONS[name], longest, shortest, required, operands, first, fallback, needed is True)
 
 
 def draw(
@@ -276,6 +284,10 @@ FINISHED = "finished"
 LEFT = "left"
 
 
+class PracticeOwed(StaleQuestion):
+    """The task requires a finished practice walk (S042) and this attempt has none."""
+
+
 class Session(QuizRecord):
     """The arithmetic record on one attempt."""
 
@@ -297,6 +309,8 @@ class Session(QuizRecord):
         as never asked.
         """
         self.resume(now)
+        if self.practice_owed:
+            raise PracticeOwed("practice is required before the quiz")
         self.close_pending()
         settings = self.settings
         recent = [
@@ -347,6 +361,11 @@ class Session(QuizRecord):
         if not walks or "ended" in walks[-1] or not self.detail["runs"]:
             return None
         return walks[-1] if walks[-1].get("run") == self.run else None
+
+    @property
+    def practice_owed(self) -> bool:
+        """Whether the task requires practice (S042) and no walk on this attempt has been finished."""
+        return self.settings.practice_required and not any(walk.get("ended") == FINISHED for walk in self.walks)
 
     def begin_walk(self, now: datetime, rng: random.Random, figures: Callable[[str], Book]) -> dict:
         """Enter practice: start a new run, so the quiz is back at zero, and a walk through one ``m``'s table.

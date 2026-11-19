@@ -10,7 +10,7 @@ const TIMES = {
   name: "times",
   type: "arithmetic",
   arithmetic: {
-    settings: { operation: "addition", max_timeout: "10s", min_timeout: "4s", correct_answers_required: "20", practice_fallback: "" },
+    settings: { operation: "addition", max_timeout: "10s", min_timeout: "4s", correct_answers_required: "20", practice_fallback: "", practice_required: "" },
     operations: [
       { name: "addition", label: "Addition" },
       { name: "subtraction", label: "Subtraction" },
@@ -77,6 +77,22 @@ describe("the arithmetic area of a task page", () => {
     await userEvent.click(save());
     await screen.findByText("Saved times.");
     expect(posted(calls)[0]).toMatchObject({ settings: { ...TIMES.arithmetic.settings, practice_fallback: "2" } });
+  });
+
+  it("saves Practice Required when ticked, and puts the file back when unticked", async () => {
+    const calls = await openTimes();
+    const required = screen.getByRole("checkbox", { name: "Practice Required" });
+    expect(required).not.toBeChecked();
+    expect(screen.getByText("Practice Required")).toHaveAttribute("title", "practice_required");
+    expect(save()).toBeDisabled();
+    await userEvent.click(required);
+    expect(required).toBeChecked();
+    await userEvent.click(required);
+    expect(save()).toBeDisabled();
+    await userEvent.click(required);
+    await userEvent.click(save());
+    await screen.findByText("Saved times.");
+    expect(posted(calls)[0]).toMatchObject({ settings: { ...TIMES.arithmetic.settings, practice_required: "true" } });
   });
 
   it("says how the chosen operation uses the tables, following the pull-down, and saves the choice", async () => {

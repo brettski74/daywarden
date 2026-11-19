@@ -465,7 +465,7 @@ _SETTINGS = {
     "description": (
         "The task's settings by name, as get_task shows them: groups, pass_cooldown, failure_cooldown, max_skips, "
         "max_passes, available_from, due_date, and the type's own, such as operation, max_timeout, min_timeout, "
-        "correct_answers_required, practice_fallback (a whole number, 1 or more, 3 when cleared), operands, and first "
+        "correct_answers_required, practice_fallback (a whole number, 1 or more, 3 when cleared), practice_required (true to make a finished practice walk the way into the quiz, which needs 5 or more operand values), operands, and first "
         "for arithmetic. A list of numbers is rows such as "
         "{\"from\": 2, \"to\": 12} or {\"value\": 7}. A skip counting difference row also has a weight, such as "
         "{\"value\": 5, \"weight\": 2}. Arithmetic rows take no weight, and one given is ignored, because questions are "

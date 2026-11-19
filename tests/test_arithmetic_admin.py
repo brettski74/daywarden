@@ -50,7 +50,7 @@ def test_the_page_shows_the_settings_the_operations_and_both_lists(house):
     assert page == {
         "settings": {
             "operation": "addition", "max_timeout": "10s", "min_timeout": "4s", "correct_answers_required": "20",
-            "practice_fallback": "",
+            "practice_fallback": "", "practice_required": "",
         },
         "operations": [
             {"name": "addition", "label": "Addition"},

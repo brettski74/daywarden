@@ -13,6 +13,12 @@ export type ArithmeticData = {
 export const SETTINGS = ["max_timeout", "min_timeout", "correct_answers_required"];
 /** Settings the file may leave out, with the value in force when it does (S039). They are never a problem when empty. */
 export const OPTIONAL_SETTINGS: Record<string, string> = { practice_fallback: "3" };
+/** The checkbox setting (S042): ticked when the file says `true`, and written as `true` or left out. */
+export const REQUIRED_SETTING = "practice_required";
+/** The text a save sends for the Practice Required box. Unticking puts back `false` when the file says it, else leaves it out. */
+export function requiredEdit(written: string, ticked: boolean): string {
+  return ticked ? "true" : written.trim() === "false" ? "false" : "";
+}
 export const NO_OPERANDS = "Add a number.";
 export const NO_FIRST = "With no first numbers, both numbers are drawn from Operands.";
 export const NO_ZERO_DIVISOR = "Division cannot divide by 0.";

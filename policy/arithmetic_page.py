@@ -25,7 +25,7 @@ import random
 from collections.abc import Mapping
 from datetime import datetime
 
-from policy.arithmetic import Session, StaleQuestion
+from policy.arithmetic import PracticeOwed, Session, StaleQuestion
 from policy.hierarchy import Policy
 from policy.quiz_page import (
     ANSWER,
@@ -92,12 +92,13 @@ def show(
         "correctPause": CORRECT_PAUSE_MS,
         "wrongPause": WRONG_PAUSE_MS,
         "practice": settings.can_practice,
+        "owed": session.practice_owed,
         "fadeMs": ANSWER_FADE_MS,
         "practiceWrongPause": PRACTICE_WRONG_PAUSE_MS,
     }
     return _response(
         200,
-        _document(settings.operation.label, session.correct, settings.required, config, note, line, settings.can_practice),
+        _document(settings.operation.label, session.correct, settings.required, config, note, line, settings.can_practice, session.practice_owed),
     )
 
 
@@ -137,7 +138,10 @@ def respond_api(
         store.save(attempt.id, session.detail)
         return json_response(200, {"correct": session.correct, "required": session.settings.required})
     if action == QUESTION:
-        question = session.issue(now, rng or _RNG, store.draw_figures(attempt))
+        try:
+            question = session.issue(now, rng or _RNG, store.draw_figures(attempt))
+        except PracticeOwed:
+            return reload()
         store.save(attempt.id, session.detail)
         return json_response(
             200,
@@ -274,10 +278,12 @@ def _practice_answer(
     )
 
 
-def _document(label: str, correct: int, required: int, config: Mapping, note: str, line: str, practice: bool) -> str:
+def _document(label: str, correct: int, required: int, config: Mapping, note: str, line: str, practice: bool, owed: bool = False) -> str:
+    # While practice is owed (S042) Practice takes the main button's look and Start is disabled.
     start_practice = (
+        '\n<p id="practice-owed"' + ("" if owed else " hidden") + ">Practise first</p>"
         '\n<p id="practice-done" hidden>Practice done. Start the quiz when you are ready.</p>\n'
-        '<button type="button" id="practice-start" class="practice">Practice</button>'
+        f'<button type="button" id="practice-start" class="{"big" if owed else "practice"}"{" autofocus" if owed else ""}>Practice</button>'
         if practice
         else ""
     )
@@ -298,7 +304,7 @@ def _document(label: str, correct: int, required: int, config: Mapping, note: st
         start=(
             f"<h1>{_e(label)}</h1>\n"
             f'{note_html(note)}<p id="start-progress">{correct} / {required} correct</p>\n'
-            f'<button type="button" id="start-button" class="big" autofocus>Start</button>{start_practice}'
+            f'<button type="button" id="start-button" class="big"{" disabled" if owed else " autofocus"}>Start</button>{start_practice}'
         ),
         ask=(
             '<div id="previous" aria-hidden="true" hidden></div>\n'
@@ -319,6 +325,8 @@ _STYLE = """\
 #previous { min-height: 3rem; margin: 0 0 0.4rem; font-size: 2.4rem; color: var(--muted); white-space: nowrap; }
 #answer { font-size: 3rem; width: 5em; text-align: center; padding: 0.15em; border: 3px solid var(--field-border); border-radius: 8px; }
 #practice-done { color: var(--right); }
+#practice-owed { color: var(--muted); }
+#start-button:disabled { opacity: 0.4; cursor: default; }
 """
 
 _SCRIPT = """\
@@ -481,6 +489,15 @@ _SCRIPT = """\
     ask();
   }
 
+  // A finished walk (S042) frees Start and puts Practice back to its small place.
+  function unlock() {
+    if (!config.owed) return;
+    config.owed = false;
+    startButton.disabled = false;
+    $("practice-owed").hidden = true;
+    $("practice-start").className = "practice";
+  }
+
   // The end of the walk: back to the start screen, with the quiz at zero.
   function leavePractice() {
     practicing = false;
@@ -492,6 +509,7 @@ _SCRIPT = """\
     previous.textContent = "";
     for (const button of practiceButtons) button.hidden = false;
     $("practice-done").hidden = false;
+    unlock();
     $("start-progress").textContent = "0 / " + config.required + " correct";
     startScreen.hidden = false;
     startButton.focus();
@@ -512,7 +530,7 @@ _SCRIPT = """\
     if (digits !== box.value) box.value = digits;
   });
   startButton.addEventListener("click", () => {
-    if (state === "start") ask();
+    if (state === "start" && !config.owed) ask();
   });
   if (config.practice) {
     for (const button of [...practiceButtons, $("practice-yes"), $("practice-no")]) {
@@ -524,6 +542,11 @@ _SCRIPT = """\
     for (const button of practiceButtons) {
       button.addEventListener("click", () => {
         if (attemptOver || practicing || entering) return;
+        // Practice owed (S042) has no quiz progress to lose and no quiz to keep going with, so it asks nothing.
+        if (config.owed) {
+          enterPractice();
+          return;
+        }
         confirmBox.hidden = true;
         practiceBox.hidden = false;
       });
@@ -537,5 +560,6 @@ _SCRIPT = """\
       refocus();
     });
   }
-  startButton.focus();
+  if (config.owed) $("practice-start").focus();
+  else startButton.focus();
 """

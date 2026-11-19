@@ -33,6 +33,7 @@ export const LABELS: Record<string, string> = {
   max_timeout: "Max Timeout",
   min_timeout: "Min Timeout",
   practice_fallback: "Practice Fallback",
+  practice_required: "Practice Required",
   addresses: "Addresses",
   patterns: "Patterns",
   priority: "Priority",

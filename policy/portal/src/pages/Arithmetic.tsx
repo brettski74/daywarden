@@ -1,7 +1,7 @@
 import { Note, WeightedTable } from "../components/WeightedTable";
 import { label } from "../labels";
 import type { NumberRow } from "../numberTable";
-import { NO_FIRST, NO_OPERANDS, OPTIONAL_SETTINGS, SETTINGS, USES, hasNumbers, type ArithmeticData, type ShownArithmetic } from "../arithmetic";
+import { NO_FIRST, NO_OPERANDS, OPTIONAL_SETTINGS, REQUIRED_SETTING, SETTINGS, USES, hasNumbers, requiredEdit, type ArithmeticData, type ShownArithmetic } from "../arithmetic";
 
 type Props = {
   data: ArithmeticData;
@@ -47,6 +47,16 @@ export function ArithmeticAdmin({ data, settings, shown, onSetting, onRows }: Pr
             {Object.entries(OPTIONAL_SETTINGS).map(([key, fallback]) => (
               <Setting key={key} name={key} value={value(key)} written={written(key)} problem={undefined} placeholder={fallback} onSetting={onSetting} />
             ))}
+            <label className="setting">
+              <span title={REQUIRED_SETTING}>{label(REQUIRED_SETTING)}</span>
+              <span className="setting-flag" data-changed={value(REQUIRED_SETTING).trim() !== written(REQUIRED_SETTING).trim() || undefined}>
+                <input
+                  type="checkbox"
+                  checked={value(REQUIRED_SETTING).trim() === "true"}
+                  onChange={(event) => onSetting(REQUIRED_SETTING, requiredEdit(written(REQUIRED_SETTING), event.target.checked))}
+                />
+              </span>
+            </label>
           </div>
         </fieldset>
       </div>

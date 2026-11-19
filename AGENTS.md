@@ -1,3 +1,8 @@
+# Version control
+
+Never commit or push unless the user specifically asks for it in that request. Leave finished work uncommitted in the
+working tree and report it. Earlier commits in the log are not permission.
+
 # Stories
 
 Stories are markdown files in the `stories` directory, one per story, named `Snnn-short-title.md`. Write every story
