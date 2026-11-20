@@ -132,8 +132,8 @@ def _addresses(app):
     for route in app.routes:
         if not isinstance(route, APIRoute) or not route.path.startswith("/parent/api/") or "{rest:path}" in route.path:
             continue
-        # Signing in and out needs no session, so it is the same for every account.
-        if route.path in ("/parent/api/login", "/parent/api/logout"):
+        # Signing in and out, and Forgot password and Reset password, need no session, so they are the same for every account.
+        if route.path in ("/parent/api/login", "/parent/api/logout", "/parent/api/password-reset", "/parent/api/password-reset/save"):
             continue
         filled = re.sub(r"\{file_name\}", "x.opus", route.path)
         filled = re.sub(r"\{[a-z_]+\}", "x1", filled)

@@ -155,3 +155,13 @@ def test_two_passwords_typed_at_the_prompt_set_it_and_two_that_differ_do_not(con
     assert "ada's password is set." in shown
     assert shown.rstrip().endswith("\necho")
     assert _signs_in(container, "new-pass")
+
+
+def test_test_email_in_the_image_says_when_email_is_off_and_names_a_wrong_setting(container):
+    off = _docker("exec", container, "python", "-m", "policy.accounts", "test-email", "ada")
+    assert (off.returncode, off.stderr) == (1, "Email is off: SMTP_HOST is not set. Nothing was sent.\n")
+    wrong = _docker(
+        "exec", "-e", "SMTP_HOST=smtp.example.net", "-e", "SMTP_PORT=abc", container, "python", "-m", "policy.accounts", "test-email", "ada"
+    )
+    assert wrong.returncode == 1
+    assert wrong.stderr.startswith("SMTP_PORT must be a port number")

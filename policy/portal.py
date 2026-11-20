@@ -7,8 +7,9 @@ no household data.
 
 Household data comes only from JSON under /parent/api/, and the spelling
 recordings the task pages play. Those endpoints need a parent session from
-S007.1. With no session they answer 401, and with no parent account 403,
-with no data. They never redirect: only the portal's own code reacts to
+S007.1, except Forgot password's and Reset password's in
+``policy/account_pages.py``. With no session they answer 401, and with no
+parent account 403, with no data. They never redirect: only the portal's own code reacts to
 those answers. Sign-in, sign-out, the parent check, a task save, creating
 or renaming a task, making a spelling directory, Retire, cutting or keeping
 a recording, each step of a setup of spelling words, and saving or deleting a
@@ -40,6 +41,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from policy.accounts import COOKIE_NAME, Accounts, Parent, cookie_value
@@ -65,8 +67,9 @@ BUILT = "build/"
 # Addresses under /parent/ that are not portal pages.
 # A sign-in body holds a username, a password of at most 200 characters, and the page to return to.
 _LONGEST_SIGN_IN = 4096
-_NOT_PAGES = frozenset({"api", "build", "login"})
-_CLOSED = "The parent portal is closed until a parent account is added."
+# The Forgot password and Reset password pages are no place to return to after a sign-in.
+_NOT_PAGES = frozenset({"api", "build", "login", "forgot", "reset"})
+CLOSED = "The parent portal is closed until a parent account is added."
 _SIGNED_OUT = "Sign in to see this."
 _HTTPS_ONLY = """<!DOCTYPE html>
 <html lang="en">
@@ -99,6 +102,9 @@ REVIEWER_ADDRESSES = frozenset(
         # The MCP consent page. A reviewer's agent is limited to what a reviewer may read.
         ("GET", "/parent/api/settings/mcp/connect"),
         ("POST", "/parent/api/settings/mcp/connect"),
+        # The Account page (S044.2). Changing your own password is the second reviewer write. It changes no other account.
+        ("GET", "/parent/api/account"),
+        ("POST", "/parent/api/account/password"),
     }
 )
 
@@ -158,7 +164,7 @@ class PortalGate:
         if request.url.scheme != "https":
             return None, _json(403, {"error": "Open this page over HTTPS."})
         if self.accounts.count() == 0:
-            return None, _json(403, {"error": _CLOSED, "closed": True})
+            return None, _json(403, {"error": CLOSED, "closed": True})
         parent = self.accounts.accept(_cookie(request), self.loaded().clock.local())
         if parent is None:
             return None, _json(401, {"error": _SIGNED_OUT})
@@ -237,7 +243,7 @@ def install_portal(
         if refused is not None:
             return refused
         if accounts.count() == 0:
-            return _json(403, {"error": _CLOSED, "closed": True})
+            return _json(403, {"error": CLOSED, "closed": True})
         key = accounts.login(body.get("username", ""), body.get("password", ""), loaded().clock.local())
         if key is None:
             return _json(401, {"error": "Username or password incorrect."})
@@ -797,8 +803,13 @@ def install_portal(
         index = root / "index.html"
         if not index.is_file():
             return PlainTextResponse(_NOT_BUILT, status_code=503, headers={"cache-control": "no-store"})
-        # No portal page, the MCP consent page above all, may be shown in a frame on another site.
-        return FileResponse(index, media_type="text/html; charset=utf-8", headers={"cache-control": "no-store", **NO_FRAMES})
+        # No portal page, the MCP consent page above all, may be shown in a frame on another site. No page sends
+        # its address on as a Referer, the Reset password page, with its token in the fragment, above all.
+        return FileResponse(
+            index,
+            media_type="text/html; charset=utf-8",
+            headers={"cache-control": "no-store", "referrer-policy": "no-referrer", **NO_FRAMES},
+        )
 
     @app.get("/")
     async def home(request: Request) -> Response:
@@ -838,8 +849,13 @@ def _cookie(request: Request) -> str | None:
     return cookie_value(request.headers.get("cookie"), COOKIE_NAME)
 
 
-def _json(status: int, body: dict) -> JSONResponse:
-    return JSONResponse(body, status_code=status, headers={"cache-control": "no-store"})
+def _json(status: int, body: dict, background: BackgroundTask | None = None) -> JSONResponse:
+    return JSONResponse(body, status_code=status, headers={"cache-control": "no-store"}, background=background)
+
+
+def session_key(request: Request) -> str | None:
+    """Return the session key the request's cookie holds, or None."""
+    return _cookie(request)
 
 
 def _refused(error: RecordingError) -> JSONResponse:
@@ -888,3 +904,8 @@ async def _json_body(request: Request, limit: int | None = None) -> tuple[dict, 
     if not isinstance(body, dict):
         return {}, _json(400, {"error": "The body is not a JSON object."})
     return body, None
+
+
+# For data addresses added outside install_portal, such as the Account pages' in policy/account_pages.py.
+json_answer = _json
+json_body = _json_body

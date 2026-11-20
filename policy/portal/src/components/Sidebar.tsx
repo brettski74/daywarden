@@ -19,6 +19,7 @@ import { forgetSession, type Session } from "../session";
 import { useExpander } from "../motion";
 import { CAPITALISATION_POOLS, PARTS_POOLS } from "../pools";
 import { MCP } from "../mcp";
+import { ACCOUNT } from "../pages/Account";
 import { ASSETS_KEY, KEY_STEP, POLICY_KEY, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { POLICY, POLICY_PAGES, policyPath } from "../policy";
 import { NEW_TASK, taskLabel, taskPath, type TaskRef } from "../taskRef";
@@ -234,7 +235,9 @@ export function Sidebar({ session, tasks }: { session: Session; tasks: TaskRef[]
         <div className="sidebar-bottom">
           {shown && (
             <p className="sidebar-user sidebar-fold" inert={collapsed}>
-              Signed in as <strong>{session.username}</strong> ({session.role})
+              <NavLink to={ACCOUNT} title="Your account and password">
+                Signed in as <strong>{session.username}</strong> ({session.role})
+              </NavLink>
             </p>
           )}
           <button type="button" className="sign-out" onClick={leave} aria-label="Sign out" title="Sign out">

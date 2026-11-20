@@ -24,9 +24,13 @@ from test_mcp_server import PASSWORD, activity, connect, mcp, service  # noqa: E
 NOW = datetime(2026, 11, 20, 9, 0, tzinfo=timezone.utc)
 
 
-def dw_account(database: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-    """Run the command without a terminal. stdin None gives it an empty standard input."""
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "POLICY_DB": str(database)}
+MAIL_SETTINGS = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_PASSWORD", "MAIL_FROM")
+
+
+def dw_account(database: Path, *args: str, stdin: str | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+    """Run the command without a terminal, with email off unless env turns it on. stdin None gives it an empty standard input."""
+    kept = {name: value for name, value in os.environ.items() if name not in MAIL_SETTINGS}
+    env = {**kept, "PYTHONPATH": str(ROOT), "POLICY_DB": str(database), **(env or {})}
     return subprocess.run(
         [sys.executable, "-m", "policy.accounts", *args],
         input=stdin,
@@ -122,11 +126,21 @@ def test_a_removed_accounts_id_is_never_used_again(tmp_path):
 # add
 
 
-def test_add_with_an_email_and_no_password_asks_for_none(database):
+def add_with_email(database: Path, username: str = "nana") -> None:
+    """Add a reviewer with an address and no password, with email off, so no welcome email is sent."""
+    added = dw_account(database, "add", "--email", f"{username}@example.net", username)
+    assert added.returncode == 1, added.stderr
+    assert "No welcome email was sent" in added.stderr
+
+
+def test_add_with_an_email_and_no_password_asks_for_none_and_with_email_off_says_no_welcome_was_sent(database):
     added = dw_account(database, "add", "--email", "nana@example.net", "nana")
-    assert added.returncode == 0, added.stderr
+    assert added.returncode == 1
     assert "nana is added, as a reviewer, with the email address nana@example.net." in added.stdout
-    assert "nana has no password yet. dw-account update --password nana sets one." in added.stdout
+    assert added.stderr.splitlines() == [
+        "No welcome email was sent to nana@example.net. Email is off: SMTP_HOST is not set.",
+        "nana has no password yet. dw-account update --password nana sets one now.",
+    ]
     assert "Password" not in added.stdout + added.stderr
     assert listing(database) == ["ada admin no email", "nana reviewer nana@example.net no password"]
 
@@ -186,7 +200,7 @@ def test_update_sets_and_removes_an_email_without_asking_for_a_password(database
 
 
 def test_update_password_gives_an_account_with_none_its_first(database):
-    assert dw_account(database, "add", "--email", "nana@example.net", "nana").returncode == 0
+    add_with_email(database)
     assert not signs_in(database, "nana", "")
     done = dw_account(database, "update", "--password", "nana", stdin="nana-pass\n")
     assert done.returncode == 0, done.stderr
@@ -207,7 +221,7 @@ def test_update_password_ends_the_sessions(database):
 
 
 def test_several_switches_are_all_applied(database):
-    assert dw_account(database, "add", "--email", "nana@example.net", "nana").returncode == 0
+    add_with_email(database)
     done = dw_account(database, "update", "--role", "admin", "--email", "nana@example.org", "--password", "nana", stdin="nana-pass\n")
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines() == [
@@ -288,7 +302,7 @@ def test_help_describes_every_subcommand_and_switch(tmp_path):
 
 
 def test_remove_without_a_terminal_needs_yes(database):
-    assert dw_account(database, "add", "--email", "nana@example.net", "nana").returncode == 0
+    add_with_email(database)
     refused = dw_account(database, "remove", "nana")
     assert refused.returncode == 1
     assert "Give --yes" in refused.stderr

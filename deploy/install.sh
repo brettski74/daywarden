@@ -561,7 +561,7 @@ if [ "$first_install" -eq 1 ]; then
     echo "Next steps:"
     echo "  - Review ~/daywarden/.env and ~/daywarden/config/policy.yaml."
     echo "  - Add any other names or IP addresses for this machine to PARENT_NAMES in ~/daywarden/.env."
-    echo "  - Run dw up, then add the first parent with dw-account add --role admin --password USERNAME."
+    echo "  - Run dw up, then add the first parent with dw-account add --role admin --email ADDRESS USERNAME."
     [ "$enabled_now" -eq 1 ] || echo "  - Run dw enable to start daywarden at boot."
     echo "  - Copy ~/daywarden/ca/mitmproxy-ca-cert.pem to the child computers. The first dw up creates it."
 fi

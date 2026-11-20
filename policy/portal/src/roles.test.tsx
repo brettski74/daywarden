@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { fakeService, renderPortal, type Call } from "./test/portal";
 
 // What the service lets a reviewer read (S043). Everything else answers 403, as the service does.
-const REVIEWER_DATA = [/^\/parent\/api\/session$/, /^\/parent\/api\/attempts(\/.*)?$/, /^\/parent\/api\/parent-check$/, /^\/parent\/api\/usage\/(minutes|bytes|requests)$/, /^\/parent\/api\/settings\/mcp\/connect$/];
+const REVIEWER_DATA = [/^\/parent\/api\/session$/, /^\/parent\/api\/attempts(\/.*)?$/, /^\/parent\/api\/parent-check$/, /^\/parent\/api\/usage\/(minutes|bytes|requests)$/, /^\/parent\/api\/settings\/mcp\/connect$/, /^\/parent\/api\/account(\/password)?$/];
 
 const forAdmins = (call: Call) => !REVIEWER_DATA.some((pattern) => pattern.test(call.path));
 
@@ -79,6 +79,18 @@ describe("a reviewer's portal", () => {
     renderPortal("/parent/attempts?client=younger");
     await userEvent.setup().click(await screen.findByRole("button", { name: /parent check/i }));
     await waitFor(() => expect(calls.some((call) => call.path === "/parent/api/parent-check" && call.method === "POST")).toBe(true));
+  });
+});
+
+describe("a reviewer's Account page", () => {
+  it("opens, with Change password, from the signed-in line", async () => {
+    const calls = asReviewer((call) => (call.path === "/parent/api/account" ? { body: { username: "nana", role: "reviewer", email: "nana@example.net" } } : undefined));
+    renderPortal("/parent/attempts?client=younger");
+    await screen.findByRole("link", { name: "spelling-week-3" });
+    await userEvent.setup().click(within(sidebar()).getByRole("link", { name: "Signed in as nana (reviewer)" }));
+    expect(await screen.findByRole("button", { name: "Change password" })).toBeInTheDocument();
+    expect(screen.queryByText(/This page is for admins/)).toBeNull();
+    expect(calls.filter(forAdmins)).toEqual([]);
   });
 });
 

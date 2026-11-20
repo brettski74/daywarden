@@ -11,6 +11,13 @@ never used again. A session key is 256 bits from the
 operating system's random source. The browser receives the key. The database
 stores the SHA-256 of the key, the account, the sign-in time, and the time
 of the last accepted request.
+
+A parent changes their own password on the portal's Account page, or resets
+it with a link sent to the account's address (S044.2). A reset token is 256
+bits, stored as its SHA-256 in ``password_resets``, one row per account, so a
+newer link replaces an older one. Setting the password any way removes the
+row, and removing the account removes it by cascade. The lifetime is checked
+when the token is used.
 """
 
 from __future__ import annotations
@@ -83,7 +90,14 @@ CREATE TABLE IF NOT EXISTS parent_checks (
     client_group TEXT NOT NULL,
     recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+    account_id INTEGER PRIMARY KEY REFERENCES parent_accounts(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    made_at TEXT NOT NULL
+);
 """
+# A second reset link for the same account within this long of the last one is not sent.
+RESET_COOLDOWN = timedelta(minutes=5)
 
 
 class AccountError(ValueError):
@@ -99,6 +113,23 @@ class Parent(NamedTuple):
     @property
     def admin(self) -> bool:
         return self.role == ADMIN
+
+
+class ResetLink(NamedTuple):
+    """A reset token just made for an account with an address. Only its SHA-256 is stored."""
+
+    username: str
+    email: str
+    token: str
+
+
+class PasswordReset(NamedTuple):
+    """An account whose password a valid reset link just set."""
+
+    username: str
+    email: str | None
+    # False when the reset set the account's first password.
+    had_password: bool
 
 
 class Account(NamedTuple):
@@ -314,6 +345,8 @@ class Accounts:
                 self.connection.execute("UPDATE parent_accounts SET email = ? WHERE id = ?", (email, account_id))
             if digest is not None:
                 self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+                # A reset link sent before the change no longer works.
+                self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
             if role is not None or digest is not None:
                 self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (account_id,))
         if digest is not None:
@@ -441,6 +474,108 @@ class Accounts:
                 (hashlib.sha256(key).hexdigest(),),
             )
 
+    # Changing a password from the portal, and resetting one by email (S044.2)
+
+    def change_password(self, username: str, session: str | None, current: object, new: object, again: object) -> str | None:
+        """Change the signed-in account's own password. Return why it was refused, or None when it changed.
+
+        The new password is checked first. The current one is then checked
+        with the same work as a sign-in: one longer than LONGEST_PASSWORD is
+        refused as a wrong one, after the same check of the dummy hash. On a
+        change every other session of the account ends, the one named by
+        session stays, any reset link stops working, and the MCP connections
+        the account approved end. A refusal changes nothing.
+        """
+        problem = new_password_problem(new, again)
+        if problem is not None:
+            return f"{problem} Nothing was changed."
+        assert isinstance(new, str)
+        row = self.connection.execute("SELECT id, password_hash FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        stored = None if row is None else row[1]
+        if not isinstance(current, str) or len(current) > LONGEST_PASSWORD:
+            _passwords_match(None, "")
+            matched = False
+        else:
+            matched = _passwords_match(stored, current)
+        if stored is None or not matched:
+            return "The current password is wrong. Nothing was changed."
+        account_id = row[0]
+        digest = _HASHER.hash(new)
+        key = _key_bytes(session)
+        kept = "" if key is None else hashlib.sha256(key).hexdigest()
+        with self.connection:
+            self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+            self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ? AND key_hash != ?", (account_id, kept))
+            self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
+        self._end_mcp(account_id, "the parent's password was changed")
+        return None
+
+    def request_reset(self, username: object, now: datetime) -> tuple[ResetLink | None, bool]:
+        """Make a reset token for username, when it is an account with an address.
+
+        Return the link to send, or None, and whether the request was skipped
+        because a link was sent to the account less than RESET_COOLDOWN ago.
+        A new token replaces the account's older one, which stops working.
+        """
+        if not isinstance(username, str):
+            return None, False
+        row = self.connection.execute("SELECT id, email FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        if row is None or row[1] is None:
+            return None, False
+        account_id, email = row
+        moment = _utc_second(now)
+        last = self.connection.execute("SELECT made_at FROM password_resets WHERE account_id = ?", (account_id,)).fetchone()
+        if last is not None and moment - _parse(last[0]) < RESET_COOLDOWN:
+            return None, True
+        token = secrets.token_bytes(32)
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO password_resets (account_id, token_hash, made_at) VALUES (?, ?, ?)",
+                (account_id, hashlib.sha256(token).hexdigest(), moment.isoformat()),
+            )
+        return ResetLink(username, email, token.hex()), False
+
+    def reset_password(self, token: object, digest: str, now: datetime, lifetime: timedelta) -> PasswordReset | None:
+        """Set the account a valid reset token belongs to to the password hashed as digest, and use the token up.
+
+        The caller hashes the password with ``hash_password`` whether or not
+        the token is valid, so both answers take the same work. A valid token
+        is the newest made for its account, within lifetime of when it was
+        made, and not used yet. Any other token changes nothing and returns
+        None. A reset ends every session of the account and the MCP
+        connections it approved, and does not sign the parent in.
+        """
+        key = _key_bytes(token if isinstance(token, str) else None)
+        if key is None:
+            return None
+        row = self.connection.execute(
+            """
+            SELECT password_resets.account_id, password_resets.made_at, parent_accounts.username,
+                   parent_accounts.email, parent_accounts.password_hash IS NOT NULL
+            FROM password_resets
+            JOIN parent_accounts ON parent_accounts.id = password_resets.account_id
+            WHERE password_resets.token_hash = ?
+            """,
+            (hashlib.sha256(key).hexdigest(),),
+        ).fetchone()
+        if row is None:
+            return None
+        account_id, made_at, username, email, had_password = row
+        with self.connection:
+            # Used or not, a token checked after its lifetime is gone.
+            self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
+            if _utc_second(now) - _parse(made_at) > lifetime:
+                return None
+            self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+            self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (account_id,))
+        self._end_mcp(account_id, "the parent's password was reset")
+        return PasswordReset(username, email, bool(had_password))
+
+    def _end_mcp(self, account_id: int, reason: str) -> None:
+        from policy.mcp_store import McpStore
+
+        McpStore(self.connection).end_for_account(account_id, datetime.now(timezone.utc), reason)
+
     def cookie_header(self, token: str) -> str:
         """Return the Set-Cookie value for a session key."""
         return f"{COOKIE_NAME}={token}; Secure; HttpOnly; SameSite=Lax; Path=/"
@@ -491,6 +626,21 @@ def cookie_value(header: str | None, name: str) -> str | None:
     return None
 
 
+def hash_password(password: str) -> str:
+    """Return the Argon2id hash stored for password."""
+    return _HASHER.hash(password)
+
+
+def new_password_problem(new: object, again: object) -> str | None:
+    """Return why a new password typed twice on a portal page is refused, saying which check failed, or None."""
+    problem = password_problem(new)
+    if problem is not None:
+        return problem.replace("The password", "The new password")
+    if new != again:
+        return "The two new passwords differ."
+    return None
+
+
 def _passwords_match(stored: str | None, password: str) -> bool:
     """Check password against stored, or against the dummy hash when stored is missing."""
     try:
@@ -502,10 +652,10 @@ def _passwords_match(stored: str | None, password: str) -> bool:
 def _setting(environ: os._Environ[str] | dict[str, str], name: str, default: int) -> int:
     if name not in environ:
         return default
-    return _positive_duration(environ[name], name)
+    return positive_duration(environ[name], name)
 
 
-def _positive_duration(value: str, name: str) -> int:
+def positive_duration(value: str, name: str) -> int:
     text = value.strip() if isinstance(value, str) else ""
     match = _DURATION.fullmatch(text)
     seconds = 0 if match is None else int(match.group(1)) * _UNIT_SECONDS[match.group(2).lower()]
@@ -556,6 +706,8 @@ Subcommands:
         --email     the parent's email address, of the form name@domain.
         --password  ask for a password. Without it, the account has no password yet and no one
                     can sign in to it. Give --email, --password, or both.
+        With --email and no --password, the parent is sent a welcome email that tells them
+        to choose a password with Forgot password on the sign-in screen.
   update USERNAME [--role admin|reviewer] [--email ADDRESS | --no-email] [--password]
         Change an existing account. Give at least one switch. Every switch is checked
         before anything changes.
@@ -563,12 +715,15 @@ Subcommands:
                     The only admin cannot become a reviewer.
         --email     set the email address.   --no-email  remove it.
         --password  ask for a new password. The account's sessions and the MCP connections
-                    it approved end.
+                    it approved end, and an account with an address is emailed a notice.
   remove [--yes] USERNAME
         Remove an existing account, its sessions, and the MCP connections it approved.
         Asks first. Without a terminal, --yes is needed. The only admin cannot be removed.
   list  Each account: its username, role, email address or "no email", and "no password"
         when it has none yet.
+  test-email USERNAME
+        Send a short test email to USERNAME's address, to check the SMTP_ settings in .env.
+        Says that the mail server accepted it, or why it was not sent.
   help  This help. {PROG} SUBCOMMAND --help describes one subcommand.
 
 Roles:
@@ -622,8 +777,10 @@ def _subcommands() -> dict[str, argparse.ArgumentParser]:
     remove.add_argument("username", metavar="USERNAME")
 
     listing = parser("list", 'List each account: username, role, email address or "no email", and "no password" when it has none.')
+    testing = parser("test-email", "Send a short test email to USERNAME's address, to check the SMTP_ settings in .env.")
+    testing.add_argument("username", metavar="USERNAME")
     helping = parser("help", "Describe every subcommand and switch.")
-    return {"add": add, "update": update, "remove": remove, "list": listing, "help": helping}
+    return {"add": add, "update": update, "remove": remove, "list": listing, "test-email": testing, "help": helping}
 
 
 def _command_line(args: list[str]) -> argparse.Namespace:
@@ -722,15 +879,87 @@ def _list(accounts: Accounts) -> None:
         print("There are no parent accounts. Add the first with dw-account add --role admin --password USERNAME.")
 
 
+class _Failed(Exception):
+    """The command did what it could, said why the rest was not done, and exits with status 1."""
+
+
+def _mailer():
+    """Return the Mailer for the SMTP_ settings, or why there is none. A setting that is wrong stops the command."""
+    from policy.mail import OFF, Mailer, mail_settings
+
+    settings = mail_settings(os.environ)
+    if settings is None:
+        return None, OFF
+    return Mailer(settings), None
+
+
+def _sign_in_address() -> str:
+    """The sign-in screen at the first name in PARENT_NAMES, on POLICY_PORT."""
+    from policy.mail import portal_address
+    from policy.parent_tls import require_names
+    from policy.selection import published_port
+
+    return portal_address(require_names(os.environ.get("PARENT_NAMES"))[0], published_port(), "/parent/login")
+
+
+def _household_now() -> datetime:
+    """Now, in the household's timezone from the policy, or this machine's when the policy names none."""
+    from policy.check import household_zone, machine_localtime
+    from policy.hierarchy import load as load_hierarchy
+
+    try:
+        policy = load_hierarchy(Path(os.environ.get("POLICY_FILE", "/etc/daywarden/policy.yaml")))
+        zone, _source = household_zone(None if policy is None else policy.timezone, machine_localtime())
+    except Exception:  # A broken policy still gets the notice, in this machine's time.
+        return datetime.now().astimezone()
+    return datetime.now(zone)
+
+
 def _add(accounts: Accounts, found: argparse.Namespace) -> None:
     username, role, email = found.username, found.role, found.email
     accounts.check_add(username, role, email, found.password)
+    mailer, off = _mailer() if email is not None and not found.password else (None, None)
     password = read_new_password("Nothing was added.") if found.password else None
     accounts.add(username, role, email, password)
     address = f"with the email address {email}" if email else "with no email address"
     print(f"{username} is added, as {_article(role)} {role}, {address}.", flush=True)
-    if password is None:
+    if password is not None:
+        return
+    if email is None:
         print(f"{username} has no password yet. dw-account update --password {username} sets one.", flush=True)
+        return
+    from policy.mail import MailError
+
+    why = off
+    if mailer is not None:
+        try:
+            mailer.welcome(email, username, role, _sign_in_address())
+        except MailError as error:
+            why = str(error)
+    if why is None:
+        print(f"A welcome email was sent to {email}. It tells {username} to choose a password with Forgot password.", flush=True)
+        return
+    print(f"No welcome email was sent to {email}. {why}", file=sys.stderr, flush=True)
+    raise _Failed(f"{username} has no password yet. dw-account update --password {username} sets one now.")
+
+
+def _test_email(accounts: Accounts, found: argparse.Namespace) -> None:
+    from policy.mail import MailError
+
+    username = found.username
+    entry = accounts.entry(username)
+    if entry is None:
+        raise AccountError(f"There is no parent account {username}. Nothing was sent.")
+    mailer, off = _mailer()
+    if mailer is None:
+        raise _Failed(f"{off} Nothing was sent.")
+    if entry.email is None:
+        raise _Failed(f"{username} has no email address. Add one with dw-account update --email ADDRESS {username}.")
+    try:
+        mailer.test(entry.email, username)
+    except MailError as error:
+        raise _Failed(f"The test email to {entry.email} was not sent. {error}") from None
+    print(f"The mail server accepted a test email to {entry.email}.", flush=True)
 
 
 def _update(accounts: Accounts, found: argparse.Namespace) -> None:
@@ -746,6 +975,29 @@ def _update(accounts: Accounts, found: argparse.Namespace) -> None:
         print(f"{username} has no email address now.", flush=True)
     if password is not None:
         print(f"{username}'s password is set. Its sessions and the MCP connections it approved have ended.", flush=True)
+        _notify_set(accounts, username)
+
+
+def _notify_set(accounts: Accounts, username: str) -> None:
+    """Email the account that its password was set. A failure is said, and the password stays set."""
+    from policy.mail import SET_ON_HOST, MailError, moment
+
+    entry = accounts.entry(username)
+    if entry is None or entry.email is None:
+        return
+    try:
+        mailer, _off = _mailer()
+    except SystemExit as stopped:
+        print(f"The password-changed email was not sent: {stopped}", file=sys.stderr, flush=True)
+        return
+    if mailer is None:
+        return
+    try:
+        mailer.changed(entry.email, username, SET_ON_HOST, moment(_household_now()))
+    except MailError as error:
+        print(f"The password-changed email to {entry.email} was not sent. {error}", file=sys.stderr, flush=True)
+        return
+    print(f"{username} was emailed that the password changed.", flush=True)
 
 
 def _remove(accounts: Accounts, found: argparse.Namespace) -> None:
@@ -775,10 +1027,10 @@ def main(argv: list[str] | None = None) -> None:
     store = PolicyStore(database)
     try:
         accounts = Accounts(store.connection)
-        {"list": _list, "add": _add, "update": _update, "remove": _remove}[found.action](
+        {"list": _list, "add": _add, "update": _update, "remove": _remove, "test-email": _test_email}[found.action](
             accounts, *([] if found.action == "list" else [found])
         )
-    except AccountError as error:
+    except (AccountError, _Failed) as error:
         raise SystemExit(str(error)) from None
     except (KeyboardInterrupt, EOFError, _Stopped) as stopped:
         why = str(stopped) if isinstance(stopped, _Stopped) else "Stopped."

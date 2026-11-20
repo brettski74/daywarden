@@ -1,8 +1,10 @@
 import { redirect, type RouteObject } from "react-router";
 import { Layout, layoutLoader } from "./components/Layout";
+import { Account, accountAction, accountLoader } from "./pages/Account";
 import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Facts, factsLoader, factsShouldRevalidate } from "./pages/Facts";
+import { Forgot, forgotLoader } from "./pages/Forgot";
 import { Login, loginLoader } from "./pages/Login";
 import { Mcp, mcpAction, mcpLoader, mcpShouldRevalidate } from "./pages/Mcp";
 import { McpActivity, mcpActivityLoader } from "./pages/McpActivity";
@@ -14,6 +16,7 @@ import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Requests, requestsLoader } from "./pages/Requests";
+import { Reset, resetLoader } from "./pages/Reset";
 import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend";
 import { Usage, usageLoader } from "./pages/Usage";
 import { Words, wordsLoader, wordsShouldRevalidate } from "./pages/Words";
@@ -40,6 +43,9 @@ const loading = <div className="loading" aria-busy="true" />;
 // adminOnly, unless it fits the reviewer rule in Access control in docs/parent-portal.md.
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login />, loader: loginLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
+  // Forgot password and Reset password need no session, and have the sign-in screen's look (S044.2).
+  { path: "/forgot", element: <Forgot />, loader: forgotLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
+  { path: "/reset", element: <Reset />, loader: resetLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
   {
     path: "/",
     element: <Layout />,
@@ -60,6 +66,8 @@ export const routes: RouteObject[] = [
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },
           { path: "usage/bytes", element: <Usage unit="bytes" />, loader: usageLoader("bytes") },
           { path: "usage/requests", element: <Requests />, loader: requestsLoader },
+          // Open to reviewers: changing your own password is a reviewer write (S044.2).
+          { path: "account", element: <Account />, loader: accountLoader, action: accountAction },
           ...[
             {
               path: "tasks/:type/:name",

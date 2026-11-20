@@ -49,6 +49,15 @@ services:
       PARENT_NAMES: ${PARENT_NAMES}
       PARENT_IDLE: ${PARENT_IDLE:-15m}
       PARENT_LIFETIME: ${PARENT_LIFETIME:-180m}
+      # Email for password resets (S044.2). Empty is unset: email is off
+      # without SMTP_HOST, and the service fills in the other defaults.
+      PARENT_RESET_LIFETIME: ${PARENT_RESET_LIFETIME:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
       PARENT_HTTPS_PORT: "8443"
       # Host port clients use. Task URLs use this, not the bind port 8443.
       POLICY_PORT: ${POLICY_PORT:-8084}

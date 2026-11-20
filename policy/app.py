@@ -32,12 +32,14 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
+from policy.account_pages import install_account_pages
 from policy.accounts import Accounts, session_limits
 from policy.check import household_zone, load_required, summary_lines
 from policy.child_page import FAVICON_FILE, FAVICON_PATH
 from policy.clients import normalize_ip
 from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
+from policy.mail import Mailer, mail_settings, reset_lifetime
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy import control
@@ -51,7 +53,7 @@ from policy.week import Weeks
 from policy.portal import PORTAL_DIR, PortalGate, client_names, install_portal
 from policy.returns import ReturnPages, way_back
 from policy.review import QUIZ_PAGE
-from policy.selection import task_media_path, task_page_path
+from policy.selection import published_port, task_media_path, task_page_path
 from policy.sounds import SOUND_DIR, SOUND_PATH, load_sounds, media_type
 from policy.recordings import Recordings
 from policy.store import PolicyStore
@@ -88,6 +90,9 @@ def create_app() -> FastAPI:
 
     database.parent.mkdir(parents=True, exist_ok=True)
     idle, lifetime = session_limits(os.environ)
+    # Read once, so a bad email setting stops the service before anything starts.
+    mail = mail_settings(os.environ)
+    reset_life = reset_lifetime(os.environ)
     holder = Holder(_load_policy(policy_file, localtime))
     store = PolicyStore(database)
     accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
@@ -98,6 +103,7 @@ def create_app() -> FastAPI:
         usage_store.install_length(holder.loaded.policy.bucket_length, holder.loaded.clock.local())
     _announce(summary_lines(holder.loaded.policy, holder.loaded.clock, holder.loaded.source))
     _announce_parents(accounts)
+    _announce(["email is off: SMTP_HOST is not set" if mail is None else mail.describe()])
     sounds = load_sounds(Path(os.environ.get("SOUND_DIR", str(SOUND_DIR))))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.idle = accounts.idle
@@ -324,6 +330,16 @@ def create_app() -> FastAPI:
     mcp_box["server"] = mcp
     _announce([mcp_settings.summary_line(mcp.state), *mcp.state.problems])
     install_mcp(app, mcp, gate)
+    install_account_pages(
+        app,
+        gate=gate,
+        accounts=accounts,
+        loaded=lambda: holder.loaded,
+        mailer=None if mail is None else Mailer(mail),
+        reset_lifetime=reset_life,
+        names=parent_names(os.environ.get("PARENT_NAMES")),
+        port=published_port,
+    )
     install_portal(
         app,
         loaded=lambda: holder.loaded,

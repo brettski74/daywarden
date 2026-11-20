@@ -147,12 +147,13 @@ Save in the context bar, or Ctrl+S, saves every change on the page. The task is 
 
 ```sh
 dw-account add --role admin --password ada        # a new admin, asking for her password
-dw-account add --email nana@example.net nana      # a new reviewer with an address and no password yet
+dw-account add --email nana@example.net nana      # a new reviewer with an address, sent a welcome email
 dw-account update --password nana                 # set or replace nana's password
 dw-account update --role admin nana               # change her role; she must sign in again
 dw-account update --email nana@example.org nana   # change her address. --no-email removes it
 dw-account remove nana                            # remove her account, after asking
 dw-account list                                   # each account: role, address, and whether it has a password
+dw-account test-email nana                        # send nana a test email, to check the SMTP_ settings
 dw-account help                                   # every subcommand and switch. dw-account add --help for one
 ```
 
@@ -160,11 +161,42 @@ dw-account help                                   # every subcommand and switch.
 
 Each account is an admin or a reviewer. An admin runs the system and can use every page and MCP tool. A reviewer, such as a grandparent or a tutor, sees only Attempts and Usage, can record a parent check, and cannot change tasks, assets, policy, or the MCP server. An agent a reviewer approves can only read attempts and usage. A new account is a reviewer unless `--role admin` is given, except that while there is no admin, as on a fresh install, the first account must be added with `--role admin`. The only admin cannot become a reviewer or be removed. Changing a role ends the account's sessions.
 
-An account may have one email address, which only `dw-account` sets. A new account has no password unless `--password` is given, and no one can sign in to it until `dw-account update --password` sets one. `add` needs `--email`, `--password`, or both. `--password` asks for the password twice with echo off, and never reads it from the command line. Without a terminal, it reads one line of standard input instead, as in `printf '%s\n' "$PASSWORD" | dw-account add --role admin --password ada`. A password is 1 to 200 characters. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`. Setting a password ends that account's sessions and the MCP connections it approved.
+An account may have one email address, which only `dw-account` sets. A new account has no password unless `--password` is given, and no one can sign in to it until its parent chooses one through Forgot password, as in [Passwords by email](#passwords-by-email), or `dw-account update --password` sets one. `add` needs `--email`, `--password`, or both. `--password` asks for the password twice with echo off, and never reads it from the command line. Without a terminal, it reads one line of standard input instead, as in `printf '%s\n' "$PASSWORD" | dw-account add --role admin --password ada`. A password is 1 to 200 characters. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`. Setting a password ends that account's sessions and the MCP connections it approved.
 
 When an account's security is in doubt, such as a lost device or a password someone else may know, remove it with `dw-account remove`, then add it again if it is still wanted. Removing ends its sessions and the MCP connections it approved. The MCP activity log keeps its earlier entries. A new account with the same username gets none of the old one's sessions or connections. Without a terminal, `remove` needs `--yes`.
 
 With no account, the portal stays closed and shows no usage or attempts. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. A portal tab left open does nothing by itself, so it does not keep a session going. After a session ends, the next click shows the sign-in screen, and signing in opens the page that was clicked. An action such as Record parent check is not repeated by the sign-in. Press it again. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup.
+
+#### Passwords by email
+
+With email set up (see [Email](#email) below), a parent chooses and resets their own password, and whoever runs the host never needs to type one for them.
+
+- **The welcome email.** `dw-account add --email nana@example.net nana`, without `--password`, sends Nana an email with the subject "Your Daywarden account". It names her username and role, links to the sign-in screen at the first name in `PARENT_NAMES`, and tells her to press Forgot password there and enter her username to have a link sent for choosing her password. It holds no link that sets a password, because she may not be ready to use it. With `--password`, no welcome email is sent. With email off, or when the email fails, the account is still added, and the command says why, says that `dw-account update --password nana` sets a password now, and exits with status 1.
+- **Forgot password.** The sign-in screen has a Forgot password link, at `/parent/forgot`, when email is on. It asks for a username, not an address, because two accounts may share one. Send link always answers the same way, whether or not the account exists or has an address, so it shows nothing about the accounts. The account's own address gets a link that works once, for `PARENT_RESET_LIFETIME` (60 minutes unless set). A second request for the same account within 5 minutes sends nothing, and a later one replaces the earlier link. The link opens Reset password, which asks for the new password twice. Every link opens the same page and gets the same answer, valid or not: after Save, the sign-in screen says "If your link was still valid, your new password is saved. If you cannot sign in with it, ask for a new link with Forgot password." A reset ends every session of the account and the MCP connections it approved. Setting the password any other way, or removing the account, stops its link working.
+- **The Account page.** "Signed in as …" at the bottom of the sidebar opens `/parent/account`, for admins and reviewers alike. It shows the username, the role, and the email address, and changes the password: the current one, then the new one twice. Every other session of the account ends, this tab stays signed in, and the MCP connections the account approved end.
+- **The notice.** When a password is changed on the Account page, reset by email, or set with `dw-account update --password`, an account with an address is sent "Your Daywarden password was changed", saying which and when. A reset that chooses an account's first password sends none. A notice that cannot be sent is logged, and the password is changed anyway.
+
+`dw-account test-email nana` sends Nana a short test email and says that the mail server accepted it. With email off, an account with no address, or a failure, it says why, such as "Email is off: SMTP_HOST is not set." or the mail server's refusal, and exits with status 1.
+
+#### Email
+
+Email is on when `SMTP_HOST` is set in `.env`, and off when it is not. The settings are in [Configuration](#configuration). Every connection to the mail server is encrypted, either TLS from the first byte (`SMTP_SECURITY=tls`, as on port 465) or STARTTLS (`starttls`, as on port 587), and the server's certificate is checked against the system's trusted authorities and `SMTP_HOST`. There is no plain text setting. A server that does not offer STARTTLS, or whose certificate does not match, gets nothing, not even the username and password. `SMTP_PASSWORD` is never printed. For [forwardemail.net](https://forwardemail.net), the username is the alias and the password is the one generated for it:
+
+```sh
+# Port 465, TLS from the first byte
+SMTP_HOST=smtp.forwardemail.net
+SMTP_PORT=465
+SMTP_SECURITY=tls
+SMTP_USERNAME=daywarden@example.net
+SMTP_PASSWORD=the-generated-password
+MAIL_FROM=Daywarden <daywarden@example.net>
+
+# Or port 587, with STARTTLS
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+```
+
+Run `dw restart` after a change, then `dw-account test-email USERNAME`. A setting that is set but wrong, such as `SMTP_SECURITY=plain`, `SMTP_PORT=abc`, or `SMTP_HOST` with no `MAIL_FROM`, stops the service at startup, and `dw restart` shows the message that names it.
 
 ## Certificate authority
 
@@ -193,6 +225,12 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 | `PARENT_NAMES` | DNS names and IP addresses on the parent certificate. They are also the policy server's names that the proxy forwards without a decision, other than `localhost`, `127.0.0.1`, and `::1`. The proxy reads them on `dw restart` |
 | `PARENT_IDLE` | Idle limit for a parent session. Defaults to `15m` |
 | `PARENT_LIFETIME` | Lifetime of a parent session from sign-in. Defaults to `180m` |
+| `PARENT_RESET_LIFETIME` | How long a password reset link works, as a duration like `PARENT_IDLE`. Defaults to `60m` |
+| `SMTP_HOST` | The mail server. Email is on when it is set, and off when it is not. See [Email](#email) |
+| `SMTP_PORT` | The mail server's port. Defaults to `465` |
+| `SMTP_SECURITY` | `tls`, TLS from the first byte, as on port 465, or `starttls`, as on port 587. Defaults to `tls`. There is no setting for plain text |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | The mail server sign-in, both or neither. For forwardemail.net, the alias and its generated password. The password is never printed. Write a `$`, `` ` ``, `"`, or `\` in it with a `\` before it |
+| `MAIL_FROM` | The sender, such as `Daywarden <daywarden@example.net>`. Needed when `SMTP_HOST` is set |
 | `CA_VOLUME_PATH` | Directory that holds the CA, and the parent page key, across container restarts |
 
 If you point `CA_VOLUME_PATH` somewhere new, create that directory and own it before the first start, so the certificate is readable by you.

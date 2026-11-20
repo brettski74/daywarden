@@ -6,7 +6,8 @@ export const HOME = "/parent/";
 export const LOGIN = "/login";
 export const HOME_ROUTE = "/";
 
-const NOT_PAGES = new Set(["api", "build", "login"]);
+// The Forgot password and Reset password pages are no place to return to after a sign-in.
+const NOT_PAGES = new Set(["api", "build", "login", "forgot", "reset"]);
 
 /** An answer from a data endpoint that the page shows instead of its data. ``data`` is the whole answer. */
 export class ApiError extends Error {
@@ -140,4 +141,35 @@ export async function signOut(): Promise<void> {
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: "{}",
   }).catch(() => undefined);
+}
+
+/** Whether resetting a password by email is set up, and how long a link works, such as "60 minutes". */
+export type ResetSetting = { email: boolean; lifetime: string } | "closed";
+
+/** Ask whether resetting by email is on. It needs no session. Anything but an answer is taken as off. */
+export async function resetSetting(signal?: AbortSignal): Promise<ResetSetting> {
+  const response = await fetch(`${BASE}/api/password-reset`, { headers: { Accept: "application/json" }, signal });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 403 && data.closed) return "closed";
+  if (!response.ok) return { email: false, lifetime: "" };
+  return { email: Boolean(data.email), lifetime: String(data.lifetime ?? "") };
+}
+
+/**
+ * POST JSON to a data address that needs no session, such as Forgot password's.
+ * Return the message the service answered, or its refusal.
+ */
+export async function openPost(path: string, body: unknown): Promise<{ ok: boolean; message: string; closed?: boolean }> {
+  try {
+    const response = await fetch(`${BASE}/api${path}`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) return { ok: true, message: String(data.message ?? "") };
+    return { ok: false, message: data.error ?? `The service answered ${response.status}.`, closed: Boolean(data.closed) };
+  } catch {
+    return { ok: false, message: "The service could not be reached." };
+  }
 }
