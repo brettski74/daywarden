@@ -9,22 +9,22 @@ directory, daywarden-<version>/, holding:
     VERSION, ARCH         the version, and the CPU architecture of the images
     images.tar            both images, for docker load
     docker-compose.yml    the repository's compose file, set to those images
-    env.sample            the repository's .env, with paths under ~/daywarden, the
+    env.sample            the repository's .env.sample, with paths under ~/daywarden, the
                           default ports, and a stand-in policy server name
-    config/               the repository's policy.yaml and bypass.txt, the YAML
+    config/               the repository's policy.yaml and bypass.txt.sample, the YAML
                           files in its tasks.d/, which policy.yaml includes, and
                           the pools in its parts_of_speech_pools/ and
                           capitalisation_pools/
 
-The repository's .env and bypass.txt are this machine's development settings.
-The package never carries them: its ports are the defaults, and its policy
+A development machine's own .env and config/bypass.txt are never read, and the
+samples' names are not carried either: its ports are the defaults, and its policy
 server is SAMPLE_SERVER, which install.sh replaces with the installing
 machine's names.
     bin/                  the host commands
     lib/policy/           the Python source cut-clips runs, with requirements.txt,
                           and not the parent portal, which is built into the image
 
-The repository's .env, compose file, and make up are not changed.
+The repository's .env.sample, compose file, and make up are not changed.
 
 Run with: python -m deploy.build [--out DIR]
 """
@@ -53,7 +53,7 @@ SAMPLE_ENV = {
 }
 # The policy server's name in the package. install.sh replaces it with this machine's names.
 SAMPLE_SERVER = "daywarden-server"
-# Set in the package whatever the development .env says.
+# Set in the package whatever .env.sample says.
 SAMPLE_DEFAULTS = {"PORT_BASE": "8080", "PARENT_NAMES": f"{SAMPLE_SERVER},localhost,127.0.0.1"}
 # A port set on its own wins over PORT_BASE, so the package sets none.
 SINGLE_PORTS = ("PROXY_PORT", "POLICY_PORT", "PROXY_CONFIG_PORT")
@@ -100,10 +100,10 @@ def proxy_base_image(text: str) -> str:
 
 
 def sample_env(text: str) -> str:
-    """Return the repository's .env as the package's sample.
+    """Return the repository's .env.sample as the package's sample.
 
     The CA and data directories go under ~/daywarden. PORT_BASE is the default
-    and PARENT_NAMES names SAMPLE_SERVER, whatever this machine's .env says, and
+    and PARENT_NAMES names SAMPLE_SERVER, whatever .env.sample says, and
     a port set on its own is left out, so the sample is the same on every
     build machine. The comments are kept.
     """
@@ -111,7 +111,7 @@ def sample_env(text: str) -> str:
     for key, value in SAMPLE_ENV.items():
         found = [index for index, line in enumerate(lines) if line.startswith(f"{key}=")]
         if not found:
-            raise ValueError(f".env does not set {key}")
+            raise ValueError(f".env.sample does not set {key}")
         for index in found:
             lines[index] = f"{key}={value}"
     for key, value in SAMPLE_DEFAULTS.items():
@@ -124,10 +124,10 @@ def sample_env(text: str) -> str:
 
 
 def sample_bypass(text: str, parent_names: str) -> str:
-    """Return the repository's bypass.txt with this machine's policy server names as SAMPLE_SERVER.
+    """Return the repository's bypass.txt.sample with its policy server names as SAMPLE_SERVER.
 
     A server line is one in the block under a ``# Policy server`` comment, or
-    one that names a PARENT_NAMES entry of this machine's .env. The first
+    one that names a PARENT_NAMES entry of .env.sample. The first
     becomes SAMPLE_SERVER and the rest are dropped, so install.sh finds the one
     line it replaces with the installing machine's names.
     """
@@ -180,9 +180,9 @@ def stage(package: Path, version: str, arch: str) -> None:
     shutil.copy2(ROOT / "deploy" / "install.sh", package / "install.sh")
     for command in COMMANDS:
         shutil.copy2(ROOT / "bin" / command, package / "bin" / command)
-    env = (ROOT / ".env").read_text(encoding="utf-8")
+    env = (ROOT / ".env.sample").read_text(encoding="utf-8")
     shutil.copy2(ROOT / "config" / "policy.yaml", package / "config" / "policy.yaml")
-    bypass = sample_bypass((ROOT / "config" / "bypass.txt").read_text(encoding="utf-8"), env_value(env, "PARENT_NAMES"))
+    bypass = sample_bypass((ROOT / "config" / "bypass.txt.sample").read_text(encoding="utf-8"), env_value(env, "PARENT_NAMES"))
     (package / "config" / "bypass.txt").write_text(bypass, encoding="utf-8")
     tasks = sorted(path for path in (ROOT / "config" / "tasks.d").glob("*") if path.suffix in (".yaml", ".yml") and path.is_file())
     if tasks:

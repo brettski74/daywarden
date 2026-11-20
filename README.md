@@ -5,8 +5,12 @@ Household explicit proxy. `make up` starts mitmproxy with a certificate authorit
 ## Start
 
 ```sh
+cp .env.sample .env                          # then set PARENT_NAMES and the rest for this machine
+cp config/bypass.txt.sample config/bypass.txt  # then list the same names under Policy server
 make up
 ```
+
+`.env` and `config/bypass.txt` are this machine's settings, and git ignores them. `.env.sample` and `config/bypass.txt.sample` are the committed samples, which name no real machine, and `make up` copies each sample into place when its file is missing. See [Configuration](#configuration).
 
 `make up` and `make down` run `bin/dw up` and `bin/dw down` on this checkout, so they check the policy first and use the same ports. `make down` stops the stack and removes the containers. The CA directory and the policy database stay on disk.
 
@@ -214,7 +218,7 @@ Installing the certificate, and pointing Firefox or Chromium at the proxy, is wr
 
 ## Configuration
 
-`.env` sets the ports, the policy server's names, and the CA directory. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
+`.env` sets the ports, the policy server's names, and the CA directory. It is not committed: `.env.sample` describes every setting and its default. A value you have already exported wins, so `PARENT_NAMES="localhost,127.0.0.1" make up` uses that list. `make show-env` prints the names and the CA directory `up` will use:
 
 | Variable | Meaning |
 | --- | --- |
@@ -363,7 +367,7 @@ The stack can run on another Arch Linux machine on the local network, without a 
 make dist
 ```
 
-That builds the policy image and a proxy image with the addon copied in, saves both into the package, and writes `dist/daywarden-<version>.tar.gz`. The version is the build time, such as `20261105-184500`, and the images are tagged with it. The package holds the repository's `config/policy.yaml` and `config/bypass.txt` as they are now, and `.env` with the CA and data directories moved under `~/daywarden`. It does not change `make up` or this repository's `.env`, and it does not check for uncommitted changes.
+That builds the policy image and a proxy image with the addon copied in, saves both into the package, and writes `dist/daywarden-<version>.tar.gz`. The version is the build time, such as `20261105-184500`, and the images are tagged with it. The package holds the repository's `config/policy.yaml` and `config/bypass.txt` as they are now, and `.env.sample` with the CA and data directories moved under `~/daywarden`. It does not change `make up` or this repository's `.env` or `.env.sample`, and it does not check for uncommitted changes.
 
 Copy the tarball to the target, unpack it, and run the installer as the user who will run daywarden, not as root:
 

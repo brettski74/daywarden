@@ -1,4 +1,4 @@
-"""S014: make dist turns the development compose file and .env into the package's copies."""
+"""S014: make dist turns the development compose file and .env.sample into the package's copies."""
 
 import pytest
 import yaml
@@ -61,7 +61,7 @@ def test_the_sample_env_puts_the_ca_and_data_under_daywarden_and_keeps_the_rest(
 
 
 def test_the_sample_env_never_carries_the_build_machines_ports_or_names():
-    """The repository's .env is this machine's development settings, so the package is the same on any build machine."""
+    """A .env.sample edited on one machine still gives the same package on any build machine."""
     text = (
         "# The first of a block of 10 ports.\nPORT_BASE=7070\n# PROXY_PORT=8080\nPOLICY_PORT=9999\n"
         "PARENT_NAMES=myserver,myserver.example.net,localhost,127.0.0.1\nCA_VOLUME_PATH=./data/ca\nDAYWARDEN_DATA_DIR=x\n"

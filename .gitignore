@@ -13,3 +13,7 @@ policy/portal/dist/
 # The CA private key is generated on first start. Do not commit it.
 data/ca/*
 !data/ca/.gitkeep
+
+# This machine's settings. .env.sample and config/bypass.txt.sample are the committed samples.
+.env
+config/bypass.txt

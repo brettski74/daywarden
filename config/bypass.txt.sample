@@ -1,3 +1,6 @@
+# A sample bypass.txt. Copy it to bypass.txt, which git ignores, and set
+# this machine's names there. make up does that when bypass.txt is missing.
+#
 # Hosts that skip the decision API, one glob per line.
 # Matching is against the hostname only, and it ignores case.
 # * matches any run of characters. ? matches one character.
@@ -12,8 +15,8 @@
 # without a decision, but reads that list only when it starts. This file is
 # read on every request, so list the same names here as well. dw check warns
 # about a name in PARENT_NAMES that this file does not match.
-garden
-garden.homenet.net
+myserver
+myserver.homenet.net
 
 # School work. The same host globs as that group.
 classroom.google.com

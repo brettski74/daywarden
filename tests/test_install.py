@@ -35,7 +35,7 @@ def _env_value(path, key):
 
 def _server_lines(bypass_text):
     """The non-comment lines of bypass.txt that are not school hosts."""
-    school = {line for line in (ROOT / "config" / "bypass.txt").read_text(encoding="utf-8").splitlines() if "." in line}
+    school = {line for line in (ROOT / "config" / "bypass.txt.sample").read_text(encoding="utf-8").splitlines() if "." in line}
     return [line for line in bypass_text.splitlines() if line and not line.startswith("#") and line not in school]
 
 

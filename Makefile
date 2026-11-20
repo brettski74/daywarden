@@ -13,31 +13,41 @@ DIST_DIR := dist
 PORTAL := policy/portal
 PORTAL_INSTALLED := $(PORTAL)/node_modules/.package-lock.json
 
-.PHONY: up down reload restart check logs show-env venv portal-deps test dist help
+.PHONY: settings up down reload restart check logs show-env venv portal-deps test dist help
 
 # make help lists each target that has a "## description" on its line.
 
+# .env and config/bypass.txt are this machine's settings, and git ignores them.
+# A new checkout makes each from its committed sample, which names no real
+# machine, and says so. One that exists is never touched.
+settings: ## Make .env and config/bypass.txt from their samples, when either is missing
+	@for file in .env config/bypass.txt; do \
+		if [ ! -e "$$file" ] && [ -f "$$file.sample" ]; then \
+			cp "$$file.sample" "$$file" && echo "Made $$file from $$file.sample. Set this machine's names in it." >&2; \
+		fi; \
+	done
+
 # bin/dw loads .env the same way as load_env, so an exported value still wins.
 # It also works out the ports from PORT_BASE, which Compose cannot do.
-up: ## Check the policy, start the local stack, and wait until every service is healthy
+up: settings ## Check the policy, start the local stack, and wait until every service is healthy
 	@bin/dw up
 
-down: ## Stop the local stack and remove its containers
+down: settings ## Stop the local stack and remove its containers
 	@bin/dw down
 
-reload: ## Check the policy and apply it without restarting a container
+reload: settings ## Check the policy and apply it without restarting a container
 	@bin/dw reload
 
-restart: ## Check the policy, then replace every container. Applies .env changes
+restart: settings ## Check the policy, then replace every container. Applies .env changes
 	@bin/dw restart
 
-check: ## Check the policy and list every error. Changes nothing
+check: settings ## Check the policy and list every error. Changes nothing
 	@bin/dw check
 
-logs: ## Show the last lines each service logged. Options and services with ARGS="-f decisions"
+logs: settings ## Show the last lines each service logged. Options and services with ARGS="-f decisions"
 	@bin/dw logs $(ARGS)
 
-show-env: ## Print PARENT_NAMES, the CA directory, and the data directory
+show-env: settings ## Print PARENT_NAMES, the CA directory, and the data directory
 	@$(load_env); printf '%s\n' "$$PARENT_NAMES" "$$CA_VOLUME_PATH" "$$DAYWARDEN_DATA_DIR"
 
 # The venv is built once and rebuilt only when a requirements file changes.

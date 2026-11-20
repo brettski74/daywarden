@@ -51,6 +51,9 @@ def test_up_and_down_start_and_stop_every_service_on_the_ports_dw_uses(host):
 
 def test_up_in_a_clone_makes_no_history_of_its_own_and_says_so(host):
     shutil.copytree(ROOT / "config", host.root / "config", ignore=shutil.ignore_patterns(".git"))
+    # A configured checkout: bypass.txt is this machine's, made from the committed sample.
+    if not (host.root / "config" / "bypass.txt").exists():
+        shutil.copy2(host.root / "config" / "bypass.txt.sample", host.root / "config" / "bypass.txt")
     identity = {"GIT_AUTHOR_NAME": "dev", "GIT_AUTHOR_EMAIL": "dev@example.invalid", "GIT_COMMITTER_NAME": "dev", "GIT_COMMITTER_EMAIL": "dev@example.invalid"}
     for command in (["init", "--quiet"], ["add", "--all"], ["commit", "--quiet", "-m", "clone"]):
         assert host.run("git", *command, cwd=host.root, env=identity).returncode == 0
