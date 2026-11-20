@@ -393,7 +393,8 @@ def test_an_approved_agent_initializes_and_lists_its_tools(service):
     assert status == 200
     assert json.loads(body)["result"]["serverInfo"]["name"] == "daywarden"
     assert tool_names(service, tokens["access_token"]) == [
-        "list_tasks", "get_task", "list_attempts", "get_task_trend", "get_arithmetic_facts", "get_attempt", "get_usage", "list_requests",
+        "list_tasks", "get_task", "list_attempts", "get_task_trend", "get_arithmetic_facts", "get_spelling_words", "get_attempt", "get_usage",
+        "list_requests",
     ]
     assert [entry["outcome"] for entry in activity(service, cookie)] == ["approved"]
 
@@ -757,6 +758,37 @@ def test_get_arithmetic_facts_gives_the_facts_page_with_its_all_time_figures(ser
     fact = found["facts"]["facts"][0]
     assert (fact["asked"], fact["all_time"]["asked"], fact["all_time"]["run"], fact["all_time"]["weight"]) == (1, 2, 0, 4.333)
     assert found["slow"]["text"].startswith("Slow boost starts once 10 facts")
+
+
+def test_get_spelling_words_gives_the_words_page_and_a_named_words_misspellings_and_attempts(service):
+    from policy.tasks import AttemptStore, TaskKey
+
+    now = datetime(2026, 11, 17, 18, 0, tzinfo=ZONE)
+    at(service, now)
+    questions = [
+        {"run": 1, "key": "necessary", "word": "necessary", "pool": "current", "answer": answer, "outcome": outcome,
+         "word_replays": 0, "sentence_plays": 0, "allowed_ms": 10_000, "received_ms": 3000}
+        for answer, outcome in (("necesary", "incorrect"), ("necessary", "correct"))
+    ] + [{"run": 1, "key": "rope", "word": "rope", "pool": "current", "answer": "rope", "outcome": "correct", "received_ms": 2000}]
+    with AttemptStore(service.state.database) as store:
+        started = now - timedelta(days=1)
+        detail = {"settings": {}, "runs": [{"run": 1}], "questions": questions}
+        store.record("younger", TaskKey("spelling", "words"), "pass", started, started_at=started, detail=detail)
+    cookie = sign_in(service)
+    _client, tokens = connect(service, cookie)
+    found = tool_answer(service, tokens["access_token"], "get_spelling_words", {"client": "younger", "period": "past_week"})
+    _status, body, _headers = call(service, "GET", "/parent/api/attempts/words", query="client=younger&range=past-week", cookie=cookie)
+    page = json.loads(body)
+    assert found["words"]["tiles"] == page["words"]["tiles"] == {"words_asked": 2, "right_first_time": 50, "words_missed": 1, "settled": 0}
+    assert [word["word"] for word in found["words"]["words"]] == ["necessary", "rope"]
+    assert "misspellings" not in found["words"]["words"][0] and found["word"] is None
+    named = tool_answer(service, tokens["access_token"], "get_spelling_words", {"client": "younger", "period": "past_week", "word": "Necessary"})
+    assert named["word"]["misspellings"] == [{"text": "necesary", "count": 1}]
+    assert [(each["task"], each["result"], each["answers"]) for each in named["word"]["attempts"]] == [
+        ("words", "after_miss", ["necesary", "necessary"]),
+    ]
+    nothing = tool_answer(service, tokens["access_token"], "get_spelling_words", {"client": "younger", "period": "past_week", "pool": []})
+    assert nothing["words"] is None
 
 
 def test_a_custom_period_is_from_and_to(service):

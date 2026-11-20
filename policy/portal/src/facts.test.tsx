@@ -169,7 +169,16 @@ describe("the facts page", () => {
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Shade by" }), "weight");
     await waitFor(() => expect(shown(router)).toBe("/parent/attempts/facts/multiplication?client=younger&shade=weight"));
     const key = screen.getByRole("list", { name: "Shading" });
-    expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Weight under 0.5", "0.5 to 1", "1 to 2", "2 to 4", "4 or more"]);
+    // The address changes a moment before the page draws the new key.
+    await waitFor(() =>
+      expect(within(screen.getByRole("list", { name: "Shading" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "Weight under 0.5",
+        "0.5 to 1",
+        "1 to 2",
+        "2 to 4",
+        "4 or more",
+      ]),
+    );
     expect(key).toHaveAttribute("data-shade", "weight");
     const grid = screen.getByRole("table", { name: "Multiplication facts" });
     expect(grid).toHaveAttribute("data-shade", "weight");

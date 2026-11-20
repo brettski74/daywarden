@@ -268,6 +268,114 @@ export const ARITHMETIC_ATTEMPT = {
 };
 
 /** Default settings over the past week at Friday 13 November 2026 21:30: younger used 1h 15m on the Tuesday, older nothing. */
+const spelled = (word: string, counts: { first_time: number; after_miss: number; missed: number }, extra: Record<string, unknown> = {}) => {
+  const asked = counts.first_time + counts.after_miss + counts.missed;
+  return {
+    word,
+    key: word,
+    pools: ["current"],
+    asked,
+    ...counts,
+    missed_percent: Math.round((100 * (counts.after_miss + counts.missed)) / asked),
+    timeouts: 0,
+    median_ms: 3000 as number | null,
+    replays_per_ask: 0,
+    last_missed: null as string | null,
+    last_missed_day: null as string | null,
+    misspellings: [] as { text: string; count: number }[],
+    attempts: [] as { id: number; result: string; pools: string[]; answers: string[] }[],
+    all_time: { run: 3, weight: 0.25 },
+    ...extra,
+  };
+};
+
+/** younger's spelling words this week: necessary missed Monday and Tuesday and right after a miss Wednesday, rope and cat right first time. */
+export const WORDS = {
+  clients: ["younger", "older", "default"],
+  client: "younger",
+  view: { ...ALL_VIEW, client: "younger" },
+  notes: [] as string[],
+  times: "Times are Australia/Sydney.",
+  today: "2026-11-18",
+  range: "Past month",
+  days: { from: "2026-10-19", to: "2026-11-18" },
+  tasks_offered: [
+    { name: "spelling-younger", in_policy: true },
+    { name: "old-list", in_policy: false },
+  ],
+  choices: { task: ["spelling-younger", "old-list"], pool: ["current", "revision", "attic", "no_pool"] },
+  this_week: { from: "2026-11-16", to: "2026-11-18" } as { from: string; to: string } | null,
+  message: null as string | null,
+  words: {
+    tiles: { words_asked: 3, right_first_time: 71, words_missed: 1, settled: 1 },
+    columns: [51, 52, 53],
+    attempts: {
+      "51": { started: "Monday 16 November 2026, 16:00", day: "2026-11-16", task: "spelling-younger" },
+      "52": { started: "Tuesday 17 November 2026, 16:00", day: "2026-11-17", task: "spelling-younger" },
+      "53": { started: "Wednesday 18 November 2026, 16:00", day: "2026-11-18", task: "spelling-younger" },
+    },
+    words: [
+      spelled("cat", { first_time: 1, after_miss: 0, missed: 0 }, { pools: ["revision"], all_time: { run: 6, weight: 0.125 }, attempts: [{ id: 52, result: "first_time", pools: ["revision"], answers: ["cat"] }] }),
+      spelled(
+        "necessary",
+        { first_time: 0, after_miss: 1, missed: 2 },
+        {
+          timeouts: 1,
+          median_ms: 5000,
+          replays_per_ask: 0.7,
+          last_missed: "Wednesday 18 November 2026",
+          last_missed_day: "2026-11-18",
+          misspellings: [
+            { text: "necesary", count: 3 },
+            { text: "neccessary", count: 1 },
+          ],
+          attempts: [
+            { id: 53, result: "after_miss", pools: ["current"], answers: ["necesary", "necessary"] },
+            { id: 52, result: "missed", pools: ["current"], answers: ["timeout", "necesary"] },
+            { id: 51, result: "missed", pools: ["revision"], answers: ["necesary", "neccessary"] },
+          ],
+          all_time: { run: 0, weight: 4.25 },
+        },
+      ),
+      spelled("rope", { first_time: 3, after_miss: 0, missed: 0 }, {
+        median_ms: 2000,
+        attempts: [53, 52, 51].map((id) => ({ id, result: "first_time", pools: ["current"], answers: ["rope"] })),
+      }),
+    ],
+  },
+};
+
+/** A spelling attempt: a run that expired, a run left for practice mode, then the run practice started. */
+export const SPELLING_ATTEMPT = {
+  ...ATTEMPT,
+  id: 44,
+  task: "spelling-younger",
+  reopened: [],
+  answers: null,
+  spelling: {
+    last: {
+      run: 3,
+      ended: null,
+      figures: { points: 3, pass_mark: 3, questions: 4, maximum: null, wrong: 1, timeouts: 0, time_ms: 14_000, average_ms: 3500, current_points: 2, current_required: 2, revision_points: 1, revision_required: 1 },
+      practised: [
+        { key: "rope", word: "rope", pool: "current", pool_label: "Current" },
+        { key: "cat", word: "cat", pool: "revision", pool_label: "Revision" },
+      ],
+      questions: [
+        { key: "necessary", word: "necessary", spelling: "necessary", pool: "current", pool_label: "Current", answer: "necesary", outcome: "incorrect", outcome_label: "Wrong", came_back: true, word_replays: 2, sentence_plays: 1, taken_ms: 4000, allowed_ms: 12_000 },
+        { key: "necessary", word: "necessary", spelling: "necessary", pool: "current", pool_label: "Current", answer: "necessary", outcome: "correct", outcome_label: "Right", came_back: false, word_replays: 0, sentence_plays: 0, taken_ms: 4500, allowed_ms: 12_000 },
+        { key: "read.1", word: "read.1", spelling: "read", pool: "current", pool_label: "Current", answer: "read", outcome: "correct", outcome_label: "Right", came_back: false, word_replays: 0, sentence_plays: 0, taken_ms: 3000, allowed_ms: 12_000 },
+        { key: "cat", word: "cat", spelling: "cat", pool: "revision", pool_label: "Revision", answer: "", outcome: "timeout", outcome_label: "Timeout", came_back: false, word_replays: 0, sentence_plays: 0, taken_ms: null, allowed_ms: 12_000 },
+      ],
+    },
+    earlier: [
+      { run: 1, ended: { how: "expired", at: "Wednesday 18 November 2026, 15:00" }, figures: null, practised: null, questions: [] },
+      { run: 2, ended: { how: "practice", at: "Wednesday 18 November 2026, 16:20" }, figures: null, practised: null, questions: [] },
+    ],
+  },
+  record: { settings: {} },
+};
+
 export const USAGE = {
   unit: "minutes",
   today: "2026-11-13",
@@ -496,6 +604,10 @@ function standard(call: Call): Reply {
       return { body: ARITHMETIC_ATTEMPT };
     case "/parent/api/attempts/facts/multiplication":
       return { body: FACTS };
+    case "/parent/api/attempts/words":
+      return { body: WORDS };
+    case "/parent/api/attempts/44":
+      return { body: SPELLING_ATTEMPT };
     case "/parent/api/usage/minutes":
       return { body: USAGE };
     case "/parent/api/usage/bytes":

@@ -36,7 +36,7 @@ from test_mcp_server import (  # noqa: E402,F401 - service is the fixture
 )
 
 NOW = datetime(2026, 11, 19, 9, 0, tzinfo=timezone.utc)
-REVIEWER_TOOLS = ["list_attempts", "get_task_trend", "get_arithmetic_facts", "get_attempt", "get_usage", "list_requests"]
+REVIEWER_TOOLS = ["list_attempts", "get_task_trend", "get_arithmetic_facts", "get_spelling_words", "get_attempt", "get_usage", "list_requests"]
 
 
 def add(app, username: str, role: str | None = None) -> None:
@@ -268,6 +268,7 @@ def test_a_reviewer_reads_attempts_and_usage_and_records_a_parent_check(service)
         ("/parent/api/attempts", "client=younger"),
         ("/parent/api/attempts/tasks/worksheet/worksheet-1", "client=younger"),
         ("/parent/api/attempts/facts/times", "client=younger"),
+        ("/parent/api/attempts/words", "client=younger"),
         ("/parent/api/usage/minutes", ""),
         ("/parent/api/usage/bytes", "preset=Default"),
         ("/parent/api/usage/requests", "page=1"),
@@ -375,5 +376,5 @@ def test_a_reviewers_agent_gets_no_reads_mcp_yaml_does_not_grant(service):
     add(service, "nana", REVIEWER)
     _client, tokens = connect(service, sign_in_as(service, "nana"))
     access = tokens["access_token"]
-    assert sorted(tool_names(service, access)) == sorted(["list_attempts", "get_task_trend", "get_arithmetic_facts", "get_attempt"])
+    assert sorted(tool_names(service, access)) == sorted(["list_attempts", "get_task_trend", "get_arithmetic_facts", "get_spelling_words", "get_attempt"])
     assert call_tool(service, access, "get_usage")["content"][0]["text"] == "This needs usage: read."

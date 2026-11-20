@@ -23,6 +23,7 @@ import {
 import { AttemptTable } from "../components/AttemptTable";
 import { ViewFilters } from "../components/ViewFilters";
 import { factsAddress } from "../facts";
+import { taskWordsAddress } from "../spellingWords";
 import { Shape, TrendChart, type Marked, type TrendSeries } from "../components/charts/TrendChart";
 import type { Tick } from "../components/charts/ChartFrame";
 import { ContextBar, StatusBar, useTitle } from "../slots";
@@ -156,6 +157,11 @@ export function TaskTrend() {
       {report.facts && (
         <p className="trend-facts">
           <Link to={factsAddress(report.facts, report.view)}>{report.facts.charAt(0).toUpperCase() + report.facts.slice(1)} facts</Link>
+        </p>
+      )}
+      {task.type === "spelling" && (
+        <p className="trend-facts">
+          <Link to={taskWordsAddress(task.name, report.view)}>Spelling words</Link>
         </p>
       )}
       {!task.in_policy && trend !== null && <p className="task-gone">{task.label} is not in the policy.</p>}

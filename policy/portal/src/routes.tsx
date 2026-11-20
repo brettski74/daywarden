@@ -16,6 +16,7 @@ import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, ta
 import { Requests, requestsLoader } from "./pages/Requests";
 import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend";
 import { Usage, usageLoader } from "./pages/Usage";
+import { Words, wordsLoader, wordsShouldRevalidate } from "./pages/Words";
 import type { PageKey } from "./policy";
 import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
 import { adminOnly } from "./session";
@@ -53,6 +54,7 @@ export const routes: RouteObject[] = [
           { path: "attempts", element: <Attempts />, loader: attemptsLoader, action: attemptsAction },
           { path: "attempts/tasks/:type/:name", element: <TaskTrend />, loader: trendLoader, shouldRevalidate: trendShouldRevalidate },
           { path: "attempts/facts/:operation", element: <Facts />, loader: factsLoader, shouldRevalidate: factsShouldRevalidate },
+          { path: "attempts/words", element: <Words />, loader: wordsLoader, shouldRevalidate: wordsShouldRevalidate },
           { path: "attempts/:id", element: <Attempt />, loader: attemptLoader },
           { path: "usage", loader: () => redirect("/usage/minutes") },
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },

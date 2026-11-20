@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from pathlib import Path
 
 from policy.accounts import Accounts
 from policy.arithmetic import ARITHMETIC, OPERATIONS
@@ -31,6 +32,8 @@ from policy.capitalisation_attempt import capitalisation_runs
 from policy.child_page import FAVICON_PATH
 from policy.fact_figures import operation_of as question_operation
 from policy.report import format_day, format_duration, timezone_note
+from policy.spelling import data_root
+from policy.spelling_report import no_words, offered_tasks, pools_now, read_choices, spelling_runs, this_week_day, words
 from policy.tasks import (
     PARENT_CHECK,
     PASS,
@@ -238,6 +241,79 @@ def facts_report(
     return report
 
 
+def words_report(
+    attempts: AttemptStore,
+    clients: Sequence[str],
+    *,
+    now: datetime,
+    tasks: Sequence[Task] = (),
+    timezone: str | None = None,
+    pairs: Sequence[tuple[str, str]] = (),
+    root: Path | None = None,
+) -> dict:
+    """Return one client group's spelling words over the period, with the attempts page's choices and the Task and Pool filters.
+
+    ``tasks_offered`` is the Task filter's choices, and ``choices`` the
+    chosen tasks and pools. ``this_week`` is the Custom period that This
+    week's words chooses. ``message`` says why there is nothing to show: no
+    group chosen, a group not in the household, a Custom period that is not
+    real days, or no words. Each word's Run and Weight are all-time, from
+    ``bin/word-stats``'s figures, whatever the period and filters. ``root`` is
+    the data directory the pools are read from.
+    """
+    view, notes = read_view(pairs)
+    choices, more = read_choices(pairs)
+    notes.extend(more)
+    chosen = view.client
+    period, problems = period_of(view, now)
+    notes.extend(problems)
+    report: dict = {
+        "clients": list(clients),
+        "client": chosen,
+        "view": view.as_json(),
+        "notes": notes,
+        "times": timezone_note(timezone),
+        **period_json(period, now),
+        "tasks_offered": [],
+        "choices": choices.as_json([]),
+        "this_week": None,
+        "message": None,
+        "words": None,
+    }
+    if not chosen:
+        report["message"] = "Choose a client group."
+        return report
+    if clients and chosen not in clients:
+        report["message"] = NOT_IN_HOUSEHOLD
+        return report
+    today = household_day(now)
+    stored = attempts.attempts(chosen)
+    # Without a real period, only the policy's tasks are offered.
+    offered = offered_tasks(tasks, chosen, stored if period is not None else (), view, period, today)
+    names = [each["name"] for each in offered]
+    if choices.tasks is not None:
+        unknown = [name for name in choices.tasks if name not in names]
+        notes.extend(f"{name} is not a spelling task here, so it is left out." for name in unknown)
+        picked = [name for name in names if name in choices.tasks]
+    else:
+        picked = names
+    report["tasks_offered"] = offered
+    report["choices"] = {"task": picked, "pool": list(choices.pools)}
+    held = pools_now(tasks, picked, root or data_root())
+    report["this_week"] = {"from": this_week_day(stored, picked, held, today).isoformat(), "to": today.isoformat()}
+    if period is None:
+        report["message"] = "Fix the period to show the words."
+        return report
+    found = words(
+        stored, view, period, today, picked, held, choices.pools, attempts.words.figures(chosen), lambda attempt: _local(attempt.started_at)
+    )
+    if found["words"]:
+        report["words"] = found
+    else:
+        report["message"] = no_words(chosen)
+    return report
+
+
 def attempt_report(
     attempts: AttemptStore,
     attempt_id: str,
@@ -268,6 +344,7 @@ def attempt_report(
         "reopened": _reopened(found),
         "arithmetic": attempt_runs(found, _event_time),
         "capitalisation": capitalisation_runs(found, _event_time),
+        "spelling": spelling_runs(found, _event_time),
         "answers": _answers(found.detail),
         "record": _record(found.detail),
     }

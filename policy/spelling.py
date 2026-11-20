@@ -181,6 +181,23 @@ def data_root() -> Path:
     return Path(os.environ.get(DATA_DIR_ENV, DEFAULT_DATA_DIR))
 
 
+def entry_keys(directory: Path) -> set[str]:
+    """Return the folded entry keys of the word recordings in a pool directory, or none when it is not a directory."""
+    keys: set[str] = set()
+    if not directory.is_dir():
+        return keys
+    for child in directory.iterdir():
+        if child.name.startswith(".") or not child.is_file():
+            continue
+        try:
+            parsed = parse_clip_name(child.name, None)
+        except ValueError:
+            continue
+        if parsed is not None and not parsed[2]:
+            keys.add(parsed[0].lower())
+    return keys
+
+
 def parse_settings(body: Mapping) -> Settings:
     """Check a spelling task body's fields and return its settings.
 

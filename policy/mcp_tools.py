@@ -25,7 +25,8 @@ from policy.pac import SWITCHES
 from policy.policy_admin import PolicyChanges
 from policy.pool_admin import PoolAdmin
 from policy.portal import client_names
-from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, trend_report
+from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, trend_report, words_report
+from policy.spelling_report import POOL_CHOICES
 from policy.task_admin import TaskAdmin
 from policy.task_create import TaskChanges
 from policy.tasks import AttemptStore, TaskKey
@@ -512,6 +513,41 @@ def get_arithmetic_facts(sources: Sources, arguments: Mapping) -> dict:
     )
 
 
+def get_spelling_words(sources: Sources, arguments: Mapping) -> dict:
+    """The words page's tiles and list. A named word adds its misspellings and the attempts that asked it."""
+    now = sources.loaded()
+    policy = now.policy
+    pairs = _attempt_pairs(arguments) + _list_pairs(arguments, "task") + _list_pairs(arguments, "pool")
+    if "task" in arguments and not _names(arguments, "task"):
+        pairs.append(("task", "none"))
+    if "pool" in arguments and not _names(arguments, "pool"):
+        pairs.append(("pool", "none"))
+    found = words_report(
+        sources.attempts,
+        client_names(policy),
+        now=now.clock.local(),
+        tasks=() if policy is None else policy.tasks,
+        timezone=None if policy is None else policy.timezone,
+        pairs=pairs,
+    )
+    named = _text(arguments, "word", required=False).lower()
+    data = found.get("words")
+    if data is not None:
+        detail = {}
+        for word in data["words"]:
+            misspellings = word.pop("misspellings")
+            asked = word.pop("attempts")
+            if word["word"] == named:
+                detail = {"word": word["word"], "misspellings": misspellings, "timeouts": word["timeouts"], "attempts": asked}
+        if detail:
+            detail["attempts"] = [{**data["attempts"][str(each["id"])], **each} for each in detail["attempts"]]
+        elif named:
+            found["notes"].append(f"{named} is not one of the words shown.")
+        del data["columns"], data["attempts"]
+        found["word"] = detail or None
+    return found
+
+
 def get_attempt(sources: Sources, arguments: Mapping) -> dict:
     now = sources.loaded()
     raw = arguments.get("id")
@@ -635,7 +671,21 @@ READ_TOOLS: tuple[Tool, ...] = (
         ("client", "operation"), lambda arguments: str(arguments.get("operation", "")),
     ),
     Tool(
-        "get_attempt", "attempts", "read", "One attempt's page: its summary, answers, and timings.",
+        "get_spelling_words", "attempts", "read",
+        "A client group's spelling words, as the words page shows them: the tiles and each word's figures for the period, "
+        "filters, chosen tasks, and pools now. Run and weight are all-time, as bin/word-stats gives them. this_week is the "
+        "period This week's words chooses. Name a word to add its misspellings and the attempts that asked it.",
+        get_spelling_words,
+        {
+            **_ATTEMPT_FILTERS,
+            "task": {"type": "array", "items": {"type": "string"}, "description": "Spelling task names. Every task offered when left out."},
+            "pool": {"type": "array", "items": {"type": "string", "enum": list(POOL_CHOICES)}, "description": "Pools now. All when left out. no_pool is a word in none of the tasks' pools."},
+            "word": {"type": "string", "description": "A word's entry key, such as necessary or read.1."},
+        },
+        ("client",), lambda arguments: str(arguments.get("client", "")),
+    ),
+    Tool(
+        "get_attempt", "attempts", "read", "One attempt's page: its summary, answers, and timings, with an arithmetic, capitalisation, or spelling attempt's runs.",
         get_attempt, {"id": {"type": ["string", "integer"], "description": "The attempt's number."}}, ("id",),
         lambda arguments: str(arguments.get("id", "")),
     ),

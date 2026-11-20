@@ -5,6 +5,7 @@ import { formatClock, formatPoints, formatSeconds, type Figures } from "../attem
 import { Fold } from "../components/Fold";
 import { Fields, StoredValue, type Stored } from "../components/StoredValue";
 import { factLink } from "../facts";
+import { wordLink } from "../spellingWords";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 
 type Question = {
@@ -52,6 +53,30 @@ type CapSentence = {
 };
 type CapRun = { run: number; expired: string | null; figures: Figures | null; sentences: CapSentence[] };
 
+/** A spelling attempt's question: the word, the pool it was asked from, and what happened. */
+type SpellQuestion = {
+  key: string;
+  word: string;
+  spelling: string;
+  pool: string | null;
+  pool_label: string;
+  answer: string;
+  outcome: "correct" | "incorrect" | "timeout" | null;
+  outcome_label: string;
+  came_back: boolean | null;
+  word_replays: number;
+  sentence_plays: number;
+  taken_ms: number | null;
+  allowed_ms: number | null;
+};
+type SpellRun = {
+  run: number;
+  ended: { how: "expired" | "practice"; at: string } | null;
+  figures: Figures | null;
+  practised: { key: string; word: string; pool: string; pool_label: string }[] | null;
+  questions: SpellQuestion[];
+};
+
 type AttemptReport = {
   id: number;
   task: string;
@@ -62,6 +87,7 @@ type AttemptReport = {
   reopened: { gave_up: string; came_back: string }[];
   arithmetic: { last: Run; expired: Run[]; practice: Walk[] } | null;
   capitalisation: { last: CapRun; expired: CapRun[] } | null;
+  spelling: { last: SpellRun; earlier: SpellRun[] } | null;
   answers: Stored[] | null;
   record: { [key: string]: Stored } | null;
 };
@@ -276,6 +302,113 @@ function CapitalisationRuns({ runs }: { runs: { last: CapRun; expired: CapRun[] 
   );
 }
 
+/** A spelling run's figures, as S035.1 works them out. */
+function SpellSummary({ run }: { run: SpellRun }) {
+  const f = run.figures;
+  if (f === null) return null;
+  const rows: [string, string][] = [
+    ["Points", `${f.current_points ?? 0} / ${f.current_required ?? "?"} current, ${f.revision_points ?? 0} / ${f.revision_required ?? "?"} revision`],
+    ["Questions", String(f.questions)],
+    ["Wrong", String(f.wrong)],
+    ["Timeouts", String(f.timeouts)],
+    ["Time answering", formatClock(f.time_ms / 1000)],
+    ["Average per right answer", f.average_ms === null ? "none" : formatSeconds(f.average_ms / 1000)],
+  ];
+  return (
+    <dl className="summary run-summary">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** A spelling run's questions in order, each word linking to the words page with it chosen. */
+function SpellQuestions({ run, client, label }: { run: SpellRun; client: string; label: string }) {
+  return (
+    <>
+      {run.practised !== null && (
+        <p className="spell-practised">
+          Practised before this run: {run.practised.length ? run.practised.map((each) => each.word).join(", ") : "no words"}
+        </p>
+      )}
+      {run.questions.length === 0 ? (
+        <p>No questions yet.</p>
+      ) : (
+        <div className="facts-list-box">
+          <table className="records run-questions" aria-label={label}>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Word</th>
+                <th scope="col">Pool</th>
+                <th scope="col">Answer given</th>
+                <th scope="col">Outcome</th>
+                <th scope="col">Came back</th>
+                <th scope="col">Word replays</th>
+                <th scope="col">Sentence plays</th>
+                <th scope="col">Time taken</th>
+                <th scope="col">Time allowed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {run.questions.map((question, index) => {
+                const Icon = question.outcome === null ? Hourglass : OUTCOME_ICONS[question.outcome];
+                return (
+                  <tr key={index}>
+                    <td>{index + 1}</td>
+                    <td>{question.key ? <Link to={wordLink(client, question.key)}>{question.key}</Link> : ""}</td>
+                    <td>{question.pool_label}</td>
+                    <td>{question.answer}</td>
+                    <td className="run-outcome" data-outcome={question.outcome ?? "waiting"}>
+                      <Icon aria-hidden="true" />
+                      {question.outcome_label}
+                    </td>
+                    <td>{question.came_back === null ? "" : question.came_back ? "Yes" : "No"}</td>
+                    <td>{question.word_replays}</td>
+                    <td>{question.sentence_plays}</td>
+                    <td>{question.outcome === null ? "" : seconds(question.taken_ms)}</td>
+                    <td>{seconds(question.allowed_ms)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+function spellHeading(run: SpellRun): string {
+  if (run.ended === null) return `Run ${run.run}`;
+  return run.ended.how === "expired" ? `Run ${run.run}, expired ${run.ended.at}` : `Run ${run.run}, left for practice mode ${run.ended.at}`;
+}
+
+/** A spelling attempt's last run, then each earlier run in order. */
+function SpellingRuns({ runs, client }: { runs: { last: SpellRun; earlier: SpellRun[] }; client: string }) {
+  return (
+    <>
+      <h2>Last run</h2>
+      <SpellSummary run={runs.last} />
+      <SpellQuestions run={runs.last} client={client} label="Last run's questions" />
+      {runs.earlier.map((run) => {
+        const heading = spellHeading(run);
+        return (
+          <section key={run.run} aria-label={heading}>
+            <h2>{heading}</h2>
+            <SpellSummary run={run} />
+            <SpellQuestions run={run} client={client} label={`Run ${run.run}'s questions`} />
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 export function Attempt() {
   const loaded = useLoaderData() as Loaded;
   const attempt = "attempt" in loaded ? loaded.attempt : null;
@@ -316,6 +449,7 @@ export function Attempt() {
           </dl>
           {attempt.arithmetic && <ArithmeticRuns runs={attempt.arithmetic} client={attempt.client} />}
           {attempt.capitalisation && <CapitalisationRuns runs={attempt.capitalisation} />}
+          {attempt.spelling && <SpellingRuns runs={attempt.spelling} client={attempt.client} />}
           {attempt.reopened.length > 0 && (
             <>
               <h2>Given up and carried on</h2>
@@ -344,7 +478,7 @@ export function Attempt() {
             </>
           )}
           {attempt.record !== null &&
-            (attempt.arithmetic || attempt.capitalisation ? (
+            (attempt.arithmetic || attempt.capitalisation || attempt.spelling ? (
               <Fold title="Stored record">
                 <Fields value={attempt.record} />
               </Fold>

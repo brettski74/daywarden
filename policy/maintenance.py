@@ -297,7 +297,7 @@ def _words_in(pools: Sequence[str], tasks: Sequence[str]) -> set[str] | None:
     """
     if not pools and not tasks:
         return None
-    from policy.spelling import ALL_POOLS, data_root, parse_settings
+    from policy.spelling import ALL_POOLS, data_root, entry_keys, parse_settings
 
     root = data_root()
     in_pools: set[str] | None = None
@@ -307,7 +307,7 @@ def _words_in(pools: Sequence[str], tasks: Sequence[str]) -> set[str] | None:
             directory = root / PurePosixPath(name)
             if not directory.is_dir():
                 raise ValueError(f"no pool directory {name}")
-            in_pools |= _keys_in(directory)
+            in_pools |= entry_keys(directory)
     in_tasks: set[str] | None = None
     if tasks:
         policy = _load_policy()
@@ -320,25 +320,8 @@ def _words_in(pools: Sequence[str], tasks: Sequence[str]) -> set[str] | None:
             for pool in ALL_POOLS:
                 directory = root / settings.directory(pool)
                 if directory.is_dir():
-                    in_tasks |= _keys_in(directory)
+                    in_tasks |= entry_keys(directory)
     return in_pools & in_tasks if in_pools is not None and in_tasks is not None else (in_pools if in_pools is not None else in_tasks)
-
-
-def _keys_in(directory: Path) -> set[str]:
-    """Return the folded entry keys of the word recordings in a pool directory."""
-    from policy.spelling import parse_clip_name
-
-    keys: set[str] = set()
-    for child in directory.iterdir():
-        if child.name.startswith(".") or not child.is_file():
-            continue
-        try:
-            parsed = parse_clip_name(child.name, None)
-        except ValueError:
-            continue
-        if parsed is not None and not parsed[2]:
-            keys.add(parsed[0].lower())
-    return keys
 
 
 def _load_policy():

@@ -45,7 +45,7 @@ from starlette.concurrency import run_in_threadpool
 from policy.accounts import COOKIE_NAME, Accounts, Parent, cookie_value
 from policy.hierarchy import Policy
 from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
-from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report
+from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report, words_report
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
 from policy.policy_admin import PolicyChanges
@@ -88,6 +88,7 @@ REVIEWER_ADDRESSES = frozenset(
         ("GET", "/parent/api/attempts"),
         ("GET", "/parent/api/attempts/tasks/{kind}/{name}"),
         ("GET", "/parent/api/attempts/facts/{operation}"),
+        ("GET", "/parent/api/attempts/words"),
         ("GET", "/parent/api/attempts/{attempt_id}"),
         # The one reviewer write: a parent check, for work done outside the system.
         ("POST", "/parent/api/parent-check"),
@@ -308,6 +309,25 @@ def install_portal(
                 client_names(policy),
                 operation,
                 now=now.clock.local(),
+                timezone=None if policy is None else policy.timezone,
+                pairs=list(request.query_params.multi_items()),
+            ),
+        )
+
+    @app.get("/parent/api/attempts/words")
+    async def attempt_words(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        now = loaded()
+        policy = now.policy
+        return _json(
+            200,
+            words_report(
+                attempts,
+                client_names(policy),
+                now=now.clock.local(),
+                tasks=() if policy is None else policy.tasks,
                 timezone=None if policy is None else policy.timezone,
                 pairs=list(request.query_params.multi_items()),
             ),

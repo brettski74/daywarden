@@ -3114,3 +3114,144 @@ p.task-gone {
   width: 100%;
   margin-top: 0;
 }
+
+/* The spelling words page. */
+.words-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  margin-bottom: 0.75rem;
+}
+
+.words-tiles > div {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border: 0.06rem solid var(--border);
+  border-radius: 0.25rem;
+}
+
+.words-tiles dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.words-this-week {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.words-key {
+  margin-bottom: 0.5rem;
+}
+
+.words-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 0.06rem solid var(--border);
+}
+
+.words-swatch svg,
+.words-grid td svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+/* A long period makes the grid wide, so it scrolls inside its own box and the page never scrolls sideways. */
+.words-grid-box {
+  max-width: 100%;
+  max-height: 32rem;
+  overflow: auto;
+  border: 0.06rem solid var(--border);
+}
+
+.words-grid {
+  border-collapse: separate;
+  border-spacing: 0.12rem;
+  font-size: 0.85rem;
+}
+
+.words-grid th {
+  position: sticky;
+  z-index: 1;
+  padding: 0.2rem 0.4rem;
+  background: var(--table-head-bg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.words-grid thead th {
+  top: 0;
+}
+
+.words-grid tbody th {
+  left: 0;
+  text-align: left;
+}
+
+.words-grid tbody tr[data-chosen] th {
+  background: var(--row-chosen-bg);
+}
+
+.words-grid td {
+  min-width: 2.2rem;
+  height: 1.9rem;
+  padding: 0;
+  text-align: center;
+}
+
+.words-grid td > a,
+.words-grid td > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 1.9rem;
+  color: inherit;
+}
+
+.words-grid td > a:focus-visible,
+.words-grid td > span:focus-visible {
+  outline: 0.15rem solid var(--focus-ring);
+  outline-offset: 0.05rem;
+}
+
+.words-grid td[data-result="first_time"],
+.words-swatch[data-result="first_time"] {
+  background: var(--word-first-bg);
+  color: var(--word-first-text);
+}
+
+.words-grid td[data-result="after_miss"],
+.words-swatch[data-result="after_miss"] {
+  background: var(--word-after-bg);
+  color: var(--word-after-text);
+}
+
+.words-grid td[data-result="missed"],
+.words-swatch[data-result="missed"] {
+  background: var(--word-missed-bg);
+  color: var(--word-missed-text);
+}
+
+.words-grid td[data-result="not_asked"],
+.words-swatch[data-result="not_asked"] {
+  background: var(--word-unasked-bg);
+  color: var(--word-unasked-text);
+}
+
+/* The words list's figures for now start at its twelfth column, not the facts list's ninth. */
+.words-list th[scope="col"]:nth-child(9),
+.words-list td:nth-child(9) {
+  border-left: none;
+}
+
+.words-list th[scope="col"]:nth-child(12),
+.words-list td:nth-child(12) {
+  border-left: 0.06rem solid var(--border);
+}
+
+.spell-practised {
+  margin: 0.25rem 0 0.5rem;
+}

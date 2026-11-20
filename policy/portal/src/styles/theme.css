@@ -136,4 +136,13 @@
   --fact-weight-4-bg: var(--palette-brick);
   --fact-weight-4-text: var(--palette-ivory);
   --row-chosen-bg: color-mix(in srgb, var(--palette-teal) 35%, var(--palette-ivory));
+  /* The spelling word grid: right first time, right after a miss, missed, and not asked. Each also has an icon. */
+  --word-first-bg: color-mix(in srgb, var(--palette-teal) 30%, var(--palette-white));
+  --word-first-text: var(--palette-navy);
+  --word-after-bg: color-mix(in srgb, var(--palette-gold) 55%, var(--palette-white));
+  --word-after-text: var(--palette-navy);
+  --word-missed-bg: var(--palette-brick);
+  --word-missed-text: var(--palette-ivory);
+  --word-unasked-bg: var(--palette-white);
+  --word-unasked-text: var(--palette-lavender);
 }
