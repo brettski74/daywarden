@@ -1,6 +1,6 @@
 Ticket: S044
 Title: Password Change and Reset
-Status: Refined
+Status: Done
 Story Points: 29
 Last Updated: 2026-11-20 11:15:00
 ---

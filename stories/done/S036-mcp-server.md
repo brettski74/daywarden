@@ -1,6 +1,6 @@
 Ticket: S036
 Title: MCP Server
-Status: Refined
+Status: Done
 Story Points: 42
 Last Updated: 2026-11-17 20:51:02
 ---
