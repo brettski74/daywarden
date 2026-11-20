@@ -314,7 +314,9 @@ function McpEditor({ data }: { data: McpPage }) {
             {data.connections.map((connection) => (
               <tr key={connection.id}>
                 <td>{connection.agent}</td>
-                <td>{connection.parent}</td>
+                <td>
+                  {connection.parent} ({connection.role})
+                </td>
                 <td>{connection.approved}</td>
                 <td>{connection.last_used}</td>
                 <td>{connection.lapses}</td>

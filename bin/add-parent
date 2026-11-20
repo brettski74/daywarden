@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Add a parent account, or replace its password, from the machine running
 # Compose.
-#   add-parent ada      prompts for ada's password
+#   add-parent ada                    prompts for ada's password; a new account is an admin
+#   add-parent --role reviewer nana   a new reviewer
+#   add-parent --set-role admin nana  change a role, no password
+#   add-parent --list                 each account and its role
 #   add-parent --help
 # Runs `python -m policy.accounts` in the decisions container. Works from any
 # directory, including through a symlink in ~/bin. Without a terminal, the

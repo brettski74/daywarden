@@ -485,7 +485,7 @@ export function fakeService(handler: Handler = () => undefined) {
 function standard(call: Call): Reply {
   switch (call.path) {
     case "/parent/api/session":
-      return { body: { username: "ada" } };
+      return { body: { username: "ada", role: "admin" } };
     case "/parent/api/attempts":
       return { body: call.search ? ATTEMPTS : NO_GROUP };
     case "/parent/api/attempts/42":

@@ -167,7 +167,7 @@ def test_the_right_password_sets_a_secure_cookie_and_the_data_opens(service):
     assert headers["cache-control"] == ["no-store"]
     cookie = session_cookie(headers)
     status, body, _headers = call(app, "GET", "/parent/api/session", cookie=cookie)
-    assert (status, json.loads(body)) == (200, {"username": "ada"})
+    assert (status, json.loads(body)) == (200, {"username": "ada", "role": "admin"})
     status, body, _headers = call(app, "GET", "/parent/api/attempts", query="client=younger", cookie=cookie)
     assert status == 200
     assert json.loads(body)["client"] == "younger"
@@ -209,8 +209,8 @@ def test_a_second_sign_in_leaves_the_older_key_valid():
         first = accounts.login("ada", PASSWORD, NOW)
         second = accounts.login("ada", PASSWORD, NOW + timedelta(minutes=1))
         assert first is not None and second is not None and first != second
-        assert accounts.accept(first, NOW + timedelta(minutes=2)) == "ada"
-        assert accounts.accept(second, NOW + timedelta(minutes=2)) == "ada"
+        assert accounts.accept(first, NOW + timedelta(minutes=2)) == ("ada", "admin")
+        assert accounts.accept(second, NOW + timedelta(minutes=2)) == ("ada", "admin")
 
 
 def test_replacing_the_password_ends_that_accounts_sessions():
@@ -224,14 +224,14 @@ def test_replacing_the_password_ends_that_accounts_sessions():
         assert accounts.accept(ended, NOW + timedelta(minutes=1)) is None
         assert accounts.login("ada", PASSWORD, NOW) is None
         assert accounts.login("ada", "a-new-password", NOW) is not None
-        assert other.accept(kept, NOW + timedelta(minutes=1)) == "bee"
+        assert other.accept(kept, NOW + timedelta(minutes=1)) == ("bee", "admin")
 
 
 def test_the_idle_limit_is_inclusive_to_the_second_and_does_not_refresh_when_it_fails():
     with PolicyStore(":memory:") as store:
         accounts = _accounts(store)
         key = accounts.login("ada", PASSWORD, NOW)
-        assert accounts.accept(key, NOW + timedelta(minutes=15)) == "ada"
+        assert accounts.accept(key, NOW + timedelta(minutes=15)) == ("ada", "admin")
         signed_in, last_seen = store.connection.execute(
             "SELECT signed_in_at, last_seen_at FROM parent_sessions WHERE key_hash = ?",
             (hashlib.sha256(bytes.fromhex(key)).hexdigest(),),
@@ -259,7 +259,7 @@ def test_the_lifetime_ends_the_session_even_when_it_was_not_idle():
         accounts = _accounts(store)
         key = accounts.login("ada", PASSWORD, NOW)
         for minute in range(0, 181, 10):
-            assert accounts.accept(key, NOW + timedelta(minutes=minute)) == "ada"
+            assert accounts.accept(key, NOW + timedelta(minutes=minute)) == ("ada", "admin")
         assert accounts.accept(key, NOW + timedelta(minutes=180, seconds=1)) is None
         assert accounts.accept(key, NOW + timedelta(minutes=180)) is None
 
@@ -270,14 +270,14 @@ def test_configured_shorter_limits_are_the_ones_that_expire_the_session():
         accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
         accounts.set_password("ada", PASSWORD)
         key = accounts.login("ada", PASSWORD, NOW)
-        assert accounts.accept(key, NOW + timedelta(minutes=1)) == "ada"
+        assert accounts.accept(key, NOW + timedelta(minutes=1)) == ("ada", "admin")
         late = accounts.login("ada", PASSWORD, NOW)
         assert accounts.accept(late, NOW + timedelta(minutes=1, seconds=1)) is None
 
         fresh = accounts.login("ada", PASSWORD, NOW)
         for second in range(0, 301, 30):
-            assert accounts.accept(fresh, NOW + timedelta(seconds=second)) == "ada"
-        assert accounts.accept(fresh, NOW + timedelta(minutes=5)) == "ada"
+            assert accounts.accept(fresh, NOW + timedelta(seconds=second)) == ("ada", "admin")
+        assert accounts.accept(fresh, NOW + timedelta(minutes=5)) == ("ada", "admin")
         assert accounts.accept(fresh, NOW + timedelta(minutes=5, seconds=1)) is None
 
 

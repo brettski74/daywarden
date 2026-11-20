@@ -198,7 +198,8 @@ describe("the site groups page", () => {
     const calls = fakeService(() => ({ status: 401, body: {} }));
     const view = renderPortal("/parent/policy/site-groups");
     await waitFor(() => expect(shown(view.router)).toBe("/parent/login?next=%2Fparent%2Fpolicy%2Fsite-groups"));
-    expect(calls.some((call) => call.path === "/parent/api/policy/site-groups")).toBe(true);
+    // An admin page asks for nothing of its own until the session says the parent is an admin.
+    expect(calls.some((call) => call.path === "/parent/api/policy/site-groups")).toBe(false);
   });
 });
 

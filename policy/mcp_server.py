@@ -14,8 +14,12 @@ with rotation, and revocation (RFC 7009). Its one sign-in is the portal's own
 session, on the consent page ``/parent/settings/mcp/connect``.
 
 Which tools an agent sees and may call is ``permissions`` in ``mcp.yaml``,
-read again on every call, so a change applies from an agent's next call. With
-the server off, or no ``mcp.yaml``, every address here answers 404.
+read again on every call, so a change applies from an agent's next call. A
+connection approved by a reviewer gets only what that file grants to
+``attempts`` and ``usage``, to read (S043). The approving account's role is
+read again on every call too.
+
+With the server off, or no ``mcp.yaml``, every address here answers 404.
 
 Addresses given to agents use the published port, as task URLs do, and the
 host the agent asked for when it is one of ``PARENT_NAMES``.
@@ -43,9 +47,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from policy import mcp_settings
-from policy.accounts import Accounts
+from policy.accounts import ADMIN, REVIEWER, Accounts
 from policy.history import History, HistoryError, stamp
-from policy.mcp_settings import CLASSES, FIRST_TIME, McpSettings, SettingsError
+from policy.mcp_settings import CLASSES, FIRST_TIME, READ, REVIEWER_CLASSES, McpSettings, SettingsError, for_role
 from policy.mcp_store import CHECKED, DONE, FAILED, REFUSED, REVOKED, Client, McpStore, Refused
 from policy.mcp_tools import READ_TOOLS, Sources, Tool, ToolProblem, WriteFailed, WriteRefused, Writer, answer_text, visible
 from policy.mcp_policy_writes import POLICY_WRITE_TOOLS
@@ -64,6 +68,11 @@ _LONGEST_NAME = 100
 _LONGEST_DOCUMENT = 64 * 1024
 _STALE = "mcp.yaml has changed on the server since this page was opened. Reload the page and make the change again."
 _UNKNOWN_REQUEST = "This approval request is not known, or has expired. Start again from the agent."
+_NEEDS_ADMIN = "This needs an admin's approval."
+_NOTHING_FOR_REVIEWER = (
+    "mcp.yaml gives agents no permission to read attempts or usage, so there is nothing a reviewer's agent could use. "
+    "An admin can approve this agent, or grant attempts: read or usage: read on the MCP page."
+)
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS + POLICY_WRITE_TOOLS
@@ -78,6 +87,7 @@ class Caller:
 
     agent: str
     parent: str
+    role: str = ADMIN
 
 
 _CALLER: contextvars.ContextVar[Caller] = contextvars.ContextVar("mcp_caller")
@@ -175,7 +185,7 @@ class McpServer:
 
     async def _list_tools(self, _context, _params) -> types.ListToolsResult:
         settings = self.settings
-        tools = [] if settings is None else visible(settings, ALL_TOOLS)
+        tools = [] if settings is None else visible(for_role(settings, _CALLER.get().role), ALL_TOOLS)
         return types.ListToolsResult(
             tools=[types.Tool(name=tool.name, description=tool.description, input_schema=tool.schema()) for tool in tools]
         )
@@ -188,7 +198,9 @@ class McpServer:
         if tool is None:
             return self._refuse(caller, params.name, "", f"There is no tool {params.name}.")
         target = tool.target(arguments) if isinstance(arguments, Mapping) else ""
-        if settings is None or not tool.allowed(settings):
+        if caller.role != ADMIN and not reviewer_tool(tool):
+            return self._refuse(caller, tool.name, target, _NEEDS_ADMIN)
+        if settings is None or not tool.allowed(for_role(settings, caller.role)):
             return self._refuse(caller, tool.name, target, f"This needs {tool.needs}.")
         if tool.write:
             return self._write(caller, tool, target, arguments)
@@ -227,6 +239,11 @@ class McpServer:
     def _refuse(self, caller: Caller, tool: str, target: str, reason: str) -> types.CallToolResult:
         self.store.log(caller.agent, caller.parent, tool, target, REFUSED, [reason], self.now())
         return _tool_error(reason)
+
+
+def reviewer_tool(tool: Tool) -> bool:
+    """Whether a reviewer's agent may ever call tool: a read in a reviewer class."""
+    return tool.kind in REVIEWER_CLASSES and tool.permission == READ and not tool.write
 
 
 def _tool_error(text: str) -> types.CallToolResult:
@@ -268,7 +285,7 @@ class _McpEndpoint:
                 {"error": "This server answers each POST with JSON and opens no stream."}, status_code=405, headers={"allow": "POST"}
             )(scope, receive, send)
             return
-        _CALLER.set(Caller(connection.client_name, connection.username))
+        _CALLER.set(Caller(connection.client_name, connection.username, connection.role))
         manager = StreamableHTTPSessionManager(server.sdk, json_response=True, stateless=True)
         async with manager.run():
             await manager.handle_request(scope, receive, send)
@@ -481,8 +498,8 @@ def install_mcp(app: FastAPI, server: McpServer, gate: PortalGate) -> None:
 
     @app.get("/parent/api/settings/mcp/connect")
     async def connect_page(request: Request) -> Response:
-        _username, refused = gate.guard(request)
-        if refused is not None:
+        parent, refused = gate.parent(request)
+        if refused is not None or parent is None:
             return refused
         found = store.request(request.query_params.get("request", ""), server.now())
         if server.settings is None:
@@ -495,16 +512,18 @@ def install_mcp(app: FastAPI, server: McpServer, gate: PortalGate) -> None:
             "agent": client.name if client is not None else "",
             "client_id": found.client_id,
             "redirect_uri": found.redirect_uri if client is not None and _registered(found.redirect_uri, client) else "",
-            "permissions": _granted(server.settings),
+            "permissions": _granted(for_role(server.settings, parent.role)),
             "problem": found.problem,
+            "reviewer": parent.role == REVIEWER,
         }
         return _json(200, shown)
 
     @app.post("/parent/api/settings/mcp/connect")
     async def connect_decide(request: Request) -> Response:
-        body, username, refused = await gate.acting(request)
-        if refused is not None:
+        body, parent, refused = await gate.acting_parent(request)
+        if refused is not None or parent is None:
             return refused
+        username = parent.username
         if server.settings is None:
             return _json(400, {"error": "The MCP server is off, so no agent can be approved."})
         found = store.request(str(body.get("request", "")), server.now())
@@ -514,6 +533,8 @@ def install_mcp(app: FastAPI, server: McpServer, gate: PortalGate) -> None:
         if found.problem or client is None or not _registered(found.redirect_uri, client):
             return _json(400, {"error": found.problem or _UNKNOWN_REQUEST})
         decision = body.get("decision")
+        if decision == "approve" and not parent.admin and not _granted(for_role(server.settings, parent.role)):
+            return _json(400, {"error": _NOTHING_FOR_REVIEWER})
         if decision == "approve":
             account = server.accounts.account_id(username)
             if account is None:
@@ -560,6 +581,7 @@ def page_body(server: McpServer) -> dict:
                 "id": found.id,
                 "agent": found.client_name,
                 "parent": found.username,
+                "role": found.role,
                 "approved": _shown_time(clock, found.approved_at),
                 "last_used": _shown_time(clock, found.last_used_at),
                 "lapses": _shown_time(clock, found.lapses_at(in_force)) if in_force is not None else "",

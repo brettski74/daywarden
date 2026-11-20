@@ -12,6 +12,7 @@ import { BarChart, type Bar } from "../components/charts/BarChart";
 import { LineChart } from "../components/charts/LineChart";
 import { NOT_A_DATE, parseDay } from "../dates";
 import { useExpander } from "../motion";
+import { useSession } from "../session";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import {
   DEFAULT_PRESET,
@@ -204,6 +205,7 @@ function dateProblems(from: string, to: string): { from: string | null; to: stri
 
 /** The Minutes or Bytes page: a line graph of usage, with its filters, date range, and presets in the context bar. */
 export function Usage({ unit }: { unit: Unit }) {
+  const admin = useSession().role === "admin";
   const data = useLoaderData() as UsageData;
   const location = useLocation();
   const navigate = useNavigate();
@@ -358,18 +360,23 @@ export function Usage({ unit }: { unit: Unit }) {
               ))}
             </select>
           </label>
-          <button type="button" className="button" onClick={() => setAsking({ kind: "name" })}>
-            Save preset
-          </button>
-          <button
-            type="button"
-            className="button button-quiet"
-            disabled={deleteWhy !== null}
-            title={deleteWhy ?? undefined}
-            onClick={() => setAsking({ kind: "delete", name: data.preset })}
-          >
-            Delete preset
-          </button>
+          {/* Presets are shared by the household, so only an admin saves or deletes them. */}
+          {admin && (
+            <>
+              <button type="button" className="button" onClick={() => setAsking({ kind: "name" })}>
+                Save preset
+              </button>
+              <button
+                type="button"
+                className="button button-quiet"
+                disabled={deleteWhy !== null}
+                title={deleteWhy ?? undefined}
+                onClick={() => setAsking({ kind: "delete", name: data.preset })}
+              >
+                Delete preset
+              </button>
+            </>
+          )}
         </div>
         <div className="bar-filters">
           <MultiSelect label="Client groups" options={data.choices.clients} selected={draft.client} empty="All" onToggle={(name) => change({ client: toggled(draft.client, name) })} />

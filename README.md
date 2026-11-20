@@ -151,6 +151,17 @@ docker compose exec decisions python -m policy.accounts ada
 
 `bin/add-parent ada` does the same from any directory, and is what an installed daywarden uses (see [Installing on another machine](#installing-on-another-machine)).
 
+Each account is an admin or a reviewer. An admin runs the system and can use every page and MCP tool. A reviewer, such as a grandparent or a tutor, sees only Attempts and Usage, can record a parent check, and cannot change tasks, assets, policy, or the MCP server. An agent a reviewer approves can only read attempts and usage.
+
+```sh
+bin/add-parent ada                         # a new admin, or a new password for an existing account
+bin/add-parent --role reviewer nana        # a new reviewer
+bin/add-parent --set-role admin nana       # change an existing account's role; it must sign in again
+bin/add-parent --list                      # each account and its role
+```
+
+A new account is an admin unless `--role` says otherwise, and accounts from before roles are admins. A new password keeps the account's role. `--set-role` asks for no password, and refuses to make the only admin a reviewer.
+
 Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the portal stays closed and shows no usage or attempts. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. A portal tab left open does nothing by itself, so it does not keep a session going. After a session ends, the next click shows the sign-in screen, and signing in opens the page that was clicked. An action such as Record parent check is not repeated by the sign-in. Press it again. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup.
 
 ## Certificate authority

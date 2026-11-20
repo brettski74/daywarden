@@ -117,6 +117,14 @@ class Request:
     problem: str | None
 
 
+# A connection's columns, with the role its approving account has now, read again each time (S043).
+# An account that is gone counts as a reviewer, the narrower role.
+_COLUMNS = (
+    "id, client_id, client_name, username, approved_at, last_used_at, "
+    "COALESCE((SELECT role FROM parent_accounts WHERE parent_accounts.id = mcp_connections.account_id), 'reviewer')"
+)
+
+
 @dataclass(frozen=True)
 class Connection:
     id: int
@@ -125,6 +133,8 @@ class Connection:
     username: str
     approved_at: datetime
     last_used_at: datetime
+    # The approving account's role when the connection was read.
+    role: str = "admin"
 
     def lapses_at(self, settings: McpSettings) -> datetime:
         return min(
@@ -352,7 +362,7 @@ class McpStore:
         if settings is not None:
             self.sweep(settings, now)
         rows = self.connection.execute(
-            "SELECT id, client_id, client_name, username, approved_at, last_used_at FROM mcp_connections ORDER BY approved_at DESC, id DESC"
+            f"SELECT {_COLUMNS} FROM mcp_connections ORDER BY approved_at DESC, id DESC"
         ).fetchall()
         return [_connection(row) for row in rows]
 
@@ -370,7 +380,7 @@ class McpStore:
 
     def end_for_account(self, account_id: int, now: datetime, reason: str) -> None:
         rows = self.connection.execute(
-            "SELECT id, client_id, client_name, username, approved_at, last_used_at FROM mcp_connections WHERE account_id = ?",
+            f"SELECT {_COLUMNS} FROM mcp_connections WHERE account_id = ?",
             (account_id,),
         ).fetchall()
         for row in rows:
@@ -424,7 +434,7 @@ class McpStore:
 
     def _connection_where(self, clause: str, params: tuple) -> Connection | None:
         row = self.connection.execute(
-            f"SELECT id, client_id, client_name, username, approved_at, last_used_at FROM mcp_connections WHERE {clause}",
+            f"SELECT {_COLUMNS} FROM mcp_connections WHERE {clause}",
             params,
         ).fetchone()
         return None if row is None else _connection(row)
@@ -444,7 +454,7 @@ def _pkce_matches(verifier: object, challenge: str) -> bool:
 
 
 def _connection(row: tuple) -> Connection:
-    return Connection(row[0], row[1], row[2], row[3], _parse(row[4]), _parse(row[5]))
+    return Connection(row[0], row[1], row[2], row[3], _parse(row[4]), _parse(row[5]), row[6])
 
 
 def _text(moment: datetime) -> str:

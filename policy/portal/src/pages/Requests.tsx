@@ -9,6 +9,7 @@ import { NameDialog } from "../components/NameDialog";
 import { RequestTable } from "../components/RequestTable";
 import { NOT_A_DATE, parseDay } from "../dates";
 import { useExpander } from "../motion";
+import { useSession } from "../session";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import {
   DEFAULT_PRESET,
@@ -45,6 +46,7 @@ export function requestsLoader({ request }: LoaderFunctionArgs): Promise<Request
 
 /** Every request within the filters, with a Host box and Outcome pull-down. */
 export function Requests() {
+  const admin = useSession().role === "admin";
   const data = useLoaderData() as RequestsData;
   const location = useLocation();
   const navigate = useNavigate();
@@ -188,18 +190,23 @@ export function Requests() {
               ))}
             </select>
           </label>
-          <button type="button" className="button" onClick={() => setAsking({ kind: "name" })}>
-            Save preset
-          </button>
-          <button
-            type="button"
-            className="button button-quiet"
-            disabled={deleteWhy !== null}
-            title={deleteWhy ?? undefined}
-            onClick={() => setAsking({ kind: "delete", name: data.preset })}
-          >
-            Delete preset
-          </button>
+          {/* Presets are shared by the household, so only an admin saves or deletes them. */}
+          {admin && (
+            <>
+              <button type="button" className="button" onClick={() => setAsking({ kind: "name" })}>
+                Save preset
+              </button>
+              <button
+                type="button"
+                className="button button-quiet"
+                disabled={deleteWhy !== null}
+                title={deleteWhy ?? undefined}
+                onClick={() => setAsking({ kind: "delete", name: data.preset })}
+              >
+                Delete preset
+              </button>
+            </>
+          )}
         </div>
         <div className="bar-filters">
           <MultiSelect label="Client groups" options={data.choices.clients} selected={draft.client} empty="All" onToggle={(name) => change({ client: toggled(draft.client, name) })} />

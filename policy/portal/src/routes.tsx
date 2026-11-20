@@ -18,6 +18,7 @@ import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend
 import { Usage, usageLoader } from "./pages/Usage";
 import type { PageKey } from "./policy";
 import { Week, oldWeekLoader, weekAction, weekLoader } from "./pages/Week";
+import { adminOnly } from "./session";
 
 export const BASENAME = "/parent";
 
@@ -34,7 +35,8 @@ function policyRoutes(): RouteObject[] {
 
 const loading = <div className="loading" aria-busy="true" />;
 
-// A new portal page adds its route under the layout and its entry in the sidebar.
+// A new portal page adds its route under the layout and its entry in the sidebar. It is an admin page, wrapped in
+// adminOnly, unless it fits the reviewer rule in Access control in docs/parent-portal.md.
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login />, loader: loginLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
   {
@@ -56,35 +58,38 @@ export const routes: RouteObject[] = [
           { path: "usage/minutes", element: <Usage unit="minutes" />, loader: usageLoader("minutes") },
           { path: "usage/bytes", element: <Usage unit="bytes" />, loader: usageLoader("bytes") },
           { path: "usage/requests", element: <Requests />, loader: requestsLoader },
-          {
-            path: "tasks/:type/:name",
-            element: <Task />,
-            loader: taskLoader,
-            action: taskAction,
-            shouldRevalidate: taskShouldRevalidate,
-          },
-          { path: "tasks/:type/:name/words/:mode", element: <Week />, loader: weekLoader, action: weekAction },
-          { path: "tasks/:type/:name/week", loader: oldWeekLoader },
-          { path: "new-task", element: <NewTask />, loader: newTaskLoader, action: newTaskAction },
-          { path: "assets/parts-of-speech-pools", element: <Pools />, loader: poolsLoader },
-          {
-            path: "assets/parts-of-speech-pools/:id",
-            element: <Pool />,
-            loader: poolLoader,
-            action: poolAction,
-            shouldRevalidate: poolShouldRevalidate,
-          },
-          { path: "assets/capitalisation-pools", element: <Pools />, loader: poolsLoader },
-          {
-            path: "assets/capitalisation-pools/:id",
-            element: <Pool />,
-            loader: poolLoader,
-            action: poolAction,
-            shouldRevalidate: poolShouldRevalidate,
-          },
-          ...policyRoutes(),
-          { path: "settings/mcp", element: <Mcp />, loader: mcpLoader, action: mcpAction, shouldRevalidate: mcpShouldRevalidate },
-          { path: "settings/mcp/activity", element: <McpActivity />, loader: mcpActivityLoader },
+          ...[
+            {
+              path: "tasks/:type/:name",
+              element: <Task />,
+              loader: taskLoader,
+              action: taskAction,
+              shouldRevalidate: taskShouldRevalidate,
+            },
+            { path: "tasks/:type/:name/words/:mode", element: <Week />, loader: weekLoader, action: weekAction },
+            { path: "tasks/:type/:name/week", loader: oldWeekLoader },
+            { path: "new-task", element: <NewTask />, loader: newTaskLoader, action: newTaskAction },
+            { path: "assets/parts-of-speech-pools", element: <Pools />, loader: poolsLoader },
+            {
+              path: "assets/parts-of-speech-pools/:id",
+              element: <Pool />,
+              loader: poolLoader,
+              action: poolAction,
+              shouldRevalidate: poolShouldRevalidate,
+            },
+            { path: "assets/capitalisation-pools", element: <Pools />, loader: poolsLoader },
+            {
+              path: "assets/capitalisation-pools/:id",
+              element: <Pool />,
+              loader: poolLoader,
+              action: poolAction,
+              shouldRevalidate: poolShouldRevalidate,
+            },
+            ...policyRoutes(),
+            { path: "settings/mcp", element: <Mcp />, loader: mcpLoader, action: mcpAction, shouldRevalidate: mcpShouldRevalidate },
+            { path: "settings/mcp/activity", element: <McpActivity />, loader: mcpActivityLoader },
+          ].map(adminOnly),
+          // The consent page is open to reviewers: their agent is limited to what a reviewer may read.
           { path: "settings/mcp/connect", element: <McpConnect />, loader: mcpConnectLoader },
           { path: "*", element: <NotFound /> },
         ],

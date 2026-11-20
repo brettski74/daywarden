@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useLoaderData, useLocation, type LoaderFunctionArgs } from "react-router";
 import { ApiError, api, pageOf } from "../api";
 import { MCP, MCP_CONNECT_DATA, classLabel, type McpRequest } from "../mcp";
+import { useSession } from "../session";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { TITLE as MCP_TITLE } from "./Mcp";
 
@@ -30,6 +31,8 @@ export function McpConnect() {
   const { pathname, search } = useLocation();
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  // The MCP page is for admins, so a reviewer's breadcrumb names it without linking to it.
+  const admin = useSession().role === "admin";
   useTitle(TITLE);
 
   async function decide(decision: "approve" | "deny") {
@@ -49,15 +52,14 @@ export function McpConnect() {
   }
 
   const problem = refused ?? shown.problem;
+  const nothing = Boolean(shown.reviewer) && !shown.permissions?.length;
   return (
     <>
       <ContextBar>
         <nav className="crumbs" aria-label="Where you are">
           <ol>
             <li>Settings</li>
-            <li>
-              <Link to={MCP}>{MCP_TITLE}</Link>
-            </li>
+            <li>{admin ? <Link to={MCP}>{MCP_TITLE}</Link> : MCP_TITLE}</li>
             <li>
               <h1 className="bar-title">{TITLE}</h1>
             </li>
@@ -91,7 +93,13 @@ export function McpConnect() {
         ) : (
           <>
             <p>Approving lets this agent use the MCP server with these permissions, until the connection is revoked or lapses.</p>
-            {shown.permissions && shown.permissions.length > 0 ? (
+            {shown.reviewer && <p>You are a reviewer, so an agent you approve can only read attempts and usage.</p>}
+            {nothing ? (
+              <p className="note note-problem">
+                The MCP server gives agents no permission to read attempts or usage, so there is nothing a reviewer's agent could use.
+                An admin can approve this agent instead.
+              </p>
+            ) : shown.permissions && shown.permissions.length > 0 ? (
               <ul className="mcp-consent-permissions">
                 {shown.permissions.map(({ name, permissions }) => (
                   <li key={name}>
@@ -107,7 +115,13 @@ export function McpConnect() {
                 <X aria-hidden="true" />
                 Deny
               </button>
-              <button type="button" className="button" onClick={() => decide("approve")} disabled={busy}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => decide("approve")}
+                disabled={busy || nothing}
+                title={nothing ? "There is nothing a reviewer's agent could use." : undefined}
+              >
                 <Check aria-hidden="true" />
                 Approve
               </button>

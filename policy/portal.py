@@ -19,6 +19,11 @@ which is the raw audio, and must be audio/webm or audio/ogg. A form cannot
 send either, and a script on another site would need a CORS preflight,
 which is never approved.
 
+Each account is an admin or a reviewer (S043). A reviewer may use only the
+data addresses in ``REVIEWER_ADDRESSES``. Every other address answers a
+reviewer 403 with no household data, so a new endpoint is admin-only unless
+it is added to that list. See Access control in docs/parent-portal.md.
+
 Sign-in returns a page address for the portal to open. ``safe_next`` keeps
 that to a portal page, never a data address, a file, the sign-in screen, or
 another site.
@@ -37,7 +42,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from policy.accounts import COOKIE_NAME, Accounts, cookie_value
+from policy.accounts import COOKIE_NAME, Accounts, Parent, cookie_value
 from policy.hierarchy import Policy
 from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
 from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report
@@ -75,6 +80,24 @@ _HTTPS_ONLY = """<!DOCTYPE html>
 """
 _NOT_BUILT = "The parent portal is not built into this image."
 NO_FRAMES = {"content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY"}
+# The data addresses a reviewer may use, as (method, route template). Sign-in and sign-out need no session.
+# Any address not listed here answers a reviewer 403. Add one only under the rule in docs/parent-portal.md.
+REVIEWER_ADDRESSES = frozenset(
+    {
+        ("GET", "/parent/api/session"),
+        ("GET", "/parent/api/attempts"),
+        ("GET", "/parent/api/attempts/tasks/{kind}/{name}"),
+        ("GET", "/parent/api/attempts/facts/{operation}"),
+        ("GET", "/parent/api/attempts/{attempt_id}"),
+        # The one reviewer write: a parent check, for work done outside the system.
+        ("POST", "/parent/api/parent-check"),
+        ("GET", "/parent/api/usage/requests"),
+        ("GET", "/parent/api/usage/{unit}"),
+        # The MCP consent page. A reviewer's agent is limited to what a reviewer may read.
+        ("GET", "/parent/api/settings/mcp/connect"),
+        ("POST", "/parent/api/settings/mcp/connect"),
+    }
+)
 
 
 def safe_next(value: object) -> str:
@@ -110,6 +133,13 @@ def client_names(policy: Policy | None) -> tuple[str, ...]:
     return tuple(names)
 
 
+def reviewer_may(request: Request) -> bool:
+    """Whether the data address this request matched is one a reviewer may use."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path is not None and (request.method, path) in REVIEWER_ADDRESSES
+
+
 class PortalGate:
     """The parent session checks every data endpoint makes, for endpoints added outside ``install_portal``."""
 
@@ -117,28 +147,46 @@ class PortalGate:
         self.accounts = accounts
         self.loaded = loaded
 
-    def guard(self, request: Request) -> tuple[str | None, Response | None]:
-        """Return the signed-in username, or the refusal to send instead."""
+    def parent(self, request: Request) -> tuple[Parent | None, Response | None]:
+        """Return the signed-in account and its role, or the refusal to send instead.
+
+        A reviewer is refused with 403 at any address not in ``REVIEWER_ADDRESSES``.
+        """
         if request.url.scheme != "https":
             return None, _json(403, {"error": "Open this page over HTTPS."})
         if self.accounts.count() == 0:
             return None, _json(403, {"error": _CLOSED, "closed": True})
-        username = self.accounts.accept(_cookie(request), self.loaded().clock.local())
-        if username is None:
+        parent = self.accounts.accept(_cookie(request), self.loaded().clock.local())
+        if parent is None:
             return None, _json(401, {"error": _SIGNED_OUT})
-        return username, None
+        if not parent.admin and not reviewer_may(request):
+            return None, _json(
+                403,
+                {"error": f"This address is for admins. You are signed in as {parent.username}, a reviewer.", "admins_only": True},
+            )
+        return parent, None
+
+    def guard(self, request: Request) -> tuple[str | None, Response | None]:
+        """Return the signed-in username, or the refusal to send instead."""
+        parent, refused = self.parent(request)
+        return (None if parent is None else parent.username), refused
 
     async def acting(self, request: Request) -> tuple[dict, str, Response | None]:
         """Return a state-changing request's JSON body and the signed-in username, or the refusal to send instead."""
+        body, parent, refused = await self.acting_parent(request)
+        return body, "" if parent is None else parent.username, refused
+
+    async def acting_parent(self, request: Request) -> tuple[dict, Parent | None, Response | None]:
+        """Return a state-changing request's JSON body and the signed-in account, or the refusal to send instead."""
         if request.url.scheme != "https":
-            return {}, "", _json(403, {"error": "Open this page over HTTPS."})
+            return {}, None, _json(403, {"error": "Open this page over HTTPS."})
         body, refused = await _json_body(request)
         if refused is not None:
-            return {}, "", refused
-        username, refused = self.guard(request)
+            return {}, None, refused
+        parent, refused = self.parent(request)
         if refused is not None:
-            return {}, "", refused
-        return body, username or "", None
+            return {}, None, refused
+        return body, parent, None
 
 
 def install_portal(
@@ -173,10 +221,10 @@ def install_portal(
 
     @app.get("/parent/api/session")
     async def session(request: Request) -> Response:
-        username, refused = guard(request)
-        if refused is not None:
+        parent, refused = gate.parent(request)
+        if refused is not None or parent is None:
             return refused
-        return _json(200, {"username": username})
+        return _json(200, {"username": parent.username, "role": parent.role})
 
     @app.post("/parent/api/login")
     async def login(request: Request) -> Response:

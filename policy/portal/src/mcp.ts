@@ -22,7 +22,7 @@ export type McpSettings = {
   permissions: Record<string, string[]>;
 };
 
-export type McpConnection = { id: number; agent: string; parent: string; approved: string; last_used: string; lapses: string };
+export type McpConnection = { id: number; agent: string; parent: string; role: string; approved: string; last_used: string; lapses: string };
 
 export type McpPage = {
   exists: boolean;
@@ -49,6 +49,8 @@ export type McpRequest = {
   redirect_uri?: string;
   permissions?: { name: string; permissions: string[] }[];
   problem: string | null;
+  /** The signed-in parent is a reviewer, so the permissions are only what a reviewer's agent may use. */
+  reviewer?: boolean;
 };
 
 /** What the page calls each class. The class's own name, which mcp.yaml writes, is the title. */

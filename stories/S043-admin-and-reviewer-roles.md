@@ -1,8 +1,8 @@
 Ticket: S043
 Title: Admin and Reviewer Roles
-Status: Draft
+Status: Done
 Story Points: 13
-Last Updated: 2026-11-19 16:12:20
+Last Updated: 2026-11-19 17:30:00
 ---
 
 # User Voice
@@ -166,3 +166,59 @@ data address, or MCP tool is open to, so a later story can follow it without ask
   column and its upgrade, three CLI options, a role check across about fifty endpoints with tests for both roles, a
   sidebar and not-available page in the portal, and the MCP mask on listing and calling tools. Checking happens in
   the browser for two accounts and in Claude Code for two connections.
+
+# Implementation
+
+## Files Added
+
+- `tests/test_roles.py`: the accounts upgrade, the command's options and refusals, a sweep of every `/parent/api/` address as a reviewer and as an admin, and the MCP mask on listing, calling, consent, and a role change.
+- `policy/portal/src/session.tsx`: the signed-in account and role, `useSession()`, the not-available message, and `adminOnly`, which wraps an admin route.
+- `policy/portal/src/roles.test.tsx`: the portal as a reviewer and as an admin.
+
+## Files Changed
+
+- `policy/accounts.py`: the `role` column, added with `admin` as its default when an older table is opened. `accept` returns a `Parent` of username and role. `set_password` takes a role for a new account. New `set_role`, `accounts`, and `role_of`. The command gains `--role`, `--set-role`, and `--list`.
+- `policy/portal.py`: `REVIEWER_ADDRESSES`, and `PortalGate.parent`, which refuses a reviewer with 403 at any other address. `/parent/api/session` answers the role.
+- `policy/mcp_settings.py`: `REVIEWER_CLASSES` and `for_role`, the reviewer mask.
+- `policy/mcp_store.py`: each connection carries its approving account's role, read again each time it is loaded.
+- `policy/mcp_server.py`: tools listed and calls checked through the mask. The consent page answers the masked permissions and whether the parent is a reviewer, and refuses a reviewer's Approve when nothing is granted. The MCP page lists each connection's role.
+- `policy/portal/src/components/Layout.tsx`: loads the session first, and the task list only for an admin. Provides the session to every page.
+- `policy/portal/src/components/Sidebar.tsx`: the reviewer sidebar and the role in the signed-in line.
+- `policy/portal/src/routes.tsx`: the admin routes wrapped in `adminOnly`.
+- `policy/portal/src/pages/Usage.tsx`, `Requests.tsx`: Save preset and Delete preset for admins only.
+- `policy/portal/src/pages/McpConnect.tsx`, `src/mcp.ts`: the reviewer's note, Approve disabled when there is nothing to use, and no link to the MCP page for a reviewer.
+- `policy/portal/src/pages/Mcp.tsx`: Approved By shows the role.
+- `policy/portal/src/test/portal.tsx`, `mcp.test.tsx`: fixtures carry a role. `policy.test.tsx`: a signed-out admin page now asks for none of its data before sign-in.
+- `tests/test_parent_signin.py`: `accept` and the session answer carry the role.
+- `bin/add-parent`: the header names the new options.
+- `docs/parent-portal.md`: the Access control section, the 403 for admin data addresses, and the reviewer sidebar.
+- `AGENTS.md`, `README.md`: the rule, and the two roles with the command's options.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The role is a column on `parent_accounts`. Opening an older table adds it with `admin` as its default, so existing accounts, their sessions, and the MCP connections they approved carry on. Changing a role ends that account's sessions but keeps its MCP connections, because each MCP call reads the approving account's role again through a subquery in the connection's columns. An account that is gone counts as a reviewer.
+
+The service enforces the role in one place. `PortalGate.parent` reads the matched route's template from the request scope and lets a reviewer through only for the (method, template) pairs in `REVIEWER_ADDRESSES`, so a new endpoint is admin-only until someone adds it. Every existing endpoint already went through `guard` or `acting`, so none needed its own check. Saving and deleting presets are left off the list, as the Notes decided, although the implementation hints listed presets among the reviewer endpoints.
+
+In the portal, the layout loads the session before the task list and skips the list for a reviewer. `adminOnly` wraps each admin route's loader and action so they wait for the session the layout is already loading, and run only for an admin. That costs an admin no extra request. When the session fails, the wrapper leaves the redirect to the layout's loader, because throwing the same redirect from two loaders made React Router follow it twice.
+
+The consent page is open to reviewers. Approving an agent there is a reviewer write beyond the parent check, so Access control lists it as an exception, noting that it gives the agent nothing beyond the reviewer's own access.
+
+Tests: the full suite passed (2480 tests). The portal's 445 tests, its type check, and a production build pass.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S043
+
+1. **Upgrade.** On a stack with existing accounts and an approved agent, upgrade and run `bin/add-parent --list`. Sign in as each account, check every sidebar group, and check the agent still answers. Covers the first check under Roles and accounts.
+2. **The command.** Run `bin/add-parent --role reviewer nana`, `bin/add-parent bee`, and `--list`. Give nana a new password and check she is still a reviewer. Try `--role admin nana`, `--set-role reviewer` on the only admin, `--set-role owner nana`, and `--set-role admin zed`, and check each is refused and `--list` is unchanged. With nana signed in, run `--set-role admin nana` and check her tab must sign in again. Read `--help`. Covers Roles and accounts.
+3. **A reviewer in the browser.** Sign in as nana with the network panel open. Check the sidebar and the signed-in line, then use the Attempts overview, a trend, the facts grid, an attempt, and record a parent check, checking the revision count. Use Minutes, Bytes, a line's top hosts, and Requests with paging, and choose a preset, checking there is no Save preset or Delete preset. Check the network panel shows no 403. Covers What a reviewer sees in the portal, except the admin addresses.
+4. **Admin addresses as a reviewer.** As nana, type in `/parent/tasks/...`, `/parent/new-task`, `/parent/assets/parts-of-speech-pools`, `/parent/policy/quotas`, `/parent/settings/mcp`, and `/parent/settings/mcp/activity`, and check each shows the message in the frame. Open `/parent/api/tasks` and `/parent/api/policy/quotas` and check the 403, and `/parent/api/nothing` for the 404. Sign out, sign in through `/parent/login?next=/parent/policy/quotas`, then once with no `next`. Covers the rest of What a reviewer sees in the portal.
+5. **A reviewer's agent.** As nana, connect Claude Code through the consent page, check its permissions and note, and list its tools. Ask it to read attempts and usage, then to call `update_task` and `get_household`, and check the refusals in the MCP activity log as ada. Check Approved By shows "nana (reviewer)" and revoke it. Covers What a reviewer's MCP agent can do, except the next two.
+6. **No grants for a reviewer.** As ada, clear `attempts` and `usage` on the MCP page. As nana, start an approval and check Approve is disabled and Deny returns to the agent. Covers the second MCP check.
+7. **A role change and an agent.** With bee as a second admin, connect an agent as ada, run `--set-role reviewer ada`, and check the agent's next tool list is limited. Run `--set-role admin ada` and check it gets everything again. Covers the role-change MCP check.
+8. **Documentation.** Read Access control and Sessions and data in `docs/parent-portal.md`, the Parent Portal bullet in `AGENTS.md`, and Parent accounts in `README.md`. Covers Documentation.

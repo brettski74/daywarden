@@ -15,6 +15,7 @@ import {
 import { useCallback, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api";
+import { forgetSession, type Session } from "../session";
 import { useExpander } from "../motion";
 import { CAPITALISATION_POOLS, PARTS_POOLS } from "../pools";
 import { MCP } from "../mcp";
@@ -151,7 +152,7 @@ function SettingsGroup() {
   );
 }
 
-export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[] }) {
+export function Sidebar({ session, tasks }: { session: Session; tasks: TaskRef[] }) {
   const { width, limits, collapsed, resize, setCollapsed } = useSidebar();
   const setExpanded = useCallback((value: boolean) => setCollapsed(!value), [setCollapsed]);
   const { shown, moving, toggle: toggleSidebar } = useExpander(!collapsed, setExpanded);
@@ -159,6 +160,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
 
   async function leave() {
     await signOut();
+    forgetSession();
     navigate("/login", { replace: true });
   }
 
@@ -216,10 +218,15 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
                   </li>
                 ))}
                 <UsageGroup />
-                <TaskGroup tasks={tasks} />
-                <AssetGroup />
-                <PolicyGroup />
-                <SettingsGroup />
+                {/* A reviewer's sidebar is Attempts and Usage. Everything else is for admins. */}
+                {session.role === "admin" && (
+                  <>
+                    <TaskGroup tasks={tasks} />
+                    <AssetGroup />
+                    <PolicyGroup />
+                    <SettingsGroup />
+                  </>
+                )}
               </ul>
             </nav>
           </>
@@ -227,7 +234,7 @@ export function Sidebar({ username, tasks }: { username: string; tasks: TaskRef[
         <div className="sidebar-bottom">
           {shown && (
             <p className="sidebar-user sidebar-fold" inert={collapsed}>
-              Signed in as <strong>{username}</strong>
+              Signed in as <strong>{session.username}</strong> ({session.role})
             </p>
           )}
           <button type="button" className="sign-out" onClick={leave} aria-label="Sign out" title="Sign out">

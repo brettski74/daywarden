@@ -149,6 +149,8 @@ The parent pages are one React Router app under `/parent/`, with its source in `
 - An editing page saves only on Save or Ctrl+S, and asks before leaving with unsaved changes, with Stay as the default.
 - Every editable date field is a `yyyy-mm-dd` text box with the `DateField` calendar beside it.
 - Anything that can be dragged has a keyboard way to do the same. A page's own keys use Alt with a letter, such as Alt+N.
+- Everything works for admins. Reviewers get read-only attempts and usage data, plus the parent check. New functionality
+  is admin-only unless it fits that rule. Access control in `docs/parent-portal.md` has the details.
 - The child's task pages are not part of the portal. Do not change their layout or design as part of portal work. The one
  shared piece of code is `policy/static/word_sort.js`, the word drag-and-drop.
 

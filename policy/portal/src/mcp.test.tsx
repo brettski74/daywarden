@@ -26,7 +26,7 @@ const PAGE = {
     permissions: { household: [], tasks: ["create", "read", "update"], attempts: ["read"] },
   },
   classes: CLASSES,
-  connections: [{ id: 7, agent: "Claude Code", parent: "ada", approved: "2026-11-17 09:00", last_used: "2026-11-17 09:50", lapses: "2026-12-17 09:50" }],
+  connections: [{ id: 7, agent: "Claude Code", parent: "ada", role: "admin", approved: "2026-11-17 09:00", last_used: "2026-11-17 09:50", lapses: "2026-12-17 09:50" }],
 };
 
 async function openMcp(handler?: (call: Call) => Reply | undefined) {

@@ -50,6 +50,8 @@ CLASSES: dict[str, tuple[str, ...]] = {
     "attempts": (READ,),
     "usage": (READ,),
 }
+# The classes a reviewer's agent may use, and only to read (S043). mcp.yaml's grants are masked by this.
+REVIEWER_CLASSES = ("attempts", "usage")
 DURATIONS = ("access_token", "refresh_idle", "refresh_lifetime")
 FIELDS = ("enabled", *DURATIONS, "activity_days", "permissions")
 _DURATION = re.compile(r"([0-9]+)([mhd])\Z")
@@ -90,6 +92,14 @@ class McpSettings:
             "activity_days": self.activity_days,
             "permissions": {kind: ordered(self.permissions.get(kind, ())) for kind in CLASSES},
         }
+
+
+def for_role(settings: McpSettings, role: str) -> McpSettings:
+    """Return what a connection approved by an account with role may use: all of settings for an admin."""
+    if role == "admin":
+        return settings
+    masked = {kind: settings.permissions.get(kind, frozenset()) & {READ} for kind in REVIEWER_CLASSES}
+    return replace(settings, permissions=masked)
 
 
 DEFAULTS = McpSettings()

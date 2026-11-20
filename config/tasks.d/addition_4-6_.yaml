@@ -15,3 +15,4 @@ tasks:
           - { value: 2, weight: 7 }
           - { from: 3, to: 9, weight: 10 }
           - { value: 10, weight: 5 }
+        practice_required: true
