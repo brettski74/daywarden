@@ -54,7 +54,7 @@ export function Login() {
           <>
             <h1>Parent portal</h1>
             <p>The parent portal is closed until a parent account is added.</p>
-            <p>Add one on the server with the add-parent command.</p>
+            <p>Add one on the server with dw-account add --role admin --password USERNAME.</p>
           </>
         ) : (
           <form className="signin-form" onSubmit={submit} onReset={reset} aria-labelledby="signin-heading">

@@ -143,26 +143,28 @@ Save in the context bar, or Ctrl+S, saves every change on the page. The task is 
 
 ### Parent accounts
 
-Add a parent account after the stack is up. The password is read once. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`.
+`bin/dw-account` adds, changes, lists, and removes parent accounts, after the stack is up. It works from any directory, and an installed daywarden links it as `dw-account` in `~/bin` (see [Installing on another machine](#installing-on-another-machine)). It runs `python -m policy.accounts` in the decisions container.
 
 ```sh
-docker compose exec decisions python -m policy.accounts ada
+dw-account add --role admin --password ada        # a new admin, asking for her password
+dw-account add --email nana@example.net nana      # a new reviewer with an address and no password yet
+dw-account update --password nana                 # set or replace nana's password
+dw-account update --role admin nana               # change her role; she must sign in again
+dw-account update --email nana@example.org nana   # change her address. --no-email removes it
+dw-account remove nana                            # remove her account, after asking
+dw-account list                                   # each account: role, address, and whether it has a password
+dw-account help                                   # every subcommand and switch. dw-account add --help for one
 ```
 
-`bin/add-parent ada` does the same from any directory, and is what an installed daywarden uses (see [Installing on another machine](#installing-on-another-machine)).
+`add` needs a username that does not exist yet. `update` and `remove` need one that does, and `update` needs at least one switch. Several switches on one `update` are all checked first, and if any is refused, nothing changes.
 
-Each account is an admin or a reviewer. An admin runs the system and can use every page and MCP tool. A reviewer, such as a grandparent or a tutor, sees only Attempts and Usage, can record a parent check, and cannot change tasks, assets, policy, or the MCP server. An agent a reviewer approves can only read attempts and usage.
+Each account is an admin or a reviewer. An admin runs the system and can use every page and MCP tool. A reviewer, such as a grandparent or a tutor, sees only Attempts and Usage, can record a parent check, and cannot change tasks, assets, policy, or the MCP server. An agent a reviewer approves can only read attempts and usage. A new account is a reviewer unless `--role admin` is given, except that while there is no admin, as on a fresh install, the first account must be added with `--role admin`. The only admin cannot become a reviewer or be removed. Changing a role ends the account's sessions.
 
-```sh
-bin/add-parent ada                         # a new admin, or a new password for an existing account
-bin/add-parent --role reviewer nana        # a new reviewer
-bin/add-parent --set-role admin nana       # change an existing account's role; it must sign in again
-bin/add-parent --list                      # each account and its role
-```
+An account may have one email address, which only `dw-account` sets. A new account has no password unless `--password` is given, and no one can sign in to it until `dw-account update --password` sets one. `add` needs `--email`, `--password`, or both. `--password` asks for the password twice with echo off, and never reads it from the command line. Without a terminal, it reads one line of standard input instead, as in `printf '%s\n' "$PASSWORD" | dw-account add --role admin --password ada`. A password is 1 to 200 characters. It is stored as an Argon2id hash and it is not written into `config/policy.yaml`. Setting a password ends that account's sessions and the MCP connections it approved.
 
-A new account is an admin unless `--role` says otherwise, and accounts from before roles are admins. A new password keeps the account's role. `--set-role` asks for no password, and refuses to make the only admin a reviewer.
+When an account's security is in doubt, such as a lost device or a password someone else may know, remove it with `dw-account remove`, then add it again if it is still wanted. Removing ends its sessions and the MCP connections it approved. The MCP activity log keeps its earlier entries. A new account with the same username gets none of the old one's sessions or connections. Without a terminal, `remove` needs `--yes`.
 
-Type the password and press Enter. Running the command again for the same username replaces the password and ends that account's sessions. With no account, the portal stays closed and shows no usage or attempts. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. A portal tab left open does nothing by itself, so it does not keep a session going. After a session ends, the next click shows the sign-in screen, and signing in opens the page that was clicked. An action such as Record parent check is not repeated by the sign-in. Press it again. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup.
+With no account, the portal stays closed and shows no usage or attempts. A session ends after 15 minutes without an accepted request, or 180 minutes from sign-in, whichever comes first. A portal tab left open does nothing by itself, so it does not keep a session going. After a session ends, the next click shows the sign-in screen, and signing in opens the page that was clicked. An action such as Record parent check is not repeated by the sign-in. Press it again. `PARENT_IDLE` and `PARENT_LIFETIME` in `.env` change those limits. Each value is a duration such as `15m` or `3h`. A value that is not a positive duration stops the service at startup.
 
 ## Certificate authority
 
@@ -349,7 +351,7 @@ The installer checks everything first and changes nothing if something it needs 
 | `~/daywarden/data/` | Recordings, such as `data/spelling/current` |
 | `~/daywarden/bin/`, `lib/` | Always replaced. The commands, and the Python source `cut-clips` runs |
 | `~/daywarden/venv/` | The `cut-clips` environment, built from PyPI |
-| `~/bin/dw`, `rm-attempts`, `word-stats`, `add-parent`, `cut-clips` | Links into `~/daywarden/bin` |
+| `~/bin/dw`, `rm-attempts`, `word-stats`, `dw-account`, `cut-clips` | Links into `~/daywarden/bin`. An upgrade removes the `~/bin/add-parent` link an earlier install made |
 
 On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.homenet.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its configuration URL, or its proxy port, and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
 
@@ -364,14 +366,14 @@ dw restart     # check the policy, then replace every container. Applies .env ch
 dw down        # stop and remove the containers. The CA, database, configuration, and recordings stay
 dw logs        # the last 100 lines of each service. dw logs -f decisions follows the decisions
 dw logs boot   # what the start at boot logged
-add-parent ada
+dw-account add --role admin --password ada
 ```
 
 `dw logs` takes service names, `decisions`, `observations`, `proxy`, and `autoconfig`, and the options of `docker compose logs`: `-f` to follow until Ctrl-C, `-n 20` or `--tail all` for more or fewer lines, `--since 10m` or `--since 2026-11-08T13:00`, and `-t` for the time of each line. It works with a port mistake in `.env`, and it shows what stopped containers logged. When none of the services it shows is running, `-f` shows what they logged and returns, because no new lines can come. `dw down`, `dw restart`, and a reboot remove the containers and what they logged. `dw down --keep` and `dw restart --keep` keep them. See [Decision and observation logs](#decision-and-observation-logs).
 
 A broken policy stops `dw up` and `dw restart` before anything is started or stopped, with `dw: the policy has 2 errors. daywarden was not started.` (or `Nothing was restarted.`) and every error. A running daywarden keeps running with the policy it had. `dw restart` on a stopped daywarden starts it, the same as `dw up`. Whether a parent stays signed in across `dw restart` is the same as across `dw down` and `dw up`.
 
-`dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts`, `word-stats`, and `add-parent` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
+`dw` works from any directory and always acts on `~/daywarden`. As with `make up`, a variable already in the environment wins over `.env`. `rm-attempts`, `word-stats`, and `dw-account` run in the decisions container and say `daywarden is not running. Start it with dw up.` when it is not.
 
 ### Start at boot
 
@@ -428,6 +430,6 @@ make test ARGS="tests/test_clips.py -q"
 
 The tests run in a virtual environment at `.venv`, which is not committed. The first `make test` (or `make venv`) creates it and installs `requirements-dev.txt`: the policy service's `policy/requirements.txt`, including `argon2-cffi` for parent sign-in, plus `pytest`. After that, runs start straight away. The venv is reinstalled only when a requirements file changes. If it breaks after a system Python upgrade, run `rm -rf .venv && make venv`. To run something else with the same packages, use `.venv/bin/python`, such as `.venv/bin/python -m pytest -x`.
 
-Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. Tests that need `ffmpeg` or `node` are skipped when those are not installed.
+Most tests start Compose, so Docker has to be available. They use their own port, CA directory, and policy volume, and they do not touch `data/ca`. The policy service image is built on each `up`, so the tests always run the current code. It is tagged `daywarden-policy:local`. Two checkouts that run tests at once, such as git worktrees, would build over each other's image, so give each its own tag with `DW_POLICY_TAG`, such as `DW_POLICY_TAG=s044 make test`. Tests that need `ffmpeg` or `node` are skipped when those are not installed.
 
 `make test` also runs the parent portal's own tests, with Vitest, and its type check. When Node is installed, it first installs the portal's npm packages from `policy/portal/package-lock.json` into `policy/portal/node_modules`, once, and again only when the lock file changes. `make portal-deps` does that step on its own. To work on the portal with the stack up, run `npm run dev` in `policy/portal` and open `http://localhost:5173/parent/`. Its data requests go to the HTTPS parent port. The decisions image builds the portal itself, so neither the image nor an installed package needs Node.

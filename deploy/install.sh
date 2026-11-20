@@ -2,7 +2,7 @@
 # Install or upgrade daywarden for the user who runs it, from the unpacked
 # package made by make dist:
 #   ./install.sh
-# Everything goes under ~/daywarden. dw, rm-attempts, word-stats, add-parent, and
+# Everything goes under ~/daywarden. dw, rm-attempts, word-stats, dw-account, and
 # cut-clips are linked into ~/bin. Every dependency is checked first, and
 # nothing changes when a required one is missing. .env, config/policy.yaml,
 # and config/bypass.txt are created only when missing and never overwritten.
@@ -17,7 +17,10 @@ package=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 root="$HOME/daywarden"
 bindir="$HOME/bin"
 etc=${DAYWARDEN_ETC:-/etc}
-LINKED=(dw rm-attempts word-stats add-parent cut-clips)
+LINKED=(dw rm-attempts word-stats dw-account cut-clips)
+# Links an earlier install made, for commands since renamed. Each is removed
+# when it is still daywarden's link.
+RETIRED=(add-parent)
 # shellcheck source=../bin/daywarden-lib.sh
 . "$package/bin/daywarden-lib.sh"
 
@@ -489,6 +492,11 @@ replace_dir "$package/bin" "$root/bin"
 for name in "${LINKED[@]}"; do
     ln -sfn -- "$root/bin/$name" "$bindir/$name"
 done
+for name in "${RETIRED[@]}"; do
+    if ours "$bindir/$name" "$name"; then
+        rm -f -- "$bindir/$name"
+    fi
+done
 install_file "$package/VERSION" "$root/VERSION" 644
 
 build_venv
@@ -553,7 +561,7 @@ if [ "$first_install" -eq 1 ]; then
     echo "Next steps:"
     echo "  - Review ~/daywarden/.env and ~/daywarden/config/policy.yaml."
     echo "  - Add any other names or IP addresses for this machine to PARENT_NAMES in ~/daywarden/.env."
-    echo "  - Run dw up, then add a parent with add-parent USERNAME."
+    echo "  - Run dw up, then add the first parent with dw-account add --role admin --password USERNAME."
     [ "$enabled_now" -eq 1 ] || echo "  - Run dw enable to start daywarden at boot."
     echo "  - Copy ~/daywarden/ca/mitmproxy-ca-cert.pem to the child computers. The first dw up creates it."
 fi

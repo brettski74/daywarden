@@ -182,8 +182,8 @@ def test_make_dist_builds_a_package_that_installs_and_runs(installed):
     status, _headers, page = installed.policy_page()
     assert status == 403
     assert "closed until a parent account is added" in page
-    saved = installed.command("add-parent", "ada", input=PASSWORD + "\n")
-    assert "parent account ada is saved" in saved.stdout
+    saved = installed.command("dw-account", "add", "--role", "admin", "--password", "ada", input=PASSWORD + "\n")
+    assert "ada is added, as an admin" in saved.stdout
     assert installed.policy_page()[0] == 401
     assert installed.sign_in()
 

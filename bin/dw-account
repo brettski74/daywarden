@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Add, change, list, and remove parent accounts, from the machine running
+# Compose (S044.1).
+#   dw-account add [--role admin|reviewer] [--email ADDRESS] [--password] USERNAME
+#   dw-account update USERNAME [--role admin|reviewer] [--email ADDRESS | --no-email] [--password]
+#   dw-account remove [--yes] USERNAME
+#   dw-account list
+#   dw-account help, or dw-account SUBCOMMAND --help
+# Runs `python -m policy.accounts` in the decisions container. Works from any
+# directory, including through a symlink in ~/bin. Without a terminal, a
+# password is read as one line of standard input.
+set -euo pipefail
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+root=$(dirname -- "$(dirname -- "$script")")
+# shellcheck source=daywarden-lib.sh
+. "$root/bin/daywarden-lib.sh"
+
+dw_prepare dw-account
+dw_require_running
+tty=()
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    tty=(-T)
+fi
+exec docker compose --project-directory "$root" exec "${tty[@]}" decisions \
+    python -m policy.accounts "$@"

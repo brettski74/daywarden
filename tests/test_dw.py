@@ -1,11 +1,11 @@
-"""S014: dw, add-parent, rm-attempts, and the user service on an installed daywarden."""
+"""S014: dw, dw-account, rm-attempts, and the user service on an installed daywarden."""
 
 import os
 import signal
 
 import pytest
 
-from hostfakes import Host, make_package
+from hostfakes import ROOT, Host, make_package
 
 
 @pytest.fixture
@@ -345,21 +345,33 @@ def test_a_service_stop_without_docker_does_nothing_and_succeeds(host):
 # Commands in the decisions container
 
 
-def test_add_parent_runs_the_account_command_in_the_decisions_container(host):
+def test_dw_account_runs_the_account_command_in_the_decisions_container(host):
     host.all_running()
-    done = host.run(host.home / "bin" / "add-parent", "ada", cwd=host.elsewhere)
+    done = host.run(host.home / "bin" / "dw-account", "add", "--email", "nana@example.net", "nana", cwd=host.elsewhere)
     assert done.returncode == 0, done.stderr
-    assert _compose(host) == [["exec", "-T", "decisions", "python", "-m", "policy.accounts", "ada"]]
+    assert _compose(host) == [
+        ["exec", "-T", "decisions", "python", "-m", "policy.accounts", "add", "--email", "nana@example.net", "nana"]
+    ]
 
 
-@pytest.mark.parametrize("command", ["add-parent", "rm-attempts", "word-stats"])
+@pytest.mark.parametrize("place", ["root", "clone"])
+def test_add_parent_points_to_dw_account_and_runs_nothing(host, place):
+    host.all_running()
+    command = (host.root if place == "root" else ROOT) / "bin" / "add-parent"
+    done = host.run(command, "ada", cwd=host.elsewhere)
+    assert done.returncode == 1
+    assert done.stderr == "add-parent is now dw-account. Run dw-account help.\n"
+    assert _compose(host) == []
+
+
+@pytest.mark.parametrize("command", ["dw-account", "rm-attempts", "word-stats"])
 def test_a_container_command_passes_help_through(host, command):
     host.all_running()
     assert host.run(host.home / "bin" / command, "--help").returncode == 0
     assert _compose(host)[-1][-1] == "--help"
 
 
-@pytest.mark.parametrize("command", ["add-parent", "rm-attempts", "word-stats"])
+@pytest.mark.parametrize("command", ["dw-account", "rm-attempts", "word-stats"])
 def test_a_container_command_says_when_daywarden_is_not_running(host, command):
     done = host.run(host.home / "bin" / command, "--help")
     assert done.returncode == 1

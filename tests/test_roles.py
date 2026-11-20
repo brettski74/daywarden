@@ -5,7 +5,6 @@ import json
 import os
 import re
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,7 +45,7 @@ def add(app, username: str, role: str | None = None) -> None:
 
 def set_role(app, username: str, role: str) -> None:
     with PolicyStore(app.state.database) as store:
-        Accounts(store.connection).set_role(username, role)
+        Accounts(store.connection).update(username, role=role)
 
 
 def sign_in_as(app, username: str) -> str:
@@ -89,19 +88,6 @@ def test_accounts_from_before_roles_become_admins_and_keep_their_sessions(tmp_pa
         assert Accounts(store.connection).accounts() == [("ada", ADMIN), ("bee", ADMIN)]
 
 
-def test_a_new_account_is_an_admin_unless_a_role_is_named_and_a_new_password_keeps_the_role():
-    with PolicyStore(":memory:") as store:
-        accounts = Accounts(store.connection)
-        accounts.set_password("ada", PASSWORD)
-        accounts.set_password("nana", PASSWORD, REVIEWER)
-        accounts.set_password("nana", "another-pass")
-        assert accounts.accounts() == [("ada", ADMIN), ("nana", REVIEWER)]
-        with pytest.raises(AccountError, match="--set-role"):
-            accounts.set_password("nana", "third-pass", ADMIN)
-        assert accounts.login("nana", "another-pass", NOW) is not None
-        assert accounts.accounts() == [("ada", ADMIN), ("nana", REVIEWER)]
-
-
 def test_changing_a_role_ends_the_accounts_sessions_and_only_that_accounts():
     with PolicyStore(":memory:") as store:
         accounts = Accounts(store.connection)
@@ -109,7 +95,7 @@ def test_changing_a_role_ends_the_accounts_sessions_and_only_that_accounts():
         accounts.set_password("bee", PASSWORD)
         ada = accounts.login("ada", PASSWORD, NOW)
         bee = accounts.login("bee", PASSWORD, NOW)
-        accounts.set_role("bee", REVIEWER)
+        accounts.update("bee", role=REVIEWER)
         assert accounts.accept(bee, NOW) is None
         assert accounts.accept(ada, NOW) == ("ada", ADMIN)
         assert accounts.accept(accounts.login("bee", PASSWORD, NOW), NOW) == ("bee", REVIEWER)
@@ -119,8 +105,8 @@ def test_changing_a_role_ends_the_accounts_sessions_and_only_that_accounts():
     ("username", "role", "problem"),
     [
         ("ada", REVIEWER, "ada is the only admin. Add another admin first."),
-        ("zed", REVIEWER, "There is no parent account zed. Nothing was changed."),
-        ("ada", "owner", "owner is not a role. The roles are admin and reviewer."),
+        ("zed", REVIEWER, "There is no parent account zed. Nothing was changed. Add it with dw-account add."),
+        ("ada", "owner", "owner is not a role. The roles are admin and reviewer. Nothing was changed."),
     ],
 )
 def test_a_refused_role_change_changes_nothing(username, role, problem):
@@ -130,78 +116,10 @@ def test_a_refused_role_change_changes_nothing(username, role, problem):
         accounts.set_password("nana", PASSWORD, REVIEWER)
         key = accounts.login("ada", PASSWORD, NOW)
         with pytest.raises(AccountError) as refused:
-            accounts.set_role(username, role)
+            accounts.update(username, role=role)
         assert str(refused.value) == problem
         assert accounts.accounts() == [("ada", ADMIN), ("nana", REVIEWER)]
         assert accounts.accept(key, NOW) == ("ada", ADMIN)
-
-
-# The command
-
-
-def command(database: Path, *args: str, password: str | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "POLICY_DB": str(database)}
-    return subprocess.run(
-        [sys.executable, "-m", "policy.accounts", *args],
-        input=None if password is None else password + "\n",
-        stdin=subprocess.DEVNULL if password is None else None,
-        text=True,
-        capture_output=True,
-        env=env,
-        cwd=ROOT,
-        check=False,
-    )
-
-
-def test_the_command_adds_lists_and_changes_roles(tmp_path):
-    database = tmp_path / "policy.sqlite3"
-    assert command(database, "ada", password=PASSWORD).returncode == 0
-    added = command(database, "--role", "reviewer", "nana", password=PASSWORD)
-    assert added.returncode == 0, added.stderr
-    assert "nana is saved, as a reviewer" in added.stdout
-    assert command(database, "--role=admin", "bee", password=PASSWORD).returncode == 0
-    listed = command(database, "--list")
-    assert listed.returncode == 0, listed.stderr
-    assert listed.stdout.splitlines() == ["ada admin", "bee admin", "nana reviewer"]
-
-    changed = command(database, "--set-role", "admin", "nana")
-    assert changed.returncode == 0, changed.stderr
-    assert "nana is now an admin" in changed.stdout
-    changed = command(database, "--set-role", "reviewer", "ada")
-    assert changed.returncode == 0, changed.stderr
-    assert "ada is now a reviewer" in changed.stdout
-    assert command(database, "--list").stdout.splitlines() == ["ada reviewer", "bee admin", "nana admin"]
-
-    replaced = command(database, "ada", password="a-new-password")
-    assert replaced.returncode == 0, replaced.stderr
-    assert command(database, "--list").stdout.splitlines()[0] == "ada reviewer"
-
-
-@pytest.mark.parametrize(
-    ("args", "problem"),
-    [
-        (("--role", "reviewer", "ada"), "--set-role"),
-        (("--set-role", "reviewer", "ada"), "ada is the only admin. Add another admin first."),
-        (("--set-role", "admin", "zed"), "There is no parent account zed."),
-        (("--role", "owner", "zed"), "owner is not a role. The roles are admin and reviewer."),
-        (("--set-role", "owner", "ada"), "owner is not a role. The roles are admin and reviewer."),
-    ],
-)
-def test_the_command_refuses_without_reading_a_password_and_changes_nothing(tmp_path, args, problem):
-    database = tmp_path / "policy.sqlite3"
-    assert command(database, "ada", password=PASSWORD).returncode == 0
-    # No password is given on stdin, so a refusal must come before reading one.
-    refused = command(database, *args)
-    assert refused.returncode != 0
-    assert problem in refused.stderr
-    assert command(database, "--list").stdout.splitlines() == ["ada admin"]
-
-
-def test_the_command_help_describes_the_role_options(tmp_path):
-    shown = command(tmp_path / "policy.sqlite3", "--help")
-    assert shown.returncode == 0
-    for option in ("--role", "--set-role", "--list", "reviewer"):
-        assert option in shown.stdout
 
 
 # The portal's data addresses

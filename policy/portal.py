@@ -63,6 +63,8 @@ HOME = "/parent/"
 # Vite writes the hashed scripts and stylesheets under /parent/build/. /parent/assets/ is Asset Administration.
 BUILT = "build/"
 # Addresses under /parent/ that are not portal pages.
+# A sign-in body holds a username, a password of at most 200 characters, and the page to return to.
+_LONGEST_SIGN_IN = 4096
 _NOT_PAGES = frozenset({"api", "build", "login"})
 _CLOSED = "The parent portal is closed until a parent account is added."
 _SIGNED_OUT = "Sign in to see this."
@@ -231,7 +233,7 @@ def install_portal(
     async def login(request: Request) -> Response:
         if request.url.scheme != "https":
             return _json(403, {"error": "Open this page over HTTPS."})
-        body, refused = await _json_body(request)
+        body, refused = await _json_body(request, _LONGEST_SIGN_IN)
         if refused is not None:
             return refused
         if accounts.count() == 0:
@@ -847,31 +849,40 @@ def _refused(error: RecordingError) -> JSONResponse:
     return _json(error.status, body)
 
 
-async def _limited_body(request: Request, limit: int) -> tuple[bytes, Response | None]:
+async def _limited_body(request: Request, limit: int, too_long: str = TOO_LONG) -> tuple[bytes, Response | None]:
     """Return a POST body, or a 413 as soon as it is known to be longer than limit."""
     try:
         declared = int(request.headers.get("content-length", "0"))
     except ValueError:
         declared = 0
     if declared > limit:
-        return b"", _json(413, {"error": TOO_LONG})
+        return b"", _json(413, {"error": too_long})
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > limit:
-            return b"", _json(413, {"error": TOO_LONG})
+            return b"", _json(413, {"error": too_long})
         chunks.append(chunk)
     return b"".join(chunks), None
 
 
-async def _json_body(request: Request) -> tuple[dict, Response | None]:
-    """Return the JSON object in a POST body, or the refusal to send instead."""
+async def _json_body(request: Request, limit: int | None = None) -> tuple[dict, Response | None]:
+    """Return the JSON object in a POST body, or the refusal to send instead.
+
+    With limit, a body longer than limit bytes is refused with 413 before it is read to the end.
+    """
     kind = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if kind != "application/json":
         return {}, _json(415, {"error": "Send this as application/json."})
+    if limit is None:
+        raw = await request.body()
+    else:
+        raw, refused = await _limited_body(request, limit, "The request is too large.")
+        if refused is not None:
+            return {}, refused
     try:
-        body = json.loads(await request.body() or b"{}")
+        body = json.loads(raw or b"{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}, _json(400, {"error": "The body is not JSON."})
     if not isinstance(body, dict):

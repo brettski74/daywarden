@@ -6,7 +6,7 @@ import pytest
 
 from hostfakes import NEWER, ROOT, Host, make_package
 
-LINKED = ("dw", "rm-attempts", "word-stats", "add-parent", "cut-clips")
+LINKED = ("dw", "rm-attempts", "word-stats", "dw-account", "cut-clips")
 
 
 @pytest.fixture
@@ -446,6 +446,27 @@ def test_ports_that_cannot_be_used_are_a_warning(host, package):
     done = host.install(package)
     assert done.returncode == 0, done.stderr
     assert "PORT_BASE 65530 puts PROXY_CONFIG_PORT at 65530+8 = 65538, above 65535. dw up will refuse to start." in done.stdout
+
+
+@pytest.mark.parametrize("ours", [True, False])
+def test_an_upgrade_removes_the_add_parent_link_an_earlier_install_made(host, package, newer, ours):
+    assert host.install(package).returncode == 0
+    old = host.home / "bin" / "add-parent"
+    if ours:
+        old.symlink_to(host.root / "bin" / "add-parent")
+    else:
+        old.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    done = host.install(newer)
+    assert done.returncode == 0, done.stderr
+    link = host.home / "bin" / "dw-account"
+    assert link.is_symlink() and link.resolve() == host.root / "bin" / "dw-account"
+    if ours:
+        assert not old.exists() and not old.is_symlink()
+    else:
+        assert old.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+    stub = host.run(host.root / "bin" / "add-parent", "ada")
+    assert stub.returncode == 1
+    assert stub.stderr == "add-parent is now dw-account. Run dw-account help.\n"
 
 
 def test_a_command_in_bin_that_daywarden_did_not_install_stops_the_install(host, package):

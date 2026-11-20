@@ -1,10 +1,13 @@
 """Parent accounts and sessions on the decisions service.
 
-There is no sign-up page. A host command adds or replaces one username.
-The password is read once and stored as an Argon2id hash. Replacing a
-password ends that account's sessions and the MCP connections it approved.
-Each account has one role, ``admin`` or ``reviewer`` (S043). The host command
-sets it, and changing it ends the account's sessions. A session key is 256 bits from the
+There is no sign-up page. The host command, ``dw-account`` (S044.1), adds,
+changes, lists, and removes accounts. An account may have no password yet, and
+then no sign-in to it succeeds. A password is stored as an Argon2id hash.
+Setting a password ends that account's sessions and the MCP connections it
+approved. Each account has one role, ``admin`` or ``reviewer`` (S043), and at
+most one email address. Changing the role ends the account's sessions.
+Removing an account ends its sessions and its MCP connections, and its id is
+never used again. A session key is 256 bits from the
 operating system's random source. The browser receives the key. The database
 stores the SHA-256 of the key, the account, the sign-in time, and the time
 of the last accepted request.
@@ -12,16 +15,19 @@ of the last accepted request.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import re
 import secrets
+import signal
 import sqlite3
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, VerifyMismatchError
@@ -31,24 +37,11 @@ COOKIE_NAME = "parent_session"
 ADMIN = "admin"
 REVIEWER = "reviewer"
 ROLES = (ADMIN, REVIEWER)
-USAGE = """\
-usage: python -m policy.accounts USERNAME
-       python -m policy.accounts --role ROLE USERNAME
-       python -m policy.accounts --set-role ROLE USERNAME
-       python -m policy.accounts --list
-Add a parent account, or replace its password and end its sessions.
-The password is read once, from the terminal or from one line of stdin.
-
-Roles:
-  admin      runs the system: every page, data address, and MCP tool.
-  reviewer   reads attempts and usage, and records parent checks. Nothing else.
-
-  USERNAME              add an admin, or replace an account's password. Its role is kept.
-  --role ROLE USERNAME  add a new account with ROLE. Refused for an existing account.
-  --set-role ROLE USERNAME
-                        change an existing account's role. No password is asked for.
-                        Its sessions end, so it must sign in again.
-  --list                list each account and its role."""
+# Counted in Unicode characters. Long enough for any passphrase, and keeps the
+# service from hashing whatever an attacker sends.
+LONGEST_PASSWORD = 200
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\Z")
+_LONGEST_EMAIL = 254
 
 # OWASP minimum for Argon2id: 19 MiB, 2 iterations, parallelism 1.
 # memory_cost is kibibytes. Verification reads the parameters in the hash.
@@ -69,13 +62,15 @@ _UNIT_SECONDS = {"h": 3600, "m": 60, "s": 1}
 _DEFAULT_IDLE = 15 * 60
 _DEFAULT_LIFETIME = 180 * 60
 
-_TABLES = """
+_ACCOUNTS_TABLE = """
 CREATE TABLE IF NOT EXISTS parent_accounts (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'admin'
-);
+    password_hash TEXT,
+    role TEXT NOT NULL DEFAULT 'reviewer',
+    email TEXT
+)"""
+_TABLES = _ACCOUNTS_TABLE + """;
 CREATE TABLE IF NOT EXISTS parent_sessions (
     id INTEGER PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES parent_accounts(id) ON DELETE CASCADE,
@@ -106,11 +101,40 @@ class Parent(NamedTuple):
         return self.role == ADMIN
 
 
+class Account(NamedTuple):
+    """One account as ``dw-account list`` shows it."""
+
+    username: str
+    role: str
+    email: str | None
+    has_password: bool
+
+
 def role_problem(role: object) -> str | None:
     """Return why role is not a role, or None."""
     if role in ROLES:
         return None
     return f"{role} is not a role. The roles are admin and reviewer."
+
+
+def email_problem(email: object) -> str | None:
+    """Return why email is not an address of the form name@domain, or None."""
+    if isinstance(email, str) and len(email) <= _LONGEST_EMAIL and _EMAIL.match(email):
+        return None
+    return f"{email} is not an email address. Give one of the form name@domain, such as nana@example.net."
+
+
+def password_problem(password: object) -> str | None:
+    """Return why password cannot be a password, or None."""
+    if not isinstance(password, str) or password == "":
+        return "The password is empty."
+    if len(password) > LONGEST_PASSWORD:
+        return f"The password is longer than {LONGEST_PASSWORD} characters."
+    return None
+
+
+def _article(role: str) -> str:
+    return "an" if role == ADMIN else "a"
 
 
 class Accounts:
@@ -130,11 +154,49 @@ class Accounts:
         self.lifetime = lifetime
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.executescript(_TABLES)
-        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(parent_accounts)")}
-        if "role" not in columns:
-            # Accounts from before S043 run the system, so each becomes an admin.
-            with self.connection:
-                self.connection.execute("ALTER TABLE parent_accounts ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
+        if "email" not in self._columns():
+            self._upgrade()
+
+    def _columns(self) -> set[str]:
+        return {row[1] for row in self.connection.execute("PRAGMA table_info(parent_accounts)")}
+
+    def _upgrade(self) -> None:
+        """Rebuild parent_accounts from before S044.1, keeping each row's id.
+
+        The new table lets password_hash be null, adds email, and never reuses
+        an id. SQLite 3.46, which the service runs, cannot drop a NOT NULL in
+        place. Accounts from before S043 have no role and become admins.
+        Foreign keys are off while the old table is dropped, so its sessions
+        stay, and they match the same ids in the new table.
+        """
+        self.connection.commit()
+        self.connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            columns = self._columns()
+            if "email" in columns:
+                # Another process upgraded it first.
+                self.connection.execute("ROLLBACK")
+                return
+            role = "role" if "role" in columns else "'admin'"
+            # One statement at a time: executescript would commit the open transaction.
+            self.connection.execute(_ACCOUNTS_TABLE.replace("IF NOT EXISTS parent_accounts", "parent_accounts_upgraded"))
+            self.connection.execute(
+                "INSERT INTO parent_accounts_upgraded (id, username, password_hash, role) "
+                f"SELECT id, username, password_hash, {role} FROM parent_accounts"
+            )
+            self.connection.execute("DROP TABLE parent_accounts")
+            self.connection.execute("ALTER TABLE parent_accounts_upgraded RENAME TO parent_accounts")
+            broken = self.connection.execute("PRAGMA foreign_key_check").fetchall()
+            if broken:
+                raise sqlite3.IntegrityError(f"the accounts upgrade broke {len(broken)} references")
+            self.connection.execute("COMMIT")
+        except BaseException:
+            if self.connection.in_transaction:
+                self.connection.execute("ROLLBACK")
+            raise
+        finally:
+            self.connection.execute("PRAGMA foreign_keys = ON")
 
     def count(self) -> int:
         """Return how many parent accounts are stored."""
@@ -150,75 +212,146 @@ class Accounts:
         rows = self.connection.execute("SELECT username, role FROM parent_accounts ORDER BY username").fetchall()
         return [Parent(username, role) for username, role in rows]
 
-    def check_new(self, username: str, role: str | None) -> None:
-        """Raise AccountError when ``set_password(username, ..., role)`` would be refused, before a password is read."""
-        if role is not None and role_problem(role) is not None:
-            raise AccountError(role_problem(role))
-        if role is not None and self.account_id(username) is not None:
+    def entries(self) -> list[Account]:
+        """Return every account with its role, address, and whether it has a password, in username order."""
+        rows = self.connection.execute(
+            "SELECT username, role, email, password_hash IS NOT NULL FROM parent_accounts ORDER BY username"
+        ).fetchall()
+        return [Account(username, role, email, bool(has)) for username, role, email, has in rows]
+
+    def entry(self, username: str) -> Account | None:
+        return next((found for found in self.entries() if found.username == username), None)
+
+    def _admins(self) -> int:
+        (admins,) = self.connection.execute("SELECT COUNT(*) FROM parent_accounts WHERE role = ?", (ADMIN,)).fetchone()
+        return int(admins)
+
+    # Checks. Each runs before a password is read, and each refusal changes nothing.
+
+    def check_add(self, username: str, role: str, email: str | None, password: bool) -> None:
+        """Raise AccountError when ``add`` with these would be refused."""
+        if not isinstance(username, str) or username.strip() == "":
+            raise AccountError("A username is required. Nothing was added.")
+        problem = role_problem(role) or (None if email is None else email_problem(email))
+        if problem is not None:
+            raise AccountError(f"{problem} Nothing was added.")
+        if self.account_id(username) is not None:
+            raise AccountError(f"{username} already exists, so nothing was added. Change it with dw-account update.")
+        if role != ADMIN and self._admins() == 0:
+            raise AccountError("There is no admin yet. Add the first account with --role admin.")
+        if email is None and not password:
             raise AccountError(
-                f"{username} already exists, so --role is refused and nothing was changed. "
-                f"Change its role with --set-role, or leave out --role to replace its password."
+                f"{username} would have no email address and no password, so there would be no way to set a password. "
+                "Give --email, --password, or both. Nothing was added."
             )
 
-    def set_password(self, username: str, password: str, role: str | None = None) -> None:
-        """Add this username, or replace its password and end its sessions.
+    def check_update(self, username: str, role: str | None = None, email: str | None = None) -> None:
+        """Raise AccountError when ``update`` with these would be refused."""
+        row = self.connection.execute("SELECT role FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            raise AccountError(f"There is no parent account {username}. Nothing was changed. Add it with dw-account add.")
+        problem = (None if role is None else role_problem(role)) or (None if email is None else email_problem(email))
+        if problem is not None:
+            raise AccountError(f"{problem} Nothing was changed.")
+        if role is not None and row[0] == ADMIN and role != ADMIN and self._admins() <= 1:
+            raise AccountError(f"{username} is the only admin. Add another admin first.")
 
-        A new account has role, or ``admin`` when role is None. An existing
-        account keeps its role, and naming a role for it is refused.
-        The password is hashed. It is not written anywhere else.
-        """
-        if not isinstance(username, str) or username == "":
-            raise ValueError("username is required")
-        if not isinstance(password, str) or password == "":
-            raise ValueError("a password is required")
-        self.check_new(username, role)
-        digest = _HASHER.hash(password)
-        row = self.connection.execute(
-            "SELECT id FROM parent_accounts WHERE username = ?",
-            (username,),
-        ).fetchone()
+    def check_remove(self, username: str) -> None:
+        """Raise AccountError when ``remove`` would be refused."""
+        row = self.connection.execute("SELECT role FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            raise AccountError(f"There is no parent account {username}. Nothing was removed. Add it with dw-account add.")
+        if row[0] == ADMIN and self._admins() <= 1:
+            raise AccountError(f"{username} is the only admin. Add another admin first.")
+
+    # Changes
+
+    def add(self, username: str, role: str = REVIEWER, email: str | None = None, password: str | None = None) -> None:
+        """Add a new account. It has no password unless one is given."""
+        self.check_add(username, role, email, password is not None)
+        digest = None
+        if password is not None:
+            problem = password_problem(password)
+            if problem is not None:
+                raise AccountError(f"{problem} Nothing was added.")
+            digest = _HASHER.hash(password)
         with self.connection:
-            if row is None:
-                self.connection.execute(
-                    "INSERT INTO parent_accounts (username, password_hash, role) VALUES (?, ?, ?)",
-                    (username, digest, role or ADMIN),
-                )
-                return
-            account_id = row[0]
             self.connection.execute(
-                "UPDATE parent_accounts SET password_hash = ? WHERE id = ?",
-                (digest, account_id),
+                "INSERT INTO parent_accounts (username, password_hash, role, email) VALUES (?, ?, ?, ?)",
+                (username, digest, role, email),
             )
-            self.connection.execute(
-                "DELETE FROM parent_sessions WHERE account_id = ?",
-                (account_id,),
-            )
-        # The agents this parent approved must be approved again, as the browser must sign in again.
+
+    def update(
+        self,
+        username: str,
+        *,
+        role: str | None = None,
+        email: str | None = None,
+        no_email: bool = False,
+        password: str | None = None,
+    ) -> None:
+        """Change an existing account. Every change is checked before any is made.
+
+        A new role or a new password ends the account's sessions. A new
+        password also ends the MCP connections the account approved. The MCP
+        connections are kept on a role change: each call reads the role again.
+        """
+        if email is not None and no_email:
+            raise AccountError("--email and --no-email cannot both be given. Nothing was changed.")
+        self.check_update(username, role, email)
+        digest = None
+        if password is not None:
+            problem = password_problem(password)
+            if problem is not None:
+                raise AccountError(f"{problem} Nothing was changed.")
+            digest = _HASHER.hash(password)
+        account_id = self.account_id(username)
+        assert account_id is not None
+        with self.connection:
+            if role is not None:
+                self.connection.execute("UPDATE parent_accounts SET role = ? WHERE id = ?", (role, account_id))
+            if email is not None or no_email:
+                self.connection.execute("UPDATE parent_accounts SET email = ? WHERE id = ?", (email, account_id))
+            if digest is not None:
+                self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+            if role is not None or digest is not None:
+                self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (account_id,))
+        if digest is not None:
+            # The agents this parent approved must be approved again, as the browser must sign in again.
+            from policy.mcp_store import McpStore
+
+            McpStore(self.connection).end_for_account(account_id, datetime.now(timezone.utc), "the parent's password was replaced")
+
+    def remove(self, username: str) -> None:
+        """Remove an account, its sessions, its unused MCP codes, and the MCP connections it approved.
+
+        The activity log keeps naming it. Its id is never used again, so a new
+        account with the same username gets none of these back.
+        """
+        self.check_remove(username)
+        account_id = self.account_id(username)
+        assert account_id is not None
         from policy.mcp_store import McpStore
 
-        McpStore(self.connection).end_for_account(account_id, datetime.now(timezone.utc), "the parent's password was replaced")
-
-    def set_role(self, username: str, role: str) -> None:
-        """Change an existing account's role and end its sessions.
-
-        The MCP connections it approved are kept: each call reads the role again.
-        Refused, changing nothing, for an unknown username, a role that is not
-        one, or making the only admin a reviewer.
-        """
-        problem = role_problem(role)
-        if problem is not None:
-            raise AccountError(problem)
-        row = self.connection.execute("SELECT id, role FROM parent_accounts WHERE username = ?", (username,)).fetchone()
-        if row is None:
-            raise AccountError(f"There is no parent account {username}. Nothing was changed.")
-        account_id, before = row
-        if before == ADMIN and role != ADMIN:
-            (admins,) = self.connection.execute("SELECT COUNT(*) FROM parent_accounts WHERE role = ?", (ADMIN,)).fetchone()
-            if admins <= 1:
-                raise AccountError(f"{username} is the only admin. Add another admin first.")
+        McpStore(self.connection).end_for_account(account_id, datetime.now(timezone.utc), "the parent's account was removed")
         with self.connection:
-            self.connection.execute("UPDATE parent_accounts SET role = ? WHERE id = ?", (role, account_id))
-            self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (account_id,))
+            # mcp_codes has no foreign key, so its rows are removed here.
+            self.connection.execute("DELETE FROM mcp_codes WHERE account_id = ?", (account_id,))
+            self.connection.execute("DELETE FROM parent_accounts WHERE id = ?", (account_id,))
+
+    def set_password(self, username: str, password: str, role: str | None = None) -> None:
+        """Add an account with this password, or replace an existing account's password.
+
+        A new account has role, or ``admin`` when role is None. An existing
+        account keeps its role, and naming a role for it is refused. The tests
+        use this to make accounts. The host command uses ``add`` and ``update``.
+        """
+        if self.account_id(username) is None:
+            self.add(username, role or ADMIN, password=password)
+            return
+        if role is not None:
+            raise AccountError(f"{username} already exists. Change its role with dw-account update --role.")
+        self.update(username, password=password)
 
     def role_of(self, account_id: int) -> str | None:
         """Return an account's role, or None when the account is gone."""
@@ -228,20 +361,26 @@ class Accounts:
     def login(self, username: str, password: str, now: datetime) -> str | None:
         """Return a new session key, or None when the sign-in is refused.
 
-        A missing username still runs a password check. A new sign-in does
-        not end older keys for the same account.
+        A missing username, or an account with no password yet, still runs a
+        password check, against the dummy hash. A password longer than
+        LONGEST_PASSWORD is not hashed: the dummy hash is checked against a
+        fixed one instead, so the refusal takes the same time. A new sign-in
+        does not end older keys for the same account.
         """
         if not isinstance(username, str):
             username = ""
         if not isinstance(password, str):
             password = ""
+        if len(password) > LONGEST_PASSWORD:
+            _passwords_match(None, "")
+            return None
         row = self.connection.execute(
             "SELECT id, password_hash FROM parent_accounts WHERE username = ?",
             (username,),
         ).fetchone()
         stored = None if row is None else row[1]
-        # Always check a hash. Short-circuiting on a missing username would
-        # make that refusal faster than a wrong password.
+        # Always check a hash. Short-circuiting on a missing username or a
+        # missing password would make that refusal faster than a wrong password.
         matched = _passwords_match(stored, password)
         if stored is None or not matched:
             return None
@@ -400,10 +539,145 @@ def _parse(value: str) -> datetime:
     return parsed.astimezone(timezone.utc).replace(microsecond=0)
 
 
+# The host command: dw-account, which runs ``python -m policy.accounts`` in the
+# decisions container.
+
+PROG = "dw-account"
+HELP = f"""\
+usage: {PROG} SUBCOMMAND [SWITCHES] [USERNAME]
+
+Add, change, list, and remove the parent accounts that sign in to the parent portal.
+
+Subcommands:
+  add [--role admin|reviewer] [--email ADDRESS] [--password] USERNAME
+        Add a new account. USERNAME must not exist yet.
+        --role      admin or reviewer. A new account is a reviewer unless --role admin is given.
+                    While there is no admin, the first account must be added with --role admin.
+        --email     the parent's email address, of the form name@domain.
+        --password  ask for a password. Without it, the account has no password yet and no one
+                    can sign in to it. Give --email, --password, or both.
+  update USERNAME [--role admin|reviewer] [--email ADDRESS | --no-email] [--password]
+        Change an existing account. Give at least one switch. Every switch is checked
+        before anything changes.
+        --role      change the role. The account's sessions end, so it must sign in again.
+                    The only admin cannot become a reviewer.
+        --email     set the email address.   --no-email  remove it.
+        --password  ask for a new password. The account's sessions and the MCP connections
+                    it approved end.
+  remove [--yes] USERNAME
+        Remove an existing account, its sessions, and the MCP connections it approved.
+        Asks first. Without a terminal, --yes is needed. The only admin cannot be removed.
+  list  Each account: its username, role, email address or "no email", and "no password"
+        when it has none yet.
+  help  This help. {PROG} SUBCOMMAND --help describes one subcommand.
+
+Roles:
+  admin      runs the system: every page, data address, and MCP tool.
+  reviewer   reads attempts and usage, and records parent checks. Nothing else.
+
+A password is 1 to {LONGEST_PASSWORD} characters. It is asked for twice with echo off, and never read
+from the command line. Without a terminal, it is read once, as one line of standard input."""
+
+
+class _Stopped(Exception):
+    """A signal that ends the command while it waits at a prompt."""
+
+
+class _Usage(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: {message}\nRun {self.prog} --help for more.\n")
+
+
+def _subcommands() -> dict[str, argparse.ArgumentParser]:
+    def parser(name: str, description: str) -> argparse.ArgumentParser:
+        return _Usage(prog=f"{PROG} {name}", description=description, allow_abbrev=False)
+
+    add = parser("add", "Add a new account. USERNAME must not exist yet. Give --email, --password, or both.")
+    add.add_argument(
+        "--role", choices=ROLES, default=REVIEWER, help="admin or reviewer. A new account is a reviewer unless --role admin is given."
+    )
+    add.add_argument("--email", metavar="ADDRESS", help="the parent's email address, of the form name@domain.")
+    add.add_argument(
+        "--password", action="store_true", help="ask for a password. Without it, the account has no password yet."
+    )
+    add.add_argument("username", metavar="USERNAME")
+
+    update = parser("update", "Change an existing account. Give at least one switch. If any is refused, nothing changes.")
+    update.add_argument("username", metavar="USERNAME")
+    update.add_argument("--role", choices=ROLES, help="change the role. The account's sessions end.")
+    email = update.add_mutually_exclusive_group()
+    email.add_argument("--email", metavar="ADDRESS", help="set the email address, of the form name@domain.")
+    email.add_argument("--no-email", action="store_true", help="remove the email address.")
+    update.add_argument(
+        "--password",
+        action="store_true",
+        help="ask for a new password. The account's sessions and the MCP connections it approved end.",
+    )
+
+    remove = parser(
+        "remove", "Remove an existing account, its sessions, and the MCP connections it approved. This cannot be undone."
+    )
+    remove.add_argument("--yes", action="store_true", help="remove without asking. Needed without a terminal.")
+    remove.add_argument("username", metavar="USERNAME")
+
+    listing = parser("list", 'List each account: username, role, email address or "no email", and "no password" when it has none.')
+    helping = parser("help", "Describe every subcommand and switch.")
+    return {"add": add, "update": update, "remove": remove, "list": listing, "help": helping}
+
+
+def _command_line(args: list[str]) -> argparse.Namespace:
+    """Return the subcommand and its switches, or exit with that subcommand's usage."""
+    subcommands = _subcommands()
+    if not args:
+        print(HELP, file=sys.stderr, flush=True)
+        raise SystemExit(2)
+    if args[0] in ("-h", "--help"):
+        args = ["help", *args[1:]]
+    name = args[0]
+    if name not in subcommands:
+        print(HELP.splitlines()[0], file=sys.stderr)
+        print(f"{PROG}: {name} is not a subcommand. The subcommands are {', '.join(subcommands)}.", file=sys.stderr)
+        raise SystemExit(2)
+    parser = subcommands[name]
+    found = parser.parse_args(args[1:])
+    found.action = name
+    if name == "update" and found.role is None and found.email is None and not found.no_email and not found.password:
+        parser.error("give at least one of --role, --email, --no-email, or --password")
+    return found
+
+
+# A prompt left this long ends. When the docker client is killed, the command
+# in the container is not, and without this it would wait for ever.
+PROMPT_SECONDS = 5 * 60
+
+
+@contextmanager
+def _signals_stop():
+    """Turn SIGTERM, SIGHUP, SIGQUIT, and the prompt's time running out into _Stopped while a prompt is open.
+
+    getpass restores the terminal's echo in a finally block, which runs for
+    Ctrl+C and Ctrl+D but not when one of these signals ends the process.
+    """
+
+    def stop(signum: int, _frame: object) -> None:
+        if signum == signal.SIGALRM:
+            raise _Stopped(f"No answer came within {PROMPT_SECONDS // 60} minutes.")
+        raise _Stopped("Stopped.")
+
+    names = ("SIGTERM", "SIGHUP", "SIGQUIT", "SIGALRM")
+    saved = {name: signal.signal(getattr(signal, name), stop) for name in names}
+    signal.alarm(PROMPT_SECONDS)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        for name, handler in saved.items():
+            signal.signal(getattr(signal, name), handler)
+
+
 def read_password_once() -> str:
-    """Read one password from the terminal, or one line from stdin."""
-    if sys.stdin.isatty():
-        return getpass("Password: ")
+    """Read one line of stdin as a password."""
     line = sys.stdin.readline()
     if line.endswith("\n"):
         line = line[:-1]
@@ -412,49 +686,87 @@ def read_password_once() -> str:
     return line
 
 
-def _arguments(args: list[str]) -> tuple[str, str | None, str | None]:
-    """Return the action (add, set-role, or list), the role named, and the username. Exit with the usage when they do not fit."""
-    action, role, rest = "add", None, []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        name, equals, value = arg.partition("=")
-        if name in ("--role", "--set-role"):
-            if not equals:
-                index += 1
-                if index >= len(args):
-                    raise SystemExit(f"{name} needs a role: admin or reviewer")
-                value = args[index]
-            if role is not None:
-                raise SystemExit(USAGE.splitlines()[0])
-            role = value
-            if name == "--set-role":
-                action = "set-role"
-        elif arg == "--list":
-            action = "list" if action == "add" and role is None else ""
-        elif arg.startswith("-"):
-            raise SystemExit(f"{arg} is not an option.\n{USAGE}")
-        else:
-            rest.append(arg)
-        index += 1
-    if action == "list":
-        if rest or role is not None:
-            raise SystemExit(USAGE.splitlines()[0])
-        return action, None, None
-    if action == "" or len(rest) != 1 or rest[0] == "":
-        raise SystemExit(USAGE.splitlines()[0])
-    return action, role, rest[0]
+def read_new_password(nothing: str) -> str:
+    """Ask for a password twice from the terminal, or read it once from stdin.
+
+    nothing is the end of a refusal, such as "Nothing was added."
+    """
+    if not sys.stdin.isatty():
+        password = read_password_once()
+    else:
+        with _signals_stop():
+            password = getpass("Password: ")
+            again = getpass("Password again: ")
+        if password != again:
+            raise AccountError(f"The two passwords differ. {nothing}")
+    problem = password_problem(password)
+    if problem is not None:
+        raise AccountError(f"{problem} {nothing}")
+    return password
+
+
+def _confirm(question: str) -> bool:
+    with _signals_stop():
+        return input(question).strip() == "y"
+
+
+def _list(accounts: Accounts) -> None:
+    rows = [
+        (found.username, found.role, found.email or "no email", "" if found.has_password else "no password")
+        for found in accounts.entries()
+    ]
+    widths = [max((len(row[column]) for row in rows), default=0) for column in range(3)]
+    for row in rows:
+        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)) + ("  " + row[3] if row[3] else ""), flush=True)
+    if not rows:
+        print("There are no parent accounts. Add the first with dw-account add --role admin --password USERNAME.")
+
+
+def _add(accounts: Accounts, found: argparse.Namespace) -> None:
+    username, role, email = found.username, found.role, found.email
+    accounts.check_add(username, role, email, found.password)
+    password = read_new_password("Nothing was added.") if found.password else None
+    accounts.add(username, role, email, password)
+    address = f"with the email address {email}" if email else "with no email address"
+    print(f"{username} is added, as {_article(role)} {role}, {address}.", flush=True)
+    if password is None:
+        print(f"{username} has no password yet. dw-account update --password {username} sets one.", flush=True)
+
+
+def _update(accounts: Accounts, found: argparse.Namespace) -> None:
+    username = found.username
+    accounts.check_update(username, found.role, found.email)
+    password = read_new_password("Nothing was changed.") if found.password else None
+    accounts.update(username, role=found.role, email=found.email, no_email=found.no_email, password=password)
+    if found.role is not None:
+        print(f"{username} is now {_article(found.role)} {found.role}. Its sessions have ended.", flush=True)
+    if found.email is not None:
+        print(f"{username}'s email address is now {found.email}.", flush=True)
+    if found.no_email:
+        print(f"{username} has no email address now.", flush=True)
+    if password is not None:
+        print(f"{username}'s password is set. Its sessions and the MCP connections it approved have ended.", flush=True)
+
+
+def _remove(accounts: Accounts, found: argparse.Namespace) -> None:
+    username = found.username
+    accounts.check_remove(username)
+    if not found.yes:
+        if not sys.stdin.isatty():
+            raise AccountError(f"There is no terminal to ask in, so {username} was not removed. Give --yes to remove it.")
+        if not _confirm(f"Remove {username}? This cannot be undone. [y/N] "):
+            print(f"{username} was not removed.", flush=True)
+            return
+    accounts.remove(username)
+    print(f"{username} is removed. Its sessions and the MCP connections it approved have ended.", flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Add or replace one parent username, change its role, or list the accounts."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    if "--help" in args or "-h" in args:
-        print(USAGE, flush=True)
+    """Run one dw-account subcommand."""
+    found = _command_line(list(sys.argv[1:] if argv is None else argv))
+    if found.action == "help":
+        print(HELP, flush=True)
         return
-    action, role, username = _arguments(args)
-    if role is not None and role_problem(role) is not None:
-        raise SystemExit(role_problem(role))
     # Imported here so a sign-in check does not load the policy loader.
     from policy.store import PolicyStore
 
@@ -463,27 +775,20 @@ def main(argv: list[str] | None = None) -> None:
     store = PolicyStore(database)
     try:
         accounts = Accounts(store.connection)
-        if action == "list":
-            for parent in accounts.accounts():
-                print(f"{parent.username} {parent.role}", flush=True)
-            return
-        assert username is not None
-        if action == "set-role":
-            assert role is not None
-            accounts.set_role(username, role)
-            print(f"{username} is now {'an' if role == ADMIN else 'a'} {role}. Its sessions have ended.", flush=True)
-            return
-        accounts.check_new(username, role)
-        password = read_password_once()
-        if password == "":
-            raise SystemExit("a password is required")
-        accounts.set_password(username, password, role)
-        saved = next(parent.role for parent in accounts.accounts() if parent.username == username)
+        {"list": _list, "add": _add, "update": _update, "remove": _remove}[found.action](
+            accounts, *([] if found.action == "list" else [found])
+        )
     except AccountError as error:
         raise SystemExit(str(error)) from None
+    except (KeyboardInterrupt, EOFError, _Stopped) as stopped:
+        why = str(stopped) if isinstance(stopped, _Stopped) else "Stopped."
+        try:
+            print(f"\n{why} Nothing was changed.", file=sys.stderr, flush=True)
+        except OSError:
+            pass
+        raise SystemExit(130) from None
     finally:
         store.close()
-    print(f"parent account {username} is saved, as {'an' if saved == ADMIN else 'a'} {saved}", flush=True)
 
 
 if __name__ == "__main__":

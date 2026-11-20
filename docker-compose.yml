@@ -38,7 +38,7 @@ name: daywarden
 services:
   decisions:
     build: ./policy
-    image: daywarden-policy:local
+    image: daywarden-policy:${DW_POLICY_TAG:-local}
     pull_policy: build
     environment:
       POLICY_FILE: ${POLICY_FILE:-/etc/daywarden/policy.yaml}
@@ -104,7 +104,7 @@ services:
     # The decisions service builds this image. Compose labels a build with
     # its service, so a second build of the same tag would be another image,
     # and up would recreate the containers built from the first.
-    image: daywarden-policy:local
+    image: daywarden-policy:${DW_POLICY_TAG:-local}
     pull_policy: never
     command:
       - python
@@ -193,7 +193,7 @@ services:
 
   autoconfig:
     # Built by the decisions service, as for observations.
-    image: daywarden-policy:local
+    image: daywarden-policy:${DW_POLICY_TAG:-local}
     pull_policy: never
     command:
       - python

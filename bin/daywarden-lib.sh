@@ -1,4 +1,4 @@
-# Shared by the daywarden host commands: dw, rm-attempts, add-parent,
+# Shared by the daywarden host commands: dw, rm-attempts, dw-account,
 # daywarden-service, and install.sh. Sourced, not run.
 #
 # The caller sets root to the directory the commands act on. That is the

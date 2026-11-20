@@ -3,9 +3,7 @@
 import hashlib
 import hmac
 import json
-import os
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -336,63 +334,6 @@ def test_without_an_account_or_a_session_the_data_endpoints_show_nothing(service
         assert "wombat" not in body and "words" not in body and "younger" not in body
         assert "location" not in headers
         assert headers["cache-control"] == ["no-store"]
-
-
-def test_the_command_stores_a_hash_and_does_not_write_the_policy_file(tmp_path):
-    database = tmp_path / "policy.sqlite3"
-    policy = tmp_path / "policy.yaml"
-    policy.write_text("timezone: Australia/Sydney\n", encoding="utf-8")
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    env["POLICY_DB"] = str(database)
-    env["POLICY_FILE"] = str(policy)
-    completed = subprocess.run(
-        [sys.executable, "-m", "policy.accounts", "ada"],
-        input=PASSWORD + "\n",
-        text=True,
-        capture_output=True,
-        env=env,
-        cwd=ROOT,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert policy.read_text(encoding="utf-8") == "timezone: Australia/Sydney\n"
-    assert PASSWORD.encode() not in database.read_bytes()
-    with PolicyStore(database) as store:
-        accounts = Accounts(store.connection)
-        assert accounts.login("ada", PASSWORD, NOW) is not None
-        key = accounts.login("ada", PASSWORD, NOW)
-    again = subprocess.run(
-        [sys.executable, "-m", "policy.accounts", "ada"],
-        input="a-new-password\n",
-        text=True,
-        capture_output=True,
-        env=env,
-        cwd=ROOT,
-        check=False,
-    )
-    assert again.returncode == 0, again.stderr
-    with PolicyStore(database) as store:
-        accounts = Accounts(store.connection)
-        assert accounts.accept(key, NOW + timedelta(minutes=1)) is None
-        assert accounts.login("ada", "a-new-password", NOW) is not None
-
-
-def test_the_command_help_exits_zero_without_reading_a_password(tmp_path):
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "POLICY_DB": str(tmp_path / "policy.sqlite3")}
-    for flag in ("--help", "-h"):
-        completed = subprocess.run(
-            [sys.executable, "-m", "policy.accounts", flag],
-            stdin=subprocess.DEVNULL,
-            text=True,
-            capture_output=True,
-            env=env,
-            cwd=ROOT,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        assert completed.stdout.startswith("usage: python -m policy.accounts USERNAME")
-    assert not (tmp_path / "policy.sqlite3").exists()
 
 
 def test_the_decision_and_observation_apis_do_not_record_a_pass():

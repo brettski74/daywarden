@@ -110,7 +110,7 @@ After sign-in, the parent always lands on a portal page with the full frame. The
 
 ## Access control
 
-Every parent account has one role, set on the host with `bin/add-parent` (S043). This section is the reference for deciding which role a new page, data address, or MCP tool is open to.
+Every parent account has one role, set on the host with `dw-account` (S043, S044.1). This section is the reference for deciding which role a new page, data address, or MCP tool is open to.
 
 - **Admin.** Runs the system. An admin can use every page, data address, and MCP tool, now and in the future. Nothing is ever closed to admins.
 - **Reviewer.** Reviews the children's work and is not involved in running the system. A reviewer reads attempts and usage data with every drill-down. The one thing a reviewer changes is recording a parent check, for work done outside the system.
