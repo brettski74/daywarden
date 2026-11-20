@@ -45,6 +45,7 @@ the sentence I was answering, so that I can check a rule when I am not sure and 
   - holidays: "We eat cake at Christmas." (`Christmas` blue)
   - titles: "We saw Dr Patel today." (`Dr` blue, `Patel` black because it is a name that has to follow the title)
   - short names made of capitals: "My uncle works for NASA." (`NASA` blue)
+  - many rules can be in one sentence: "On Tuesday, Mia and I flew to Sydney." (`On`, `Tuesday`, `Mia`, `I`, `Sydney` all blue)
 - [ ] The page scrolls when it does not fit the screen, with the "Back to my sentence" button always visible.
 
 ## Returning to the sentence
