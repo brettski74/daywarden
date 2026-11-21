@@ -36,7 +36,7 @@ import {
 } from "../skipCounting";
 import { ContextBar, StatusBar, useTitle } from "../slots";
 import { PartsOfSpeechAdmin, type PosData } from "./PartsOfSpeech";
-import { posBlock, poolCounts, runnableSize, sameList } from "../partsOfSpeech";
+import { NO_HELP_POINTS, posBlock, poolCounts, runnableSize, sameList } from "../partsOfSpeech";
 import { ArithmeticAdmin } from "./Arithmetic";
 import { SkipCountingAdmin } from "./SkipCounting";
 import { POOL_FILTERS, SAVE_MOVES_FIRST, SpellingAdmin, listedPools, type Listing, type Pool, type SpellingData, type SpellingWord } from "./Spelling";
@@ -94,9 +94,11 @@ type Edits = {
   /** A parts of speech task's pools and filter once the parent has changed them, else null. */
   pools: string[] | null;
   filter: string[] | null;
+  /** A capitalisation task's help points once the parent has changed them, else null. */
+  help: string[] | null;
 };
 
-const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, lists: {}, directories: {}, pools: null, filter: null };
+const NO_EDITS: Edits = { fields: {}, groups: null, settings: {}, moves: {}, lists: {}, directories: {}, pools: null, filter: null, help: null };
 const ADD_WORDS = "Add words to the new directories from the Words menu. Its Apply saves the directories with the words.";
 const ADD_WORDS_NEW = "Add words to the new directories from the Words menu, then save the new task.";
 
@@ -211,6 +213,7 @@ function changed(data: TaskData, edits: Edits, words: SpellingWord[]): boolean {
   const pooled = data.parts_of_speech ?? data.capitalisation;
   if (pooled) {
     if (edits.pools !== null && !sameList(edits.pools, pooled.pools)) return true;
+    if (data.capitalisation?.help && edits.help !== null && !sameList([...edits.help].sort(), [...data.capitalisation.help.selected].sort())) return true;
     if (data.parts_of_speech && edits.filter !== null && !sameList(edits.filter, data.parts_of_speech.filter)) return true;
   }
   if (data.skip_counting && shownDifference(data.skip_counting, edits.settings, edits.lists.difference).changed) return true;
@@ -293,7 +296,8 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
   const capital = data.capitalisation !== undefined;
   const posPools = edits.pools ?? pos?.pools ?? [];
   const posFilter = edits.filter ?? data.parts_of_speech?.filter ?? [];
-  const posProblem = pos ? posBlock(posPools, capital ? [] : posFilter) : null;
+  const helpShown = edits.help ?? data.capitalisation?.help?.selected;
+  const posProblem = pos ? posBlock(posPools, capital ? [] : posFilter) ?? (helpShown?.length === 0 ? NO_HELP_POINTS : null) : null;
   const skip = data.skip_counting;
   const difference = skip ? shownDifference(skip, edits.settings, edits.lists.difference) : null;
   const differenceTrouble = skip && difference ? differenceProblems(difference.rows, skip, edits.settings) : [];
@@ -344,7 +348,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
                 ...(directoriesMoved ? { directories: unsavedDirectories } : {}),
               }
             : {}),
-          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, pools: posPools, ...(capital ? {} : { parts_of_speech: posFilter }) } : {}),
+          ...(pos ? { settings: { ...pos.settings, ...edits.settings }, pools: posPools, ...(capital ? { ...(helpShown ? { help_points: helpShown } : {}) } : { parts_of_speech: posFilter }) } : {}),
           ...(skip ? { settings: { ...skip.settings, ...edits.settings }, lists } : {}),
           ...(data.arithmetic ? { settings: { ...data.arithmetic.settings, ...edits.settings }, lists } : {}),
           confirmed,
@@ -352,7 +356,7 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
         post,
       );
     },
-    [fetcher, data, edits, dirty, held, fixFirst, pos, posPools, posFilter, skip, difference, sums, naming, draft, renaming, creating, frozen, name, chosen, moving, directoriesMoved, unsavedDirectories],
+    [fetcher, data, edits, dirty, held, fixFirst, pos, posPools, posFilter, helpShown, skip, difference, sums, naming, draft, renaming, creating, frozen, name, chosen, moving, directoriesMoved, unsavedDirectories],
   );
 
   /** Change a number list's rows. A list not yet touched, or the default list, starts from the rows on show. */
@@ -650,6 +654,8 @@ function TaskEditor({ data: given, types, restored }: { data: TaskData; types?: 
               onSetting={setSetting}
               onPools={(next) => setEdits((current) => ({ ...current, pools: sameList([...next].sort(), [...pos.pools].sort()) ? null : next }))}
               onFilter={(next) => setEdits((current) => ({ ...current, filter: next }))}
+              helpShown={capital ? helpShown : undefined}
+              onHelp={(next) => setEdits((current) => ({ ...current, help: next }))}
             />
           ) : skip && difference ? (
             <SkipCountingAdmin

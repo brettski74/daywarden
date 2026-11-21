@@ -694,6 +694,20 @@ fieldset.lock-area,
   border: 0;
 }
 
+.help-points label {
+  display: block;
+  margin: 0.3rem 0;
+}
+
+/* Select all heads the list: bold, with a rule under it to set it apart from the points. */
+.help-points .select-all {
+  display: block;
+  margin: 0.4rem 0 0;
+  padding-bottom: 0.4rem;
+  border-bottom: 0.06rem solid var(--divider);
+  font-weight: 700;
+}
+
 .task-common legend {
   padding: 0 0.3rem;
   font-weight: 600;

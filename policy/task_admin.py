@@ -722,6 +722,7 @@ def _changes(kind: str, written: WrittenTask, request: Mapping) -> dict[str, obj
     elif kind == CAPITALISATION:
         _diff(body, written.body, request.get("settings"), parts_of_speech_admin.SETTINGS)
         body.update(capitalisation_admin.list_changes(written, request))
+        body.update(capitalisation_admin.help_changes(written, request))
         if request.get("sentences") is not None:
             raise ValueError("Sentences are edited on a capitalisation pool's page under Asset Administration.")
     elif kind == SKIP_COUNTING:

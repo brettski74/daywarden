@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from policy.capitalisation import has_capital, split_words
+from policy.capitalisation import HELP_POINTS, has_capital, help_points, split_words
 from policy.parts_of_speech_admin import LEVEL, SETTINGS, _names, level, pool_list, shown_level
 from policy.sentence_pools import CAPITALISATION_DIR
 from policy.task_edit import ListEdit, ListItem, WrittenTask, name_list
@@ -26,6 +26,21 @@ from policy.task_edit import ListEdit, ListItem, WrittenTask, name_list
 NO_CAPITAL = "The sentence has no capital letter, so there is nothing to click."
 EMPTY = "The sentence is empty."
 NO_POOLS = "Choose at least one pool."
+NO_HELP_POINTS = "Choose at least one help point."
+# What the task page calls each help point, in the order the Help page shows them.
+HELP_LABELS = {
+    "first_word": "The first word of a sentence",
+    "i": "The word I",
+    "people": "Names of people",
+    "pets": "Names of pets",
+    "places": "Names of places",
+    "days": "Days of the week",
+    "months": "Months of the year",
+    "holidays": "Holidays",
+    "titles": "Titles used with a name",
+    "capitals": "Short names made of capitals",
+    "many_rules": "Many rules in one sentence",
+}
 
 
 def shown_sentences(listed: object) -> tuple[list[dict], list[str]]:
@@ -110,6 +125,10 @@ def page(written: WrittenTask, root: Path) -> dict:
     return {
         "settings": {key: written.body.get(key, "") for key in SETTINGS},
         "pools": _listed(written),
+        "help": {
+            "options": [{"id": point, "label": HELP_LABELS[point]} for point in HELP_POINTS],
+            "selected": list(_shown_points(written)),
+        },
         "available": [
             {"id": entry["id"], "name": entry["name"], "sentences": entry["sentences"]}
             for entry in pool_list(root, CAPITALISATION_DIR)
@@ -129,3 +148,32 @@ def list_changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
     if "" in names:
         raise ValueError("A pool name must not be empty.")
     return {"pools": name_list(names)} if names != _listed(written) else {}
+
+
+def _shown_points(written: WrittenTask) -> tuple[str, ...]:
+    """Return the help points the task shows now: all of them when the file has none or has a list that does not load."""
+    try:
+        return help_points(written.body_data)
+    except ValueError:
+        return HELP_POINTS
+
+
+def help_changes(written: WrittenTask, request: Mapping) -> dict[str, object]:
+    """Return the ``help_points`` change the page asks for, as a ``rewrite_task`` change.
+
+    Choosing every point removes the field, and a choice that is what the file already shows leaves it as written.
+    """
+    asked = request.get("help_points")
+    if asked is None:
+        return {}
+    if not isinstance(asked, list) or not all(isinstance(item, str) for item in asked):
+        raise ValueError("help_points must be a list of help point ids")
+    if not asked:
+        raise ValueError(NO_HELP_POINTS)
+    try:
+        chosen = help_points({"help_points": asked})
+    except ValueError as exc:
+        raise ValueError(str(exc)) from None
+    if chosen == _shown_points(written):
+        return {}
+    return {"help_points": None if chosen == HELP_POINTS else name_list(chosen)}

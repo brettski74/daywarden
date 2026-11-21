@@ -541,6 +541,7 @@ A task's `body` has these fields. They are the parts of speech task's, as above,
 | `correct_answers_required` | As parts of speech | Points needed to pass. |
 | `minimum_questions` | `correct_answers_required` | Questions finished before a pass or an early failure. |
 | `maximum_questions` | The runnable size | Questions after which the attempt fails if it has not passed. |
+| `help_points` | All points | Which points the child's Help page shows: a list of one or more of `first_word`, `i`, `people`, `pets`, `places`, `days`, `months`, `holidays`, `titles`, `capitals`, and `many_rules`. They show in that order whatever order is written. An empty list, an unknown point, or a point listed twice fails the load. The parent portal's task page has a Help points check box for each point. Choosing every point removes the field. |
 
 ```yaml
 tasks:

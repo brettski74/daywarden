@@ -500,6 +500,110 @@ addEventListener("load", async () => {
     assert seen["submit"] is True  # nothing is clicked again, so Submit is off
 
 
+def _rules(page):
+    import re
+
+    return re.findall(r'<p class="rule">(.*?)</p>', page)
+
+
+def test_help_shows_every_point_unless_the_task_lists_some_and_shows_them_in_page_order(tmp_path):
+    assert len(_rules(Quiz(tmp_path).open(START).body)) == len(capitalisation.HELP_POINTS)
+    shutil.rmtree(tmp_path)
+    quiz = Quiz(tmp_path, {"pools": [POOL], "help_points": ["people", "first_word", "i"]})
+    rules = _rules(quiz.open(START).body)
+    assert [rule.split(" start")[0].split(" is")[0] for rule in rules] == ["The first word of a sentence", "The word \u201cI\u201d", "Names of people"]
+
+
+@pytest.mark.parametrize("points", [[], "people", ["people", "people"], ["people", "dogs"]])
+def test_a_bad_help_points_setting_is_refused(tmp_path, points):
+    with pytest.raises(ValueError, match="help_points"):
+        capitalisation.parse_settings({"pools": [POOL], "help_points": points})
+
+
+@pytest.mark.skipif(CHROMIUM is None, reason="needs Chromium to lay out the page")
+def test_help_covers_the_sentence_keeps_the_clicks_and_closes_on_timeout_in_a_real_browser(tmp_path):
+    import html
+    import re
+
+    sentence = "Ben has 3 cats."
+    quiz, question = _first(tmp_path, sentence, pool={"name": POOL, "sentences": [sentence]})
+    _status, visit = quiz.post(START, "visit", {})
+    ended = {"outcome": "timeout", "try": 1, "wrong": None, "missed": None, "answer": [{"word": "Ben", "colour": "blue"}, {"word": "has", "colour": "red"}, {"word": "3", "colour": ""}, {"word": "cats.", "colour": ""}], "scored": 0, "points": 0, "required": 1, "number": 1, "minimum": 1, "maximum": 1, "total": 1, "finished": False, "result": None, "next": None, "practice": None, "back": None, "sound": None}
+    script = """\
+<script>
+const replies = REPLIES;
+const log = [];
+window.fetch = async (url) => {
+  const what = new URL(url, location.href).searchParams.get("do");
+  log.push(what);
+  const reply = replies[what].shift();
+  return { redirected: false, status: 200, ok: true, headers: { get: () => "application/json" }, json: async () => reply };
+};
+const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+const $ = (id) => document.getElementById(id);
+addEventListener("load", async () => {
+  await wait(50);
+  const seen = { startHelp: !$("help-button").hidden };
+  $("start-button").click();
+  await wait(50);
+  const words = [...document.querySelectorAll("#sentence .word")];
+  words[0].click();
+  $("help-button").click();
+  seen.open = !$("help").hidden;
+  $("submit").click();
+  seen.noSubmit = log.includes("answer");
+  const cover = document.elementFromPoint(words[0].getBoundingClientRect().x + 2, words[0].getBoundingClientRect().y + 2);
+  seen.covered = $("help").contains(cover);
+  seen.backVisible = $("help-back").getBoundingClientRect().bottom <= innerHeight;
+  seen.examples = [...document.querySelectorAll("#help .example")].map((e) => e.textContent);
+  seen.blue = [...document.querySelectorAll("#help .example .blue")].map((e) => e.textContent).join(",");
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  seen.closed = $("help").hidden;
+  seen.kept = words.map((w) => w.className).join("|");
+  $("help-button").click();
+  $("help-button").click();
+  seen.toggled = $("help").hidden;
+  $("help-button").click();
+  $("help-back").click();
+  $("help-button").click();
+  seen.reopen = !$("help").hidden;
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  seen.enter = log.includes("answer");
+  await wait(2500);
+  seen.afterTimeout = { help: $("help").hidden, button: $("help-button").hidden, log };
+  $("out").textContent = JSON.stringify(seen);
+});
+</script>
+"""
+    page = tmp_path / "help.html"
+    body = quiz.open(START).body
+    question = {**question, "left_ms": 1500}
+    page.write_text(
+        body.replace("<head>", "<head>" + script.replace("REPLIES", json.dumps({"visit": [visit], "question": [question], "answer": [ended]})))
+        .replace("</body>", '<pre id="out"></pre></body>'),
+        encoding="utf-8",
+    )
+    run = subprocess.run(
+        [CHROMIUM, "--headless", "--disable-gpu", f"--user-data-dir={tmp_path / 'chromium'}", "--window-size=1280,700", "--virtual-time-budget=8000", "--dump-dom", page.as_uri()],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    seen = json.loads(html.unescape(re.search(r'<pre id="out">(.*?)</pre>', run.stdout, re.S).group(1)))
+    assert seen["startHelp"] and seen["open"] and seen["covered"] and seen["backVisible"]
+    assert not seen["noSubmit"] and not seen["enter"]
+    assert seen["closed"] and seen["toggled"]  # a second click on Help closes it again
+    kept = seen["kept"].split("|")
+    assert "blue" in kept[0] and "blue" not in kept[1]  # only the word clicked before help is blue
+    assert seen["reopen"]
+    assert seen["examples"][6] == "My birthday is in May." and seen["examples"][8] == "We saw Dr Patel today."
+    assert seen["examples"][10] == "On Tuesday, Mia and I flew to Sydney."
+    assert seen["blue"].split(",")[:2] == ["The", "I"]
+    assert seen["afterTimeout"]["help"] and seen["afterTimeout"]["button"]
+    assert seen["afterTimeout"]["log"].count("answer") == 1
+
+
 def test_the_attempt_report_can_show_a_capitalisation_attempt(tmp_path):
     from policy.review import attempt_report
 

@@ -138,7 +138,7 @@ def _settings_of(kind: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str
     if kind == PARTS_OF_SPEECH:
         return PARTS_OF_SPEECH_SETTINGS, (), ("pools", "parts_of_speech")
     if kind == CAPITALISATION:
-        return PARTS_OF_SPEECH_SETTINGS, (), ("pools",)
+        return PARTS_OF_SPEECH_SETTINGS, (), ("pools", "help_points")
     if kind == SKIP_COUNTING:
         return SKIP_COUNTING_SETTINGS, tuple(table.field for table in SKIP_COUNTING_TABLES), ()
     if kind == ARITHMETIC:
@@ -175,6 +175,8 @@ def task_request(sources: Sources, kind: str, settings: object) -> dict:
                 request.setdefault("directories", {})[name] = _directory(sources, name, value)
             elif name == "pools" and kind in (PARTS_OF_SPEECH, CAPITALISATION):
                 request["pools"] = _pool_names(sources, value, kind)
+            elif name == "help_points" and kind == CAPITALISATION:
+                request["help_points"] = _names(value, name)
             elif name == "parts_of_speech" and kind == PARTS_OF_SPEECH:
                 request["parts_of_speech"] = _names(value, name)
             else:

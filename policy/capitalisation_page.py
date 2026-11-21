@@ -22,7 +22,7 @@ import random
 from collections.abc import Mapping
 from datetime import datetime
 
-from policy.capitalisation import LABEL, Session, answer, sentence_words
+from policy.capitalisation import HELP_POINTS, LABEL, Session, answer, help_points, sentence_words
 from policy.hierarchy import Policy
 from policy.parts_of_speech import WRONG, format_points
 from policy.parts_of_speech_page import (
@@ -86,7 +86,7 @@ def show(
         "nextWaitMs": NEXT_WAIT_MS,
         "ended": ended,
     }
-    return _response(200, _document(session, config, note, line))
+    return _response(200, _document(session, config, note, line, task.document()))
 
 
 def settle(task: Task, detail: Mapping, now: datetime) -> tuple[dict, str]:
@@ -183,7 +183,7 @@ def respond_api(
     )
 
 
-def _document(session: Session, config: Mapping, note: str, line: str) -> str:
+def _document(session: Session, config: Mapping, note: str, line: str, body: Mapping) -> str:
     now = progress(session)
     points = f"{format_points(now['points'])} / {now['required']} points"
     upcoming = questions_label(now["number"], now["minimum"], now["maximum"])
@@ -205,7 +205,8 @@ def _document(session: Session, config: Mapping, note: str, line: str) -> str:
             '<button type="button" id="submit" class="big" disabled>Submit</button>\n'
             '<button type="button" id="next" class="big" disabled hidden>Next Question</button>'
         ),
-        ends=(
+        ends=_help_html(help_points(body))
+        + (
             '<section id="failed" class="screen end" hidden>\n'
             "<h1>The sentences are finished</h1>\n"
             '<p id="failed-points"></p>\n'
@@ -218,7 +219,80 @@ def _document(session: Session, config: Mapping, note: str, line: str) -> str:
     )
 
 
+_HELP_POINTS = (
+    ("first_word", "The first word of a sentence starts with a capital letter.", (("The", True), ("dog ran home.", False))),
+    ("i", "The word \u201cI\u201d is always a capital letter.", (("Can", False), ("I", True), ("have a snack?", False))),
+    ("people", "Names of people start with a capital letter.", (("We saw", False), ("Mia", True), ("at the park.", False))),
+    ("pets", "Names of pets start with a capital letter.", (("Our dog is called", False), ("Rex", True), (".", None))),
+    (
+        "places",
+        "Names of places, like towns, countries, and streets, start with a capital letter.",
+        (("We drove to", False), ("Sydney", True), ("today.", False)),
+    ),
+    (
+        "days",
+        "Days of the week start with a capital letter.",
+        (("We are going to the zoo on", False), ("Tuesday", True), (".", None)),
+    ),
+    ("months", "Months of the year start with a capital letter.", (("My birthday is in", False), ("May", True), (".", None))),
+    ("holidays", "Holidays start with a capital letter.", (("We eat cake at", False), ("Christmas", True), (".", None))),
+    (
+        "titles",
+        "A title used with a name, like Dr or Mr, starts with a capital letter.",
+        (("We saw", False), ("Dr", True), ("Patel today.", False)),
+    ),
+    (
+        "capitals",
+        "Short names made of capital letters, like NASA, are all capitals.",
+        (("My uncle works for", False), ("NASA", True), (".", None)),
+    ),
+    (
+        "many_rules",
+        "Many of these rules can be in one sentence.",
+        (("On", True), ("Tuesday", True), (",", None), ("Mia", True), ("and", False), ("I", True), ("flew to", False), ("Sydney", True), (".", None)),
+    ),
+)
+
+
+def _example(parts: tuple) -> str:
+    """Return an example sentence with the word that shows the point in blue. A part with None joins the word before it."""
+    out = []
+    for text, blue in parts:
+        if blue is None:
+            out[-1] += _e(text)
+            continue
+        out.append(f'<span class="blue">{_e(text)}</span>' if blue else _e(text))
+    return " ".join(out)
+
+
+def _help_html(points: tuple[str, ...] = HELP_POINTS) -> str:
+    """Return the Help button and page with the points a task shows, in page order."""
+    items = "\n".join(
+        f'<li><p class="rule">{_e(rule)}</p><p class="example">{_example(parts)}</p></li>'
+        for point, rule, parts in _HELP_POINTS
+        if point in points
+    )
+    return (
+        '<button type="button" id="help-button" class="practice" hidden>Help</button>\n'
+        '<div id="help" role="dialog" aria-label="Capital letters help" hidden>\n'
+        '<div id="help-body">\n<h1>Where do capital letters go?</h1>\n'
+        f"<ol>\n{items}\n</ol>\n</div>\n"
+        '<div id="help-footer"><button type="button" id="help-back" class="big">Back to my sentence</button></div>\n'
+        "</div>\n"
+    )
+
+
 _STYLE = """\
+#help { position: fixed; top: 0; left: 0; right: 0; bottom: 2rem; z-index: 5; background: var(--page-bg); display: flex; flex-direction: column; }
+#help-body { flex: 1; overflow-y: auto; padding: 1rem 8rem 1rem 1.5rem; text-align: left; }
+#help-body h1 { font-size: 2.2rem; margin: 0 0 1rem; }
+#help-body ol { margin: 0; padding-left: 1.6rem; }
+#help-body li { margin-bottom: 1rem; }
+#help .rule { font-size: 1.6rem; margin: 0; }
+#help .example { font-size: 1.8rem; margin: 0.2rem 0 0; color: var(--strong-text); }
+#help .example .blue { color: var(--entry); }
+#help-footer { padding: 0.6rem; text-align: center; border-top: 1px solid var(--control-border); }
+#help-button { z-index: 6; }
 .minor { font-size: 1.4rem !important; color: var(--muted); }
 #ask { width: min(100%, 72rem); display: flex; flex-direction: column; align-items: center; }
 #ask .title { font-size: 2.2rem; margin: 0 0 1.2rem; }
@@ -285,8 +359,23 @@ _SCRIPT = """\
     return { phase, clicked, lastWrong, confirming: !confirmBox.hidden };
   }
 
+  const helpBox = $("help"), helpButton = $("help-button"), helpBack = $("help-back");
+
   function refresh() {
     submitButton.disabled = !model.canSubmit(view());
+    helpButton.hidden = !(phase === "start" || phase === "waiting" || phase === "asking");
+    if (helpButton.hidden) closeHelp();
+  }
+
+  function openHelp() {
+    helpBox.hidden = false;
+    helpBack.focus();
+  }
+
+  function closeHelp() {
+    if (helpBox.hidden) return;
+    helpBox.hidden = true;
+    if (!helpButton.hidden) helpButton.blur();
   }
 
   function refocus() {
@@ -300,6 +389,7 @@ _SCRIPT = """\
 
   function end(result) {
     phase = "done";
+    refresh();
     timing = false;
     clearTimeout(expiry);
     if (result.result === "pass") {
@@ -417,8 +507,9 @@ _SCRIPT = """\
 
   async function submit(expired) {
     if (phase !== "asking") return;
-    if (!expired && !model.canSubmit(view())) return;
+    if (!expired && (!helpBox.hidden || !model.canSubmit(view()))) return;
     phase = "waiting";
+    if (expired) closeHelp();
     render();
     if (expired) bar.style.width = "0%";
     const sent = new Set(clicked);
@@ -490,8 +581,14 @@ _SCRIPT = """\
   });
   giveUp.addEventListener("click", refresh);
 
+  helpButton.addEventListener("click", () => (helpBox.hidden ? openHelp() : closeHelp()));
+  helpBack.addEventListener("click", closeHelp);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeHelp();
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || phase === "start" || phase === "done") return;
+    if (!helpBox.hidden) return;
     if (event.target === giveUp || confirmBox.contains(event.target)) return;
     if (event.target && event.target.classList && event.target.classList.contains("next-task")) return;
     event.preventDefault();
@@ -509,5 +606,8 @@ _SCRIPT = """\
     if (phase === "start") ask();
   });
   if (config.ended) end({ ...config.ended, points: config.points, required: config.required, total: config.total });
-  else startButton.focus();
+  else {
+    startButton.focus();
+    refresh();
+  }
 """

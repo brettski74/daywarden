@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ArrowDown, ArrowUp, Plus, SquarePen, X } from "lucide-react";
 import { Link } from "react-router";
 import { MultiSelect } from "../components/MultiSelect";
@@ -6,6 +7,7 @@ import {
   CAPITALISATION_TIMEOUT,
   DEFAULT_TIMEOUT,
   FILTER_LABEL,
+  NO_HELP_POINTS,
   NO_POOLS,
   SETTINGS,
   filterProblem,
@@ -31,13 +33,30 @@ type Props = {
   onSetting: (key: string, text: string) => void;
   onPools: (pools: string[]) => void;
   onFilter: (filter: string[]) => void;
+  /** A capitalisation task's help points on show, which are the file's until the parent changes them. */
+  helpShown?: string[];
+  onHelp?: (points: string[]) => void;
 };
 
 /**
  * A parts of speech or capitalisation task's own settings, the pools it draws on, and a parts of speech task's filter.
  * Its sentences are edited in their pools under Asset Administration.
  */
-export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, onPools, onFilter }: Props) {
+/** A check box that is checked when every point is, clear when none is, and indeterminate between. Clicking it from between checks all. */
+function SelectAll({ total, chosen, onAll, onNone }: { total: number; chosen: number; onAll: () => void; onNone: () => void }) {
+  const box = useRef<HTMLInputElement>(null);
+  const some = chosen > 0 && chosen < total;
+  useEffect(() => {
+    if (box.current) box.current.indeterminate = some;
+  }, [some]);
+  return (
+    <label className="select-all">
+      <input type="checkbox" ref={box} checked={total > 0 && chosen === total} onChange={() => (chosen === total ? onNone() : onAll())} /> Select all
+    </label>
+  );
+}
+
+export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, onPools, onFilter, helpShown, onHelp }: Props) {
   const capital = filter === null;
   const kind = capital ? CAPITALISATION_POOLS : PARTS_POOLS;
   const options = poolOptions(data, pools);
@@ -103,6 +122,32 @@ export function PartsOfSpeechAdmin({ data, settings, pools, filter, onSetting, o
             })}
           </ul>
         </fieldset>
+        {data.help && helpShown && onHelp && (
+          <fieldset className="help-points">
+            <legend title="help_points">Help points</legend>
+            <p className="note">The points the child's Help page shows, in this order.</p>
+            <SelectAll
+              total={data.help.options.length}
+              chosen={helpShown.length}
+              onAll={() => onHelp(data.help!.options.map((each) => each.id))}
+              onNone={() => onHelp([])}
+            />
+            {data.help.options.map((option) => (
+              <label key={option.id}>
+                <input
+                  type="checkbox"
+                  checked={helpShown.includes(option.id)}
+                  data-changed={helpShown.includes(option.id) !== data.help!.selected.includes(option.id) || undefined}
+                  onChange={() =>
+                    onHelp(data.help!.options.map((each) => each.id).filter((id) => (id === option.id ? !helpShown.includes(id) : helpShown.includes(id))))
+                  }
+                />{" "}
+                {option.label}
+              </label>
+            ))}
+            {helpShown.length === 0 && <p className="note note-problem">{NO_HELP_POINTS}</p>}
+          </fieldset>
+        )}
       </div>
       {filter !== null && (
       <fieldset className="parts-filter">

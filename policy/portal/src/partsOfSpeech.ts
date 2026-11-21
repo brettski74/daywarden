@@ -1,11 +1,15 @@
 /** A parts of speech task page's pools, filter, and defaults (S031.3), apart from how the page draws them. */
 import { LONGEST_NAME, recognized } from "./sentences";
 
+/** A capitalisation task's help points: every point the Help page has, and the ids it shows now. */
+export type HelpData = { options: { id: string; label: string }[]; selected: string[] };
+export const NO_HELP_POINTS = "Choose at least one help point.";
+
 /** One pool a task could name. ``sentences`` is how many it adds to the runnable size. */
 export type AvailablePool = { id: string; name: string; sentences: number };
 
 /** A parts of speech task's page data: its own settings, the pools and filter the file writes, and every pool available. */
-export type PosData = { settings: Record<string, string>; pools: string[]; filter: string[]; available: AvailablePool[] };
+export type PosData = { help?: HelpData; settings: Record<string, string>; pools: string[]; filter: string[]; available: AvailablePool[] };
 
 export const SETTINGS = ["timeout", "correct_answers_required", "minimum_questions", "maximum_questions"];
 export const DEFAULT_TIMEOUT = "90s";

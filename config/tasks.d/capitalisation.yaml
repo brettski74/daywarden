@@ -4,3 +4,4 @@ tasks:
       groups: [younger, default]
       body:
         pools: ["Year 3 Capitals"]
+        help_points: [first_word, i, people, many_rules]

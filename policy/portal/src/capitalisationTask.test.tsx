@@ -12,6 +12,14 @@ const PAGE = {
   capitalisation: {
     settings: { timeout: "", correct_answers_required: "", minimum_questions: "", maximum_questions: "" },
     pools: ["Places"],
+    help: {
+      options: [
+        { id: "first_word", label: "The first word of a sentence" },
+        { id: "i", label: "The word I" },
+        { id: "people", label: "Names of people" },
+      ],
+      selected: ["first_word", "i", "people"],
+    },
     available: [
       { id: "places", name: "Places", sentences: 12 },
       { id: "people", name: "People", sentences: 3 },
@@ -55,6 +63,43 @@ describe("a capitalisation task page", () => {
     const sent = calls.find((call) => call.method === "POST")!.body as Record<string, unknown>;
     expect(sent).toMatchObject({ version: "v1", pools: ["Places", "People"], settings: { timeout: "45s" } });
     expect(sent).not.toHaveProperty("parts_of_speech");
+  });
+});
+
+describe("a capitalisation task's help points", () => {
+  it("shows every point as chosen, and saves only the ones left chosen", async () => {
+    const calls = await openCaps((call) => (call.method === "POST" ? { body: DONE } : undefined));
+    const group = screen.getByRole("group", { name: "Help points" });
+    for (const name of ["The first word of a sentence", "The word I", "Names of people"]) expect(within(group).getByRole("checkbox", { name })).toBeChecked();
+    await userEvent.click(within(group).getByRole("checkbox", { name: "The word I" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true));
+    expect(calls.find((call) => call.method === "POST")!.body).toMatchObject({ help_points: ["first_word", "people"] });
+  });
+
+  it("has a Select all box that mirrors the points, checks all from between, and clears when all are checked", async () => {
+    await openCaps();
+    const group = screen.getByRole("group", { name: "Help points" });
+    const all = within(group).getByRole("checkbox", { name: "Select all" }) as HTMLInputElement;
+    expect(all).toBeChecked();
+    await userEvent.click(within(group).getByRole("checkbox", { name: "The word I" }));
+    expect(all.indeterminate).toBe(true);
+    expect(all).not.toBeChecked();
+    await userEvent.click(all);
+    expect(all.indeterminate).toBe(false);
+    for (const box of within(group).getAllByRole("checkbox")) expect(box).toBeChecked();
+    await userEvent.click(all);
+    for (const box of within(group).getAllByRole("checkbox")) expect(box).not.toBeChecked();
+    await userEvent.click(all);
+    expect(all).toBeChecked();
+  });
+
+  it("will not save with no point chosen", async () => {
+    await openCaps();
+    const group = screen.getByRole("group", { name: "Help points" });
+    await userEvent.click(within(group).getByRole("checkbox", { name: "Select all" }));
+    expect(within(group).getByText("Choose at least one help point.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
 

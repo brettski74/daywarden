@@ -35,7 +35,22 @@ _BODY_KEYS = frozenset(
         "correct_answers_required",
         "minimum_questions",
         "maximum_questions",
+        "help_points",
     }
+)
+# The points the Help page can show, in the order it shows them. A task's ``help_points`` picks some of them.
+HELP_POINTS = (
+    "first_word",
+    "i",
+    "people",
+    "pets",
+    "places",
+    "days",
+    "months",
+    "holidays",
+    "titles",
+    "capitals",
+    "many_rules",
 )
 _SENTENCE_KEYS = frozenset({"sentence", "level_of_difficulty"})
 
@@ -116,10 +131,30 @@ KIND = PoolKind(
 )
 
 
+def help_points(body: Mapping) -> tuple[str, ...]:
+    """Return the help points a task shows, in page order: all of them unless ``help_points`` lists some.
+
+    Raises ``ValueError`` for a list that is empty, names an unknown point, or names one twice.
+    """
+    if "help_points" not in body:
+        return HELP_POINTS
+    listed = body["help_points"]
+    allowed = ", ".join(HELP_POINTS)
+    if not isinstance(listed, list) or not listed:
+        raise ValueError(f"help_points: must be a list of one or more of {allowed}")
+    for item in listed:
+        if item not in HELP_POINTS:
+            raise ValueError(f"help_points: {item!r} is not a help point. Use {allowed}")
+    if len(set(listed)) != len(listed):
+        raise ValueError("help_points: a point is listed more than once")
+    return tuple(point for point in HELP_POINTS if point in listed)
+
+
 def parse_settings(body: Mapping, root: Path | None = None) -> Settings:
     """Check a capitalisation task body without reading pool files."""
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
+    help_points(body)
     return parts_of_speech.parse_pooled_fields(body, None, root, KIND)
 
 
@@ -127,6 +162,7 @@ def check_body(body: Mapping, root: Path | None = None) -> Settings:
     """Check a capitalisation task body and its named pools, as the policy load does."""
     if not isinstance(body, Mapping):
         raise ValueError("body must be a mapping")
+    help_points(body)
     return parts_of_speech.parse_pooled_fields(body, parts_of_speech.resolve_pools(body, root, KIND), root, KIND)
 
 
@@ -254,7 +290,9 @@ __all__ = [
     "Sentence",
     "answer",
     "marked",
+    "HELP_POINTS",
     "check_body",
+    "help_points",
     "parse_settings",
     "sentence_words",
 ]

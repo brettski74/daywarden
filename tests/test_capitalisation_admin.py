@@ -204,3 +204,30 @@ def test_a_new_capitalisation_task_can_be_made(house):
     status, body = house.post("/parent/api/new-task", {"type": "capitalisation", "name": "fresh", "settings": {}, "pools": ["Places"], "fields": {}, "groups": ["younger"]})
     assert status == 200, body
     assert house.page("capitalisation/fresh")["capitalisation"]["pools"] == ["Places"]
+
+
+def test_the_task_page_lists_the_help_points_and_the_ones_shown(house):
+    help_ = house.page("capitalisation/caps")["capitalisation"]["help"]
+    assert [option["id"] for option in help_["options"]] == help_["selected"]
+    assert len(help_["selected"]) == 11
+
+
+def test_a_task_page_save_writes_the_help_points_in_page_order_and_removes_them_for_all(house):
+    status, body = house.save("capitalisation/caps", help_points=["people", "i", "first_word"])
+    assert status == 200, body
+    task = yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["capitalisation"]["caps"]["body"]
+    assert task["help_points"] == ["first_word", "i", "people"]
+    assert house.page("capitalisation/caps")["capitalisation"]["help"]["selected"] == ["first_word", "i", "people"]
+    # Saving other settings leaves the list alone.
+    assert house.save("capitalisation/caps", settings={"timeout": "45s"})[0] == 200
+    task = yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["capitalisation"]["caps"]["body"]
+    assert task["help_points"] == ["first_word", "i", "people"] and task["timeout"] == "45s"
+    every = [option["id"] for option in house.page("capitalisation/caps")["capitalisation"]["help"]["options"]]
+    assert house.save("capitalisation/caps", help_points=every)[0] == 200
+    task = yaml.safe_load(house.policy.read_text(encoding="utf-8"))["tasks"]["capitalisation"]["caps"]["body"]
+    assert "help_points" not in task
+
+
+@pytest.mark.parametrize("points", [[], ["dogs"], ["i", "i"]])
+def test_a_bad_help_points_save_is_refused(house, points):
+    assert house.save("capitalisation/caps", help_points=points)[0] == 400
