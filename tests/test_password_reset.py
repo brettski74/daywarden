@@ -20,10 +20,13 @@ from test_mcp_server import PASSWORD, activity, at, connect, mcp, service  # noq
 
 NOW = datetime(2026, 11, 20, 4, 0, tzinfo=timezone.utc)
 SENT = "If that account has an email address, a link to reset its password is on its way. It works for 60 minutes."
-SAVED = (
-    "If your link was still valid, your new password is saved. "
-    "If you cannot sign in with it, ask for a new link with Forgot password."
-)
+SAVED = {
+    "message": "Try signing in with your new password. If it does not work, learn more",
+    "link": "learn more",
+    "help": "/parent/password-help#reset",
+}
+NOT_CHANGED = {"error": "Your password was not changed. Learn more", "link": "Learn more", "help": "/parent/password-help#account"}
+RULES_OFF = {"min_length": None, "history": None, "strength": None, "lines": []}
 EMAIL = {
     "SMTP_HOST": "smtp.example.net",
     "SMTP_USERNAME": "daywarden@example.net",
@@ -131,9 +134,9 @@ def requested(app, outbox, username="ada", **where) -> str:
 
 def test_the_account_page_shows_the_username_role_and_address(app):
     status, body, _headers = call(app, "GET", "/parent/api/account", cookie=sign_in(app))
-    assert (status, json.loads(body)) == (200, {"username": "ada", "role": "admin", "email": "ada@example.net"})
+    assert (status, json.loads(body)) == (200, {"username": "ada", "role": "admin", "email": "ada@example.net", "rules": RULES_OFF})
     status, body, _headers = call(app, "GET", "/parent/api/account", cookie=sign_in(app, "bee"))
-    assert json.loads(body) == {"username": "bee", "role": "admin", "email": None}
+    assert json.loads(body) == {"username": "bee", "role": "admin", "email": None, "rules": RULES_OFF}
     status, body, _headers = call(app, "GET", "/parent/api/account", cookie=sign_in(app, "nana"))
     assert (status, json.loads(body)["role"]) == (200, REVIEWER)
     assert call(app, "GET", "/parent/api/account")[0] == 401
@@ -142,18 +145,18 @@ def test_the_account_page_shows_the_username_role_and_address(app):
 @pytest.mark.parametrize(
     ("sent", "problem"),
     [
-        ({"current": "wrong-pass"}, "The current password is wrong. Nothing was changed."),
-        ({"current": "x" * 201}, "The current password is wrong. Nothing was changed."),
-        ({"current": None}, "The current password is wrong. Nothing was changed."),
-        ({"password": ""}, "The new password is empty. Nothing was changed."),
-        ({"password": "x" * 201}, "The new password is longer than 200 characters. Nothing was changed."),
-        ({"again": "new-pass-2"}, "The two new passwords differ. Nothing was changed."),
+        ({"current": "wrong-pass"}, NOT_CHANGED),
+        ({"current": "x" * 201}, NOT_CHANGED),
+        ({"current": None}, NOT_CHANGED),
+        ({"password": ""}, {"error": "The new password is empty. Nothing was changed."}),
+        ({"password": "x" * 201}, {"error": "The new password is longer than 200 characters. Nothing was changed."}),
+        ({"again": "new-pass-2"}, {"error": "The two new passwords differ. Nothing was changed."}),
     ],
 )
 def test_a_refused_change_says_why_and_changes_nothing(app, outbox, sent, problem):
     cookie = sign_in(app)
     other = sign_in(app)
-    assert change(app, cookie, **sent) == (400, {"error": problem})
+    assert change(app, cookie, **sent) == (400, problem)
     assert signed_in(app, cookie) and signed_in(app, other)
     assert sign_in(app, "ada", PASSWORD) is not None
     assert outbox.sent == []
@@ -211,11 +214,11 @@ def test_a_change_with_no_address_or_a_failing_server_still_changes(app, outbox,
 
 def test_the_forgot_page_says_whether_resetting_by_email_is_on(app, service, monkeypatch):
     status, body, _headers = call(app, "GET", "/parent/api/password-reset")
-    assert (status, json.loads(body)) == (200, {"email": True, "lifetime": "60 minutes"})
+    assert (status, json.loads(body)) == (200, {"email": True, "lifetime": "60 minutes", "rules": RULES_OFF})
     monkeypatch.delenv("SMTP_HOST")
     off = service.state.remake()
     status, body, _headers = call(off, "GET", "/parent/api/password-reset")
-    assert (status, json.loads(body)) == (200, {"email": False, "lifetime": "60 minutes"})
+    assert (status, json.loads(body)) == (200, {"email": False, "lifetime": "60 minutes", "rules": RULES_OFF})
     status, body, _headers = forgot(off, "ada")
     assert (status, body) == (404, {"error": "Resetting a password by email is not set up. Ask whoever runs Daywarden."})
 
@@ -249,7 +252,7 @@ def test_the_answer_is_sent_before_the_token_is_looked_up_or_any_email_is_writte
 
     events = []
     token = requested(app, outbox) if path.endswith("save") else None
-    for name in ("request_reset", "reset_password"):
+    for name in ("request_reset", "reset_target"):
         original = getattr(Accounts, name)
         monkeypatch.setattr(Accounts, name, lambda self, *args, _original=original, _name=name: (events.append(_name), _original(self, *args))[1])
     outbox.send = lambda message, _send=outbox.send: (events.append("email"), _send(message))
@@ -274,7 +277,7 @@ def test_the_answer_is_sent_before_the_token_is_looked_up_or_any_email_is_writte
 
     asyncio.run(app(scope, receive, send))
     assert events[0] == "answer"
-    assert events[1] in ("request_reset", "reset_password")
+    assert events[1] in ("request_reset", "reset_target")
     assert "email" in events
 
 
@@ -318,7 +321,7 @@ def test_a_valid_link_sets_the_password_once_and_signs_nobody_in(app, outbox):
     _client, tokens = connect(app, cookie)
     token = requested(app, outbox)
     status, body, headers = save(app, token)
-    assert (status, body) == (200, {"message": SAVED})
+    assert (status, body) == (200, SAVED)
     assert "set-cookie" not in headers
     assert not signed_in(app, cookie)
     assert mcp(app, tokens["access_token"], "tools/list")[0] == 401
@@ -329,7 +332,7 @@ def test_a_valid_link_sets_the_password_once_and_signs_nobody_in(app, outbox):
     assert notice["Subject"] == "Your Daywarden password was changed"
     assert "reset with a link sent by email" in notice.get_content()
     # The same link again changes nothing.
-    assert save(app, token, "another-pass")[:2] == (200, {"message": SAVED})
+    assert save(app, token, "another-pass")[:2] == (200, SAVED)
     assert sign_in(app, "ada", "reset-pass-1") is not None
     assert sign_in(app, "ada", "another-pass") is None
 
@@ -338,7 +341,7 @@ def test_a_valid_link_sets_the_password_once_and_signs_nobody_in(app, outbox):
 def test_a_link_that_was_never_sent_gives_the_same_answer_and_changes_nothing(app, outbox, token):
     cookie = sign_in(app)
     requested(app, outbox)
-    assert save(app, token)[:2] == (200, {"message": SAVED})
+    assert save(app, token)[:2] == (200, SAVED)
     assert signed_in(app, cookie)
     assert sign_in(app, "ada", PASSWORD) is not None
 
@@ -357,7 +360,7 @@ def test_a_password_that_cannot_be_set_is_refused_whether_or_not_the_link_is_val
         status, body, _headers = save(app, link, **sent)
         assert (status, body) == (400, {"error": problem})
     # The valid link was not used up by the refusal.
-    assert save(app, token)[1] == {"message": SAVED}
+    assert save(app, token)[1] == SAVED
     assert sign_in(app, "ada", "reset-pass-1") is not None
 
 
@@ -368,7 +371,7 @@ def test_a_link_stops_working_after_the_lifetime(app, outbox):
     at(app, NOW + timedelta(minutes=60, seconds=1))
     save(app, token)
     assert sign_in(app, "ada", PASSWORD) is not None
-    assert save(app, other)[1] == {"message": SAVED}
+    assert save(app, other)[1] == SAVED
     assert sign_in(app, "nana", "reset-pass-1") is not None
 
 

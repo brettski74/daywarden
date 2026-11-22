@@ -40,6 +40,7 @@ from policy.clients import normalize_ip
 from policy.clock import HouseholdClock
 from policy.decisions import DecisionLog, log_entry, parse_request
 from policy.mail import Mailer, mail_settings, reset_lifetime
+from policy.password_rules import password_rules
 from policy.engine import NO_RULE_MESSAGE, Assumption, Ledger, Trace, classify_client, judge, log_fields
 from policy.hierarchy import ConfigError, Policy, load as load_hierarchy, require_yaml
 from policy import control
@@ -93,9 +94,10 @@ def create_app() -> FastAPI:
     # Read once, so a bad email setting stops the service before anything starts.
     mail = mail_settings(os.environ)
     reset_life = reset_lifetime(os.environ)
+    rules = password_rules(os.environ)
     holder = Holder(_load_policy(policy_file, localtime))
     store = PolicyStore(database)
-    accounts = Accounts(store.connection, idle=idle, lifetime=lifetime)
+    accounts = Accounts(store.connection, idle=idle, lifetime=lifetime, rules=rules)
     attempts = AttemptStore(connection=store.connection)
     returns = ReturnPages(store.connection)
     usage_store = UsageStore(connection=store.connection)
@@ -104,6 +106,7 @@ def create_app() -> FastAPI:
     _announce(summary_lines(holder.loaded.policy, holder.loaded.clock, holder.loaded.source))
     _announce_parents(accounts)
     _announce(["email is off: SMTP_HOST is not set" if mail is None else mail.describe()])
+    _announce([rules.summary()])
     sounds = load_sounds(Path(os.environ.get("SOUND_DIR", str(SOUND_DIR))))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.idle = accounts.idle

@@ -16,6 +16,7 @@ import { Pools, poolsLoader } from "./pages/Pools";
 import { NotFound, PageError, ShellError } from "./pages/Problems";
 import { NewTask, Task, newTaskAction, newTaskLoader, taskAction, taskLoader, taskShouldRevalidate } from "./pages/Task";
 import { Requests, requestsLoader } from "./pages/Requests";
+import { PasswordHelp, passwordHelpLoader } from "./pages/PasswordHelp";
 import { Reset, resetLoader } from "./pages/Reset";
 import { TaskTrend, trendLoader, trendShouldRevalidate } from "./pages/TaskTrend";
 import { Usage, usageLoader } from "./pages/Usage";
@@ -46,6 +47,8 @@ export const routes: RouteObject[] = [
   // Forgot password and Reset password need no session, and have the sign-in screen's look (S044.2).
   { path: "/forgot", element: <Forgot />, loader: forgotLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
   { path: "/reset", element: <Reset />, loader: resetLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
+  // Why a password may not have changed, with the household's rules (S046). It needs no session either.
+  { path: "/password-help", element: <PasswordHelp />, loader: passwordHelpLoader, errorElement: <ShellError />, hydrateFallbackElement: loading },
   {
     path: "/",
     element: <Layout />,

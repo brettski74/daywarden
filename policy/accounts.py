@@ -18,6 +18,15 @@ bits, stored as its SHA-256 in ``password_resets``, one row per account, so a
 newer link replaces an older one. Setting the password any way removes the
 row, and removing the account removes it by cascade. The lifetime is checked
 when the token is used.
+
+The household's password rules (S046, ``policy/password_rules.py``) are
+checked whenever a password is set, except with ``dw-account --force``.
+``password_history`` keeps the Argon2id hash of each password set, the
+current one included, each with its own salt: the newest ``PASSWORD_HISTORY``
+of them, or only the current one while that rule is off. Every request to set
+a password does the same hashing work, in ``screen_password``: one hash of
+the new password and one check against each of ``PASSWORD_HISTORY`` stored
+hashes, with the dummy hash standing in for each one an account lacks.
 """
 
 from __future__ import annotations
@@ -39,6 +48,8 @@ from typing import NamedTuple, NoReturn
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, VerifyMismatchError
 from argon2.low_level import Type
+
+from policy.password_rules import Broken, PasswordRules, known_words
 
 COOKIE_NAME = "parent_session"
 ADMIN = "admin"
@@ -95,6 +106,12 @@ CREATE TABLE IF NOT EXISTS password_resets (
     token_hash TEXT NOT NULL UNIQUE,
     made_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS password_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES parent_accounts(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS password_history_account ON password_history (account_id, id);
 """
 # A second reset link for the same account within this long of the last one is not sent.
 RESET_COOLDOWN = timedelta(minutes=5)
@@ -121,6 +138,27 @@ class ResetLink(NamedTuple):
     username: str
     email: str
     token: str
+
+
+class ResetTarget(NamedTuple):
+    """The account a valid reset token belongs to, looked up before the password is checked."""
+
+    account_id: int
+    token_hash: str
+    username: str
+    email: str | None
+    had_password: bool
+    # Its newest stored hashes, newest first, as many as the history rule checks.
+    history: list[str]
+
+
+class Screened(NamedTuple):
+    """What the hashing work for a new password found."""
+
+    digest: str
+    # False when a current password was checked and is wrong.
+    current_ok: bool
+    broken: list[Broken]
 
 
 class PasswordReset(NamedTuple):
@@ -177,16 +215,82 @@ class Accounts:
         *,
         idle: timedelta = timedelta(seconds=_DEFAULT_IDLE),
         lifetime: timedelta = timedelta(seconds=_DEFAULT_LIFETIME),
+        rules: PasswordRules | None = None,
     ) -> None:
         if idle <= timedelta(0) or lifetime <= timedelta(0):
             raise ValueError("session limits must be positive")
         self.connection = connection
         self.idle = idle
         self.lifetime = lifetime
+        # Without rules, as in a test's look at the database, no history is dropped.
+        self.rules = PasswordRules() if rules is None else rules
+        self._trims = rules is not None
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.executescript(_TABLES)
         if "email" not in self._columns():
             self._upgrade()
+        if self._trims:
+            self._keep_history()
+
+    def _keep_history(self) -> None:
+        """Add each current password missing from the history, as for an account from before S046, and drop the oldest.
+
+        Only the newest ``rules.kept`` of each account are kept, so lowering
+        PASSWORD_HISTORY drops the older ones for good.
+        """
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO password_history (account_id, password_hash)
+                SELECT id, password_hash FROM parent_accounts
+                WHERE password_hash IS NOT NULL AND password_hash IS NOT (
+                    SELECT password_hash FROM password_history
+                    WHERE password_history.account_id = parent_accounts.id ORDER BY id DESC LIMIT 1
+                )
+                """
+            )
+            self.connection.execute(
+                """
+                DELETE FROM password_history WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY id DESC) AS newest
+                        FROM password_history
+                    ) WHERE newest > ?
+                )
+                """,
+                (self.rules.kept,),
+            )
+
+    def _set_hash(self, account_id: int, digest: str) -> None:
+        """Make digest the account's password and add it to the history. Call inside a transaction."""
+        self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+        self.connection.execute("INSERT INTO password_history (account_id, password_hash) VALUES (?, ?)", (account_id, digest))
+        if not self._trims:
+            return
+        self.connection.execute(
+            """
+            DELETE FROM password_history WHERE account_id = ? AND id NOT IN (
+                SELECT id FROM password_history WHERE account_id = ? ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (account_id, account_id, self.rules.kept),
+        )
+
+    def history(self, account_id: int | None) -> list[str]:
+        """The account's newest stored hashes, newest first, as many as the history rule checks."""
+        if account_id is None or self.rules.depth == 0:
+            return []
+        rows = self.connection.execute(
+            "SELECT password_hash FROM password_history WHERE account_id = ? ORDER BY id DESC LIMIT ?",
+            (account_id, self.rules.depth),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def password_problems(self, username: str, email: str | None, password: str) -> list[Broken]:
+        """Return each rule password breaks for username, with email as its address, as dw-account checks it."""
+        return screen_password(
+            self.rules, password, history=self.history(self.account_id(username)), known=known_words(username, email)
+        ).broken
 
     def _columns(self) -> set[str]:
         return {row[1] for row in self.connection.execute("PRAGMA table_info(parent_accounts)")}
@@ -307,10 +411,11 @@ class Accounts:
                 raise AccountError(f"{problem} Nothing was added.")
             digest = _HASHER.hash(password)
         with self.connection:
-            self.connection.execute(
-                "INSERT INTO parent_accounts (username, password_hash, role, email) VALUES (?, ?, ?, ?)",
-                (username, digest, role, email),
+            cursor = self.connection.execute(
+                "INSERT INTO parent_accounts (username, role, email) VALUES (?, ?, ?)", (username, role, email)
             )
+            if digest is not None:
+                self._set_hash(int(cursor.lastrowid), digest)
 
     def update(
         self,
@@ -344,7 +449,7 @@ class Accounts:
             if email is not None or no_email:
                 self.connection.execute("UPDATE parent_accounts SET email = ? WHERE id = ?", (email, account_id))
             if digest is not None:
-                self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+                self._set_hash(account_id, digest)
                 # A reset link sent before the change no longer works.
                 self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
             if role is not None or digest is not None:
@@ -476,39 +581,27 @@ class Accounts:
 
     # Changing a password from the portal, and resetting one by email (S044.2)
 
-    def change_password(self, username: str, session: str | None, current: object, new: object, again: object) -> str | None:
-        """Change the signed-in account's own password. Return why it was refused, or None when it changed.
+    def change_facts(self, username: str) -> tuple[int | None, str | None, str | None, list[str]]:
+        """Return what the Account page's change checks: the account's id, its hash, its address, and its history."""
+        row = self.connection.execute("SELECT id, password_hash, email FROM parent_accounts WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            return None, None, None, []
+        return int(row[0]), row[1], row[2], self.history(int(row[0]))
 
-        The new password is checked first. The current one is then checked
-        with the same work as a sign-in: one longer than LONGEST_PASSWORD is
-        refused as a wrong one, after the same check of the dummy hash. On a
-        change every other session of the account ends, the one named by
-        session stays, any reset link stops working, and the MCP connections
-        the account approved end. A refusal changes nothing.
+    def apply_change(self, account_id: int, digest: str, session: str | None) -> None:
+        """Set the signed-in account's own password, after screen_password passed it.
+
+        Every other session of the account ends, the one named by session
+        stays, any reset link stops working, and the MCP connections the
+        account approved end.
         """
-        problem = new_password_problem(new, again)
-        if problem is not None:
-            return f"{problem} Nothing was changed."
-        assert isinstance(new, str)
-        row = self.connection.execute("SELECT id, password_hash FROM parent_accounts WHERE username = ?", (username,)).fetchone()
-        stored = None if row is None else row[1]
-        if not isinstance(current, str) or len(current) > LONGEST_PASSWORD:
-            _passwords_match(None, "")
-            matched = False
-        else:
-            matched = _passwords_match(stored, current)
-        if stored is None or not matched:
-            return "The current password is wrong. Nothing was changed."
-        account_id = row[0]
-        digest = _HASHER.hash(new)
         key = _key_bytes(session)
         kept = "" if key is None else hashlib.sha256(key).hexdigest()
         with self.connection:
-            self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
+            self._set_hash(account_id, digest)
             self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ? AND key_hash != ?", (account_id, kept))
             self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
         self._end_mcp(account_id, "the parent's password was changed")
-        return None
 
     def request_reset(self, username: object, now: datetime) -> tuple[ResetLink | None, bool]:
         """Make a reset token for username, when it is an account with an address.
@@ -535,19 +628,18 @@ class Accounts:
             )
         return ResetLink(username, email, token.hex()), False
 
-    def reset_password(self, token: object, digest: str, now: datetime, lifetime: timedelta) -> PasswordReset | None:
-        """Set the account a valid reset token belongs to to the password hashed as digest, and use the token up.
+    def reset_target(self, token: object, now: datetime, lifetime: timedelta) -> ResetTarget | None:
+        """Return the account a valid reset token belongs to, or None.
 
-        The caller hashes the password with ``hash_password`` whether or not
-        the token is valid, so both answers take the same work. A valid token
-        is the newest made for its account, within lifetime of when it was
-        made, and not used yet. Any other token changes nothing and returns
-        None. A reset ends every session of the account and the MCP
-        connections it approved, and does not sign the parent in.
+        A valid token is the newest made for its account, within lifetime of
+        when it was made, and not used yet. A token checked after its lifetime
+        is removed. Looking a token up does not use it: a password the rules
+        refuse leaves it working.
         """
         key = _key_bytes(token if isinstance(token, str) else None)
         if key is None:
             return None
+        digest = hashlib.sha256(key).hexdigest()
         row = self.connection.execute(
             """
             SELECT password_resets.account_id, password_resets.made_at, parent_accounts.username,
@@ -556,20 +648,34 @@ class Accounts:
             JOIN parent_accounts ON parent_accounts.id = password_resets.account_id
             WHERE password_resets.token_hash = ?
             """,
-            (hashlib.sha256(key).hexdigest(),),
+            (digest,),
         ).fetchone()
         if row is None:
             return None
         account_id, made_at, username, email, had_password = row
+        if _utc_second(now) - _parse(made_at) > lifetime:
+            with self.connection:
+                self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
+            return None
+        return ResetTarget(account_id, digest, username, email, bool(had_password), self.history(account_id))
+
+    def apply_reset(self, target: ResetTarget, digest: str) -> PasswordReset | None:
+        """Set the password a valid reset link chose, hashed as digest, and use the link up.
+
+        Nothing changes when the link was used or replaced since it was looked
+        up. A reset ends every session of the account and the MCP connections
+        it approved, and does not sign the parent in.
+        """
         with self.connection:
-            # Used or not, a token checked after its lifetime is gone.
-            self.connection.execute("DELETE FROM password_resets WHERE account_id = ?", (account_id,))
-            if _utc_second(now) - _parse(made_at) > lifetime:
+            used = self.connection.execute(
+                "DELETE FROM password_resets WHERE account_id = ? AND token_hash = ?", (target.account_id, target.token_hash)
+            )
+            if used.rowcount != 1:
                 return None
-            self.connection.execute("UPDATE parent_accounts SET password_hash = ? WHERE id = ?", (digest, account_id))
-            self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (account_id,))
-        self._end_mcp(account_id, "the parent's password was reset")
-        return PasswordReset(username, email, bool(had_password))
+            self._set_hash(target.account_id, digest)
+            self.connection.execute("DELETE FROM parent_sessions WHERE account_id = ?", (target.account_id,))
+        self._end_mcp(target.account_id, "the parent's password was reset")
+        return PasswordReset(target.username, target.email, target.had_password)
 
     def _end_mcp(self, account_id: int, reason: str) -> None:
         from policy.mcp_store import McpStore
@@ -626,9 +732,44 @@ def cookie_value(header: str | None, name: str) -> str | None:
     return None
 
 
-def hash_password(password: str) -> str:
-    """Return the Argon2id hash stored for password."""
-    return _HASHER.hash(password)
+# Stands in for a current password that is not checked.
+_UNCHECKED = object()
+
+
+def screen_password(
+    rules: PasswordRules,
+    new: str,
+    *,
+    history: list[str],
+    known: list[str],
+    current: object = _UNCHECKED,
+    stored: str | None = None,
+) -> Screened:
+    """Do the hashing work for setting new, and return its hash and every rule it breaks.
+
+    The work is the same whatever it finds, so its time shows nothing: a
+    check of current against stored when current is given, with the work of
+    a sign-in, one hash of new, and one check of new against each of
+    ``rules.depth`` stored hashes, newest first, the dummy hash standing in
+    for each one history lacks. No check stops early. It touches no database,
+    so it can run on a worker thread.
+    """
+    current_ok = True
+    if current is not _UNCHECKED:
+        if not isinstance(current, str) or len(current) > LONGEST_PASSWORD:
+            _passwords_match(None, "")
+            current_ok = False
+        else:
+            current_ok = _passwords_match(stored, current) and stored is not None
+    digest = _HASHER.hash(new)
+    reused = False
+    for index in range(rules.depth):
+        if _passwords_match(history[index] if index < len(history) else None, new):
+            reused = True
+    broken = rules.problems(new, known)
+    if reused:
+        broken.append(rules.reused())
+    return Screened(digest, current_ok, broken)
 
 
 def new_password_problem(new: object, again: object) -> str | None:
@@ -699,16 +840,17 @@ usage: {PROG} SUBCOMMAND [SWITCHES] [USERNAME]
 Add, change, list, and remove the parent accounts that sign in to the parent portal.
 
 Subcommands:
-  add [--role admin|reviewer] [--email ADDRESS] [--password] USERNAME
+  add [--role admin|reviewer] [--email ADDRESS] [--password [--force]] USERNAME
         Add a new account. USERNAME must not exist yet.
         --role      admin or reviewer. A new account is a reviewer unless --role admin is given.
                     While there is no admin, the first account must be added with --role admin.
         --email     the parent's email address, of the form name@domain.
         --password  ask for a password. Without it, the account has no password yet and no one
                     can sign in to it. Give --email, --password, or both.
+        --force     with --password, set it even when it breaks the household's password rules.
         With --email and no --password, the parent is sent a welcome email that tells them
         to choose a password with Forgot password on the sign-in screen.
-  update USERNAME [--role admin|reviewer] [--email ADDRESS | --no-email] [--password]
+  update USERNAME [--role admin|reviewer] [--email ADDRESS | --no-email] [--password [--force]]
         Change an existing account. Give at least one switch. Every switch is checked
         before anything changes.
         --role      change the role. The account's sessions end, so it must sign in again.
@@ -716,6 +858,7 @@ Subcommands:
         --email     set the email address.   --no-email  remove it.
         --password  ask for a new password. The account's sessions and the MCP connections
                     it approved end, and an account with an address is emailed a notice.
+        --force     with --password, set it even when it breaks the household's password rules.
   remove [--yes] USERNAME
         Remove an existing account, its sessions, and the MCP connections it approved.
         Asks first. Without a terminal, --yes is needed. The only admin cannot be removed.
@@ -731,7 +874,15 @@ Roles:
   reviewer   reads attempts and usage, and records parent checks. Nothing else.
 
 A password is 1 to {LONGEST_PASSWORD} characters. It is asked for twice with echo off, and never read
-from the command line. Without a terminal, it is read once, as one line of standard input."""
+from the command line. Without a terminal, it is read once, as one line of standard input.
+
+Password rules:
+  A password must also meet the rules set by PASSWORD_MIN_LENGTH, PASSWORD_HISTORY,
+  PASSWORD_ATTACKER, and PASSWORD_CRACK_TIME in .env, with the username and email address
+  counting as words that are easy to guess. A password that breaks one is refused with the
+  reason, and asked for again at a terminal. Without a terminal, the command exits with
+  status 1 and nothing changes. --force sets it anyway. Every password set, forced or not,
+  joins the account's history."""
 
 
 class _Stopped(Exception):
@@ -756,6 +907,7 @@ def _subcommands() -> dict[str, argparse.ArgumentParser]:
     add.add_argument(
         "--password", action="store_true", help="ask for a password. Without it, the account has no password yet."
     )
+    add.add_argument("--force", action="store_true", help="with --password, set it even when it breaks the password rules.")
     add.add_argument("username", metavar="USERNAME")
 
     update = parser("update", "Change an existing account. Give at least one switch. If any is refused, nothing changes.")
@@ -769,6 +921,7 @@ def _subcommands() -> dict[str, argparse.ArgumentParser]:
         action="store_true",
         help="ask for a new password. The account's sessions and the MCP connections it approved end.",
     )
+    update.add_argument("--force", action="store_true", help="with --password, set it even when it breaks the password rules.")
 
     remove = parser(
         "remove", "Remove an existing account, its sessions, and the MCP connections it approved. This cannot be undone."
@@ -799,6 +952,8 @@ def _command_line(args: list[str]) -> argparse.Namespace:
     parser = subcommands[name]
     found = parser.parse_args(args[1:])
     found.action = name
+    if name in ("add", "update") and found.force and not found.password:
+        parser.error("--force sets a password, so it needs --password")
     if name == "update" and found.role is None and found.email is None and not found.no_email and not found.password:
         parser.error("give at least one of --role, --email, --no-email, or --password")
     return found
@@ -844,7 +999,7 @@ def read_password_once() -> str:
 
 
 def read_new_password(nothing: str) -> str:
-    """Ask for a password twice from the terminal, or read it once from stdin.
+    """Ask for a password twice from the terminal, or read it once from stdin, without the household's rules.
 
     nothing is the end of a refusal, such as "Nothing was added."
     """
@@ -860,6 +1015,26 @@ def read_new_password(nothing: str) -> str:
     if problem is not None:
         raise AccountError(f"{problem} {nothing}")
     return password
+
+
+def ruled_password(accounts: Accounts, username: str, email: str | None, nothing: str, force: bool) -> str:
+    """Read a new password for username that meets the household's rules, unless force.
+
+    At a terminal, a password that breaks a rule is refused with each reason,
+    and asked for again. Without one, the reasons end the command with status
+    1 and nothing changes.
+    """
+    while True:
+        password = read_new_password(nothing)
+        if force:
+            return password
+        broken = accounts.password_problems(username, email, password)
+        if not broken:
+            return password
+        advice = "\n".join(found.advice for found in broken)
+        if not sys.stdin.isatty():
+            raise _Failed(f"{advice}\n{nothing}")
+        print(f"{advice}\nChoose another password, or press Ctrl+C to stop.", file=sys.stderr, flush=True)
 
 
 def _confirm(question: str) -> bool:
@@ -919,7 +1094,7 @@ def _add(accounts: Accounts, found: argparse.Namespace) -> None:
     username, role, email = found.username, found.role, found.email
     accounts.check_add(username, role, email, found.password)
     mailer, off = _mailer() if email is not None and not found.password else (None, None)
-    password = read_new_password("Nothing was added.") if found.password else None
+    password = ruled_password(accounts, username, email, "Nothing was added.", found.force) if found.password else None
     accounts.add(username, role, email, password)
     address = f"with the email address {email}" if email else "with no email address"
     print(f"{username} is added, as {_article(role)} {role}, {address}.", flush=True)
@@ -965,7 +1140,11 @@ def _test_email(accounts: Accounts, found: argparse.Namespace) -> None:
 def _update(accounts: Accounts, found: argparse.Namespace) -> None:
     username = found.username
     accounts.check_update(username, found.role, found.email)
-    password = read_new_password("Nothing was changed.") if found.password else None
+    password = None
+    if found.password:
+        entry = accounts.entry(username)
+        email = None if found.no_email else found.email or (entry.email if entry else None)
+        password = ruled_password(accounts, username, email, "Nothing was changed.", found.force)
     accounts.update(username, role=found.role, email=found.email, no_email=found.no_email, password=password)
     if found.role is not None:
         print(f"{username} is now {_article(found.role)} {found.role}. Its sessions have ended.", flush=True)
@@ -1022,11 +1201,14 @@ def main(argv: list[str] | None = None) -> None:
     # Imported here so a sign-in check does not load the policy loader.
     from policy.store import PolicyStore
 
+    from policy.password_rules import password_rules
+
+    rules = password_rules(os.environ)
     database = Path(os.environ.get("POLICY_DB", "/var/lib/daywarden/policy.sqlite3"))
     database.parent.mkdir(parents=True, exist_ok=True)
     store = PolicyStore(database)
     try:
-        accounts = Accounts(store.connection)
+        accounts = Accounts(store.connection, rules=rules)
         {"list": _list, "add": _add, "update": _update, "remove": _remove, "test-email": _test_email}[found.action](
             accounts, *([] if found.action == "list" else [found])
         )

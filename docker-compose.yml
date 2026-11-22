@@ -58,6 +58,11 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      # Password rules (S046). Empty is unset: each rule is off without its setting.
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-}
+      PASSWORD_HISTORY: ${PASSWORD_HISTORY:-}
+      PASSWORD_ATTACKER: ${PASSWORD_ATTACKER:-}
+      PASSWORD_CRACK_TIME: ${PASSWORD_CRACK_TIME:-}
       PARENT_HTTPS_PORT: "8443"
       # Host port clients use. Task URLs use this, not the bind port 8443.
       POLICY_PORT: ${POLICY_PORT:-8084}

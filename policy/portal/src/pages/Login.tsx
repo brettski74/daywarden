@@ -2,12 +2,13 @@ import { LogIn, RotateCcw } from "lucide-react";
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, redirect, useLoaderData, useLocation, useNavigate, useSearchParams, type LoaderFunctionArgs } from "react-router";
 import { HOME_ROUTE, currentSession, resetSetting, signIn, withinPortal } from "../api";
+import { HelpMessage } from "../components/HelpMessage";
 import { useTitle } from "../slots";
 
 type Loaded = { closed: boolean; forgot: boolean };
 
-/** What another page sends the sign-in screen to say, such as the Reset password page's answer. */
-export type LoginState = { notice?: string } | null;
+/** What another page sends the sign-in screen to say, such as the Reset password page's answer, with its help link. */
+export type LoginState = { notice?: string; link?: string; help?: string } | null;
 
 export async function loginLoader({ request }: LoaderFunctionArgs): Promise<Loaded> {
   const session = await currentSession(request.signal);
@@ -29,10 +30,10 @@ export function ClosedPortal() {
 }
 
 /** The panel the sign-in, Forgot password, and Reset password screens share: the logo and what is beneath it. */
-export function SignInPanel({ children }: { children: ReactNode }) {
+export function SignInPanel({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
     <div className="signin">
-      <div className="signin-panel">
+      <div className={wide ? "signin-panel signin-panel-wide" : "signin-panel"}>
         <div className="signin-logo" role="img" aria-label="Daywarden" />
         {children}
       </div>
@@ -45,7 +46,8 @@ export function Login() {
   const loaded = useLoaderData() as Loaded;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const notice = (useLocation().state as LoginState)?.notice;
+  const sent = useLocation().state as LoginState;
+  const notice = sent?.notice;
   const usernameField = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -101,7 +103,7 @@ export function Login() {
             />
             {notice && !failure && (
               <p className="signin-notice" role="status">
-                {notice}
+                <HelpMessage message={notice} link={sent?.link} help={sent?.help} />
               </p>
             )}
             {failure && (

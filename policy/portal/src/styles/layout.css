@@ -505,7 +505,8 @@ input:disabled,
 
 .signin {
   display: flex;
-  align-items: center;
+  /* safe: a panel taller than the window, such as Password help's, scrolls from its top. */
+  align-items: safe center;
   justify-content: center;
   height: 100%;
   overflow: auto;
@@ -573,14 +574,50 @@ input:disabled,
   text-align: center;
 }
 
-/* The Account page's Change password form (S044.2). */
+/* Password help (S046): the sign-in panel, wider, with left-aligned text. */
+.signin-panel-wide {
+  width: min(38rem, 100%);
+}
+
+.help-page {
+  text-align: left;
+}
+
+.help-page h2 {
+  font-size: 1.05rem;
+  margin: 1.25rem 0 0.4rem;
+}
+
+.help-page p,
+.help-page ul {
+  margin: 0 0 0.6rem;
+}
+
+/* The rules a new password breaks, under its field (S046). Empty when every rule passes. */
+.rule-advice {
+  margin: -0.3rem 0 0.6rem;
+  color: var(--failure-text);
+}
+
+.rule-advice:empty {
+  margin: 0;
+}
+
+.rule-advice p {
+  margin: 0 0 0.2rem;
+}
+
+/* The Account page's Change password form (S044.2). Its fields keep their
+   width, and the rule advice under the new password may run wider (S046). */
 .account-form {
   display: grid;
+  justify-items: start;
   gap: 0.35rem;
-  width: min(22rem, 100%);
+  width: min(44rem, 100%);
 }
 
 .account-form input {
+  width: min(22rem, 100%);
   margin-bottom: 0.6rem;
   padding: 0.4rem 0.5rem;
 }

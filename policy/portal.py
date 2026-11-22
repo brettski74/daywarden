@@ -67,8 +67,8 @@ BUILT = "build/"
 # Addresses under /parent/ that are not portal pages.
 # A sign-in body holds a username, a password of at most 200 characters, and the page to return to.
 _LONGEST_SIGN_IN = 4096
-# The Forgot password and Reset password pages are no place to return to after a sign-in.
-_NOT_PAGES = frozenset({"api", "build", "login", "forgot", "reset"})
+# The Forgot password, Reset password, and Password help pages are no place to return to after a sign-in.
+_NOT_PAGES = frozenset({"api", "build", "login", "forgot", "reset", "password-help"})
 CLOSED = "The parent portal is closed until a parent account is added."
 _SIGNED_OUT = "Sign in to see this."
 _HTTPS_ONLY = """<!DOCTYPE html>

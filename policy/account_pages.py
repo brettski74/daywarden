@@ -13,6 +13,16 @@ it, are the same whether or not an email goes out or the token is valid. Each
 email is sent after the answer, on a worker thread, so its time does not show
 in the answer's.
 
+The household's password rules (S046) are checked on both pages, with the
+same hashing work for every request in ``screen_password``. Once the
+passwords are sent, the Account page's answer is the same for a wrong
+current password and for a new password a rule refuses, and the Reset
+password page's answer is the same for a saved password, a link that is not
+valid, and a password a rule refuses. Each refusal for an account is a line
+in the service log, with the reasons and never the password. The rule
+settings go out with ``/parent/api/account`` and ``/parent/api/password-reset``,
+which the Account, Reset password, and Password help pages load.
+
 A reset link names the host the Forgot password page was opened with when it
 is one of ``PARENT_NAMES``, otherwise the first of them, so a forged Host
 header cannot send a token anywhere else. The port is always ``POLICY_PORT``.
@@ -29,17 +39,31 @@ from fastapi.responses import Response
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from policy.accounts import Accounts, hash_password, new_password_problem
+import secrets
+
+from policy.accounts import Accounts, new_password_problem, screen_password
+from policy.password_rules import known_words
 from policy.mail import CHANGED_ON_PAGE, RESET_BY_EMAIL, MailError, Mailer, moment, portal_address, span
 from policy.portal import CLOSED, PortalGate, json_answer, json_body, session_key
 
 # Each body holds at most a username or three passwords of at most 200 characters, and a token.
 LONGEST_BODY = 4096
 NOT_SET_UP = "Resetting a password by email is not set up. Ask whoever runs Daywarden."
-SAVED = (
-    "If your link was still valid, your new password is saved. "
-    "If you cannot sign in with it, ask for a new link with Forgot password."
-)
+HELP = "/parent/password-help"
+# The answer to a wrong current password and to a new password a rule refuses, alike.
+NOT_CHANGED = {"error": "Your password was not changed. Learn more", "link": "Learn more", "help": f"{HELP}#account"}
+# The answer to every Save on the Reset password page.
+SAVED = {
+    "message": "Try signing in with your new password. If it does not work, learn more",
+    "link": "learn more",
+    "help": f"{HELP}#reset",
+}
+
+
+def stand_ins() -> list[str]:
+    """Known words for a reset link that is not valid, the size of a username and an address, so zxcvbn does as much."""
+    name = secrets.token_hex(3)
+    return [name, f"{name}@example.net", name]
 
 
 def link_host(request: Request, names: tuple[str, ...]) -> str:
@@ -101,7 +125,12 @@ def install_account_pages(
         found = accounts.entry(parent.username)
         return json_answer(
             200,
-            {"username": parent.username, "role": parent.role, "email": None if found is None else found.email},
+            {
+                "username": parent.username,
+                "role": parent.role,
+                "email": None if found is None else found.email,
+                "rules": accounts.rules.public(),
+            },
         )
 
     @app.post("/parent/api/account/password")
@@ -114,16 +143,31 @@ def install_account_pages(
         parent, refused = gate.parent(request)
         if refused is not None or parent is None:
             return refused
-        problem = accounts.change_password(
-            parent.username, session_key(request), body.get("current"), body.get("password"), body.get("again")
-        )
+        current, new = body.get("current"), body.get("password")
+        problem = new_password_problem(new, body.get("again"))
         if problem is not None:
-            return json_answer(400, {"error": problem})
-        found = accounts.entry(parent.username)
+            return json_answer(400, {"error": f"{problem} Nothing was changed."})
+        assert isinstance(new, str)
+        account_id, stored, email, history = accounts.change_facts(parent.username)
+        # The current password is checked as a sign-in checks it, and every rule is checked even when it is wrong.
+        screened = await run_in_threadpool(
+            screen_password,
+            accounts.rules,
+            new,
+            history=history,
+            known=known_words(parent.username, email, current),
+            current=current,
+            stored=stored,
+        )
+        reasons = ([] if screened.current_ok else ["current password wrong"]) + [found.reason for found in screened.broken]
+        if account_id is None or reasons:
+            print(f"password for {parent.username} refused on the Account page: {', '.join(reasons)}", flush=True)
+            return json_answer(400, NOT_CHANGED)
+        accounts.apply_change(account_id, screened.digest, session_key(request))
         return json_answer(
             200,
             {"message": "Your password was changed."},
-            background=notice(None if found is None else found.email, parent.username, CHANGED_ON_PAGE),
+            background=notice(email, parent.username, CHANGED_ON_PAGE),
         )
 
     @app.get("/parent/api/password-reset")
@@ -131,7 +175,9 @@ def install_account_pages(
         refused = await opened(request)
         if refused is not None:
             return refused
-        return json_answer(200, {"email": mailer is not None, "lifetime": span(reset_lifetime)})
+        return json_answer(
+            200, {"email": mailer is not None, "lifetime": span(reset_lifetime), "rules": accounts.rules.public()}
+        )
 
     @app.post("/parent/api/password-reset")
     async def forgot(request: Request) -> Response:
@@ -181,16 +227,30 @@ def install_account_pages(
         if problem is not None:
             return json_answer(400, {"error": problem})
         assert isinstance(password, str)
-        # The work of a valid link, done for every link.
-        digest = hash_password(password)
         token = body.get("token")
         now = loaded().clock.local()
 
         async def save() -> None:
-            done = accounts.reset_password(token, digest, now, reset_lifetime)
+            # After the answer. The database parts run on the event loop, and the hashing on a worker thread.
+            target = accounts.reset_target(token, now, reset_lifetime)
+            # The work of a valid link, done for every link.
+            screened = await run_in_threadpool(
+                screen_password,
+                accounts.rules,
+                password,
+                history=[] if target is None else target.history,
+                known=stand_ins() if target is None else known_words(target.username, target.email),
+            )
+            if target is None:
+                return
+            if screened.broken:
+                reasons = ", ".join(found.reason for found in screened.broken)
+                print(f"password for {target.username} refused from a reset link: {reasons}", flush=True)
+                return
+            done = accounts.apply_reset(target, screened.digest)
             if done is not None and done.had_password:
                 sending = notice(done.email, done.username, RESET_BY_EMAIL)
                 if sending is not None:
                     await sending()
 
-        return json_answer(200, {"message": SAVED}, background=BackgroundTask(save))
+        return json_answer(200, SAVED, background=BackgroundTask(save))

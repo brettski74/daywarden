@@ -2,7 +2,7 @@ Ticket: S046
 Title: Password Rules
 Status: Refined
 Story Points: 13
-Last Updated: 2026-11-20 23:17:01
+Last Updated: 2026-11-20 23:55:00
 ---
 
 # User Voice
@@ -57,20 +57,28 @@ apply as they do now.
 - [ ] Strength: with `PASSWORD_ATTACKER=identity-thief` and `PASSWORD_CRACK_TIME=1y`, a password is refused when
       zxcvbn's estimate of the guesses it needs, divided by 10,000 a second, comes to less than a year. `correct horse`
       is refused, and four uncommon words passes this rule.
+- [ ] *Added in implementation:* zxcvbn reads only the first 100 characters of a password, in the service and the
+      portal alike. On a random 200-character password it takes about 4 seconds in the service and 8 in the browser.
+      So two passwords that share their first 100 characters get the same strength estimate.
 - [ ] The username and email address of the account count as known words for zxcvbn, so `ada` and `ada2026!` score
       as easy for the account `ada`. On the Account page the current password is also a known word, so after
       `Summer2025!Picnic` the password `Summer2026!Picnic` is refused as too easy to guess, even though the history
-      rule lets it pass.
+      rule lets it pass. *Changed in implementation:* each known word also counts its runs of 3 or more letters or
+      digits, such as `summer`, `2025`, and `picnic`. zxcvbn matches a known word only as a whole, so without the runs
+      `Summer2026!Picnic` would pass as `Summer2025!Picnic`'s neighbour.
 - [ ] Existing passwords that break a rule still sign in. The rules are checked only when a password is set.
 
 ## Account page
 
 Changing a password works as in S044.2, with these additions.
 
-- [ ] As the new password is typed, a line under it says which rules it breaks and how to fix it, using the account's
+- [ ] Once typing in the new password pauses for 1 second, advice under it says which rules it breaks and how to fix it, using the account's
       known words, and Save stays available. For example "Use at least 12 characters. This one has 9." and "An
       identity thief could guess this in about 3 days. It needs to hold out for 1 year. Make it longer, such as by
-      adding another word or two." The line names no rule that is off, and says nothing when every rule passes.
+      adding another word or two." Each broken rule is on its own line, and on the Account page the advice may run
+      wider than the password fields. It names no rule that is off, and says nothing when every rule passes.
+      The advice stays as it was until the next pause, and Save checks the password as it is without waiting.
+      *Changed in implementation:* Save on the Account page is still S044.2's Change password button.
 - [ ] Save with a password that breaks length or strength is refused on the page before anything is sent, with the
       same advice in the status bar. Nothing changes, and the current password still signs in.
 - [ ] Once the page has sent the passwords, nothing it sees can tell a wrong current password from a new password the
@@ -84,13 +92,17 @@ Changing a password works as in S044.2, with these additions.
       developer tools.
 - [ ] The portal never accepts a password the service would refuse for length or strength. Where the portal's zxcvbn
       gives a different estimate from the service's, the portal asks for 5% more guesses than the service does.
+      *Changed in implementation:* the two agree on every password tested, so there is no 5% margin. The portal asks
+      for one part in a billion more, which covers how the two round their numbers.
 
 ## Reset password page
 
 Resetting by email works as in S044.2, with these additions.
 
 - [ ] The page checks length and strength as the new password is typed, and on Save, as the Account page does. The
-      page knows no username, email address, or current password, so it uses no known words.
+      page knows no username, email address, or current password, so it uses no known words. *Changed in
+      implementation:* the page has no status bar, so a refused Save shows the advice above Save, where it shows
+      S044.2's refusals.
 - [ ] Once the page has sent a password, nothing it sees can tell a saved password from a link that is not valid or a
       password the service refused under a rule. All three get the same answer, with the same timing and the same
       work as above, so an invalid link is also checked against `PASSWORD_HISTORY` dummy hashes. The sign-in screen
@@ -117,6 +129,9 @@ Resetting by email works as in S044.2, with these additions.
       least 12 characters" and "Different from your last 3 passwords". These come from the settings, not from any
       account, so they tell a visitor nothing that `.env` does not.
 - [ ] The page links back to the Account page, which opens the sign-in screen first when no session is signed in.
+- [ ] *Added in implementation:* with no parent account, the page shows the closed portal message, as Forgot password
+      and Reset password do. With no rule on, it says "No password rules are turned on. A password is 1 to 200
+      characters."
 
 ## dw-account
 
@@ -160,3 +175,122 @@ Resetting by email works as in S044.2, with these additions.
   is to old ones other than the current password. Only hashes of the old ones are kept.
 - Sizing: about the effort of S044.2's Account and Reset pages without email, plus settings, a history table, and
   two zxcvbn libraries kept in step. 13.
+
+# Implementation
+
+## Files Added
+
+- `policy/password_rules.py`: the four settings and their startup checks, the attackers, the length and strength
+  checks with their advice and log reasons, the help page's lines, the known words, and the rough time ("about 3 days").
+- `policy/password_strength.py`: zxcvbn's guess estimate from the PyPI port, made to agree with the npm zxcvbn 4.4.2.
+- `policy/portal/src/passwordRules.ts`: the portal's length and strength checks, known words, and rough time, in the
+  same words, and the lazy load of zxcvbn.
+- `policy/portal/src/pages/PasswordHelp.tsx`: the Password help page.
+- `policy/portal/src/components/RuleAdvice.tsx`: the advice under a new password, one line per broken rule.
+- `policy/portal/src/useSettled.ts`: a value that follows a field only once typing pauses for 1 second.
+- `policy/portal/src/components/HelpMessage.tsx`: a service message whose last words link to a help page.
+- `policy/portal/src/passwordRules.test.tsx`: the Account, Reset password, and Password help pages under the rules.
+- `tests/test_password_rules.py`: settings, each rule on both pages, the history, the equal hashing work, the log
+  lines, and the help page's address.
+- `tests/test_dw_account_rules.py`: `dw-account` under the rules, with and without a terminal, and `--force`.
+- `tests/test_password_strength.py`: the service's estimate against the portal's zxcvbn run in Node, on 600 passwords.
+
+## Files Changed
+
+- `policy/accounts.py`: the `password_history` table, filled and trimmed at startup and on every password set;
+  `screen_password`, the equal hashing work; the Account page's change and the reset split into a lookup, the work,
+  and the write; `dw-account` checks the rules, asks again at a terminal, and takes `--force`.
+- `policy/account_pages.py`: both POSTs check every rule, give the one answer for each refusal, and log refusals;
+  both GETs send `rules`.
+- `policy/app.py`: reads the rules at startup and logs them.
+- `policy/portal.py`: Password help is no page to return to after a sign-in.
+- `policy/requirements.txt`: `zxcvbn==4.5.0`.
+- `policy/portal/package.json`, `package-lock.json`: `zxcvbn` 4.4.2 and `@types/zxcvbn` 4.4.5.
+- `policy/portal/src/pages/Account.tsx`, `Reset.tsx`, `Login.tsx`: the advice line, the refusal before sending, and
+  Learn more.
+- `policy/portal/src/api.ts`, `routes.tsx`, `styles/layout.css`: `rules` in the reset setting, the route, and the
+  styles.
+- `docker-compose.yml`: passes the four settings to the decisions service.
+- `.env.sample`, `README.md`, `docs/parent-portal.md`: the rules, the attackers, `--force`, the help page, and the
+  data the pages load.
+- `tests/test_password_reset.py`: S044.2's answers replaced by S046's.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The rules are one frozen `PasswordRules`, read from `.env` once at startup, like the email settings. An empty value
+counts as unset, because Compose passes an unset setting as empty. The service and `dw-account` each read it.
+
+History is a table of Argon2id hashes, newest last, including the current password. At startup the service adds any
+current password that is missing, such as one set before S046, and keeps only the newest `PASSWORD_HISTORY` per
+account, or one while the rule is off. Every password set goes through one `_set_hash`, which adds and trims. An
+`Accounts` made without rules, as tests make it to look at the database, never trims.
+
+`screen_password` is the one place a new password is hashed. It does the same Argon2id work for every request: the
+current-password check (Account page only, with sign-in's work for a missing or over-long one), one hash, and one check
+against each of `PASSWORD_HISTORY` stored hashes, with the dummy hash for each one missing. It runs zxcvbn too. None of
+it stops early. It runs on a worker thread, since 20 history checks would hold up the event loop for about a second.
+The database parts stay on the event loop, where the SQLite connection lives. The Account page checks every rule
+before it answers, even when the current password is wrong. The Reset password page still answers at once and does
+the lookup, the work, and the write afterwards, as in S044.2. An invalid link runs zxcvbn with random stand-in words
+the size of a username and address. A refused reset no longer deletes the token, and the write uses the token only if
+it is still the same row.
+
+The two zxcvbn libraries first disagreed on about 6% of a test corpus. There were four causes, each fixed in
+`password_strength.py` without forking the package. The port fixes the reference year at 2017. It sees an emoji as one
+character where JavaScript sees two UTF-16 units. Its search for the cheapest sequence of matches visits shorter
+sequences in insertion order, not ascending order, so it keeps candidates the JavaScript drops. Its `\d` and
+`isupper` accept every script's digits and capitals. After the fixes, the two agree to within 3e-16 on over 6,000
+passwords, so the 5% margin is not needed. `@zxcvbn-ts/core` was not used, as the notes advise. zxcvbn 4.5.0 is the
+PyPI version: it is 4.4.28 plus a length guard.
+
+Known words include the runs of letters and digits in each word, in the same order on both sides, because zxcvbn ranks
+a known word by its place in the list.
+
+The portal's zxcvbn is a dynamic `import()`, so its 820 KB file is built separately and loaded only by the Account and
+Reset password loaders, and only while the strength rule is on.
+
+The pages were checked in jsdom, not in a browser. The running stack on this machine was left alone.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S046
+
+1. **Settings.** Try each bad value in the Settings check, one at a time with `dw restart`, and read the message. Set
+   `PASSWORD_MIN_LENGTH=12`, `PASSWORD_HISTORY=3`, `PASSWORD_ATTACKER=Identity-Thief`, and `PASSWORD_CRACK_TIME=1y`,
+   `dw restart`, and check the rules line in `dw logs decisions`. Read `.env.sample` and README's Configuration table.
+   Covers Settings in .env.
+2. **Account page.** With those settings, sign in as `ada`. In New password, type a 9-character password, then
+   `correct horse`, then `ada2026!`, then four uncommon words, and read the line each time. Press Change password with
+   `correct horse`. Nothing should be sent, and the advice should show in the status bar. Change to
+   `Summer2025!Picnic`, then try `Summer2026!Picnic` with that as the current password. Covers the Length, Strength,
+   and known-word checks, and the Account page.
+3. **One answer, and the log.** On the Account page, try a wrong current password with a strong new one, the right
+   current password with the current password as the new one, and both wrong together. Each says "Your password was
+   not changed. Learn more". Follow Learn more. Then send a weak password with
+   `curl -k -b 'parent_session=<cookie>' -H 'Content-Type: application/json' -d '{"current":"…","password":"short","again":"short"}' https://<name>:<POLICY_PORT>/parent/api/account/password`.
+   Check `dw logs decisions` for one line per refusal, each with all its reasons and no password. Covers the Account
+   page's equal answer and Service log.
+4. **History.** With `PASSWORD_HISTORY=3`, change through `Tulip-Garden-8`, `Tulip-Garden-9`, then try each of the
+   last three passwords, then `Tulip-Garden-7`, then the fourth newest. Set `PASSWORD_HISTORY=1` with `dw restart`, then
+   3 again, and reuse a password that had been dropped. Remove an account with `dw-account remove`. Covers the History
+   checks.
+5. **Reset page.** With email on, ask for a link for `ada`, open it, type a weak password and read the line, press
+   Save (refused on the page), send a password from the history with `curl` to `/parent/api/password-reset/save` with
+   the link's token, then save a strong password from the page and sign in with it. Also save from a link that is not
+   valid. Each Save shows "Try signing in with your new password. If it does not work, learn more", and the log has a
+   line only for the valid link's refusal. Covers Reset password page and the log's invalid-link case.
+6. **Equal timing.** With `PASSWORD_HISTORY=20`, time several Account page changes with `curl -w '%{time_total}'` for
+   an account with one stored password and one with many, refused and saved. Covers the equal hashing work.
+7. **Password help.** Signed out, open `/parent/password-help`, `#account`, and `#reset`, follow Back to the Account
+   page, and try plain HTTP. Change the settings and reload to see the list follow them. Covers Password help page.
+8. **dw-account.** With the rules on, run `dw-account add --password`, and `update --password` with a weak password, a
+   recent one, and a strong one, both at a terminal and piped (`printf 'short\n' | dw-account update --password ada`,
+   status 1). Then `update --password --force ada` with a weak one, then `update --password ada` with the same
+   (refused as recent), then `dw-account update --force ada` (usage error), and `dw-account help`. Covers dw-account.
+9. **Old passwords and documentation.** Raise `PASSWORD_MIN_LENGTH` above an existing password's length, `dw restart`,
+   and sign in with it. Read README's Parent accounts and Password rules. Covers the existing-password check and
+   Documentation.
