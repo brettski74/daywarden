@@ -29,6 +29,9 @@ from policy.arithmetic import ARITHMETIC, OPERATIONS
 from policy.arithmetic_facts import attempt_runs, facts, no_questions
 from policy.attempt_trends import listed, no_attempts, overview, period_json, period_of, read_view, trend
 from policy.capitalisation_attempt import capitalisation_runs
+from policy.parts_of_speech import PARTS_OF_SPEECH
+from policy.parts_of_speech_report import Labels, PoolLookup, asks_of, confusions, no_sentences, offered_pools, parts_of_speech_runs
+from policy.parts_of_speech_report import read_choices as read_confusion_choices
 from policy.child_page import FAVICON_PATH
 from policy.fact_figures import operation_of as question_operation
 from policy.report import format_day, format_duration, timezone_note
@@ -314,14 +317,87 @@ def words_report(
     return report
 
 
+def confusions_report(
+    attempts: AttemptStore,
+    clients: Sequence[str],
+    *,
+    now: datetime,
+    tasks: Sequence[Task] = (),
+    timezone: str | None = None,
+    pairs: Sequence[tuple[str, str]] = (),
+    root: Path | None = None,
+) -> dict:
+    """Return one client group's parts of speech confusions over the period, with the attempts page's choices and the Task, Pool, and Try filters.
+
+    ``tasks_offered`` and ``pools_offered`` are the Task and Pool filters'
+    choices, and ``choices`` what is chosen. ``message`` says why there is
+    nothing to show: no group chosen, a group not in the household, a Custom
+    period that is not real days, or no placements. ``root`` is the config
+    directory the sentence pools are read from.
+    """
+    view, notes = read_view(pairs)
+    picks, more = read_confusion_choices(pairs)
+    notes.extend(more)
+    task_picks = [value.strip() for key, value in pairs if key == "task"]
+    chosen = view.client
+    period, problems = period_of(view, now)
+    notes.extend(problems)
+    report: dict = {
+        "clients": list(clients),
+        "client": chosen,
+        "view": view.as_json(),
+        "notes": notes,
+        "times": timezone_note(timezone),
+        **period_json(period, now),
+        "tasks_offered": [],
+        "pools_offered": [],
+        "choices": {"task": [], "pool": [], "try": list(picks.tries)},
+        "message": None,
+        "confusions": None,
+    }
+    if not chosen:
+        report["message"] = "Choose a client group."
+        return report
+    if clients and chosen not in clients:
+        report["message"] = NOT_IN_HOUSEHOLD
+        return report
+    today = household_day(now)
+    stored = attempts.attempts(chosen)
+    offered = offered_tasks(tasks, chosen, stored if period is not None else (), view, period, today, PARTS_OF_SPEECH)
+    names = [each["name"] for each in offered]
+    if task_picks:
+        wanted = [name for name in task_picks if name and name != "none"]
+        notes.extend(f"{name} is not a parts of speech task here, so it is left out." for name in dict.fromkeys(wanted) if name not in names)
+        picked = [name for name in names if name in wanted]
+    else:
+        picked = names
+    report["tasks_offered"] = offered
+    report["choices"]["task"] = picked
+    if period is None:
+        report["message"] = "Fix the period to show the confusions."
+        return report
+    labels = Labels()
+    asks = asks_of(stored, view, period, today, picked, PoolLookup(root), labels)
+    pools = offered_pools(asks)
+    report["pools_offered"] = pools
+    report["choices"]["pool"] = [each["id"] for each in pools] if picks.pools is None else list(picks.pools)
+    found = confusions(asks, picks, labels, lambda attempt: _local(attempt.started_at))
+    if found["rows"]:
+        report["confusions"] = found
+    else:
+        report["message"] = no_sentences(chosen)
+    return report
+
+
 def attempt_report(
     attempts: AttemptStore,
     attempt_id: str,
     *,
     now: datetime,
     timezone: str | None = None,
+    root: Path | None = None,
 ) -> dict | None:
-    """Return one stored attempt, or None when that number is not stored."""
+    """Return one stored attempt, or None when that number is not stored. ``root`` is where the sentence pools are."""
     found = _stored(attempts, attempt_id)
     if found is None:
         return None
@@ -344,6 +420,7 @@ def attempt_report(
         "reopened": _reopened(found),
         "arithmetic": attempt_runs(found, _event_time),
         "capitalisation": capitalisation_runs(found, _event_time),
+        "parts_of_speech": parts_of_speech_runs(found, _event_time, root),
         "spelling": spelling_runs(found, _event_time),
         "answers": _answers(found.detail),
         "record": _record(found.detail),

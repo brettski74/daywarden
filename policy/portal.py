@@ -47,7 +47,16 @@ from starlette.concurrency import run_in_threadpool
 from policy.accounts import COOKIE_NAME, Accounts, Parent, cookie_value
 from policy.hierarchy import Policy
 from policy.recordings import LONGEST_TAKE_BYTES, TOO_LONG, RecordingError, Recordings, cut_settings, take_type
-from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, record_parent_check, trend_report, words_report
+from policy.review import (
+    NOT_STORED,
+    attempt_report,
+    attempts_report,
+    confusions_report,
+    facts_report,
+    record_parent_check,
+    trend_report,
+    words_report,
+)
 from policy.sounds import media_type
 from policy.spelling_directories import from_query
 from policy.policy_admin import PolicyChanges
@@ -94,6 +103,7 @@ REVIEWER_ADDRESSES = frozenset(
         ("GET", "/parent/api/attempts/tasks/{kind}/{name}"),
         ("GET", "/parent/api/attempts/facts/{operation}"),
         ("GET", "/parent/api/attempts/words"),
+        ("GET", "/parent/api/attempts/parts-of-speech"),
         ("GET", "/parent/api/attempts/{attempt_id}"),
         # The one reviewer write: a parent check, for work done outside the system.
         ("POST", "/parent/api/parent-check"),
@@ -341,6 +351,28 @@ def install_portal(
             ),
         )
 
+    pools_root = None if tasks is None else tasks.policy_file.parent
+
+    @app.get("/parent/api/attempts/parts-of-speech")
+    async def attempt_confusions(request: Request) -> Response:
+        _username, refused = guard(request)
+        if refused is not None:
+            return refused
+        now = loaded()
+        policy = now.policy
+        return _json(
+            200,
+            confusions_report(
+                attempts,
+                client_names(policy),
+                now=now.clock.local(),
+                tasks=() if policy is None else policy.tasks,
+                timezone=None if policy is None else policy.timezone,
+                pairs=list(request.query_params.multi_items()),
+                root=pools_root,
+            ),
+        )
+
     @app.get("/parent/api/attempts/{attempt_id}")
     async def attempt(request: Request, attempt_id: str) -> Response:
         _username, refused = guard(request)
@@ -348,7 +380,7 @@ def install_portal(
             return refused
         now = loaded()
         timezone = None if now.policy is None else now.policy.timezone
-        found = attempt_report(attempts, attempt_id, now=now.clock.local(), timezone=timezone)
+        found = attempt_report(attempts, attempt_id, now=now.clock.local(), timezone=timezone, root=pools_root)
         if found is None:
             return _json(404, {"error": NOT_STORED})
         return _json(200, found)

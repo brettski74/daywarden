@@ -135,6 +135,21 @@
   --fact-weight-3-text: var(--palette-navy);
   --fact-weight-4-bg: var(--palette-brick);
   --fact-weight-4-text: var(--palette-ivory);
+  /* The parts of speech confusions grid, shaded by a cell's share of its row: white through teal, navy text. A right cell is ringed. */
+  --confusion-level-0-bg: var(--palette-white);
+  --confusion-level-0-text: var(--palette-navy);
+  --confusion-level-1-bg: color-mix(in srgb, var(--palette-teal) 18%, var(--palette-white));
+  --confusion-level-1-text: var(--palette-navy);
+  --confusion-level-2-bg: color-mix(in srgb, var(--palette-teal) 40%, var(--palette-white));
+  --confusion-level-2-text: var(--palette-navy);
+  --confusion-level-3-bg: color-mix(in srgb, var(--palette-teal) 70%, var(--palette-white));
+  --confusion-level-3-text: var(--palette-navy);
+  --confusion-level-4-bg: var(--palette-teal);
+  --confusion-level-4-text: var(--palette-navy);
+  --confusion-right-ring: var(--palette-navy);
+  /* A word he left out or put in the right row, and the word or mark of one in the wrong row. */
+  --sorted-right: var(--palette-blue);
+  --sorted-wrong: var(--palette-brick);
   --row-chosen-bg: color-mix(in srgb, var(--palette-teal) 35%, var(--palette-ivory));
   /* The spelling word grid: right first time, right after a miss, missed, and not asked. Each also has an icon. */
   --word-first-bg: color-mix(in srgb, var(--palette-teal) 30%, var(--palette-white));

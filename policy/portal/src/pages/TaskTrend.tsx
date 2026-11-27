@@ -24,6 +24,7 @@ import { AttemptTable } from "../components/AttemptTable";
 import { ViewFilters } from "../components/ViewFilters";
 import { factsAddress } from "../facts";
 import { taskWordsAddress } from "../spellingWords";
+import { taskConfusionsAddress } from "../confusions";
 import { Shape, TrendChart, type Marked, type TrendSeries } from "../components/charts/TrendChart";
 import type { Tick } from "../components/charts/ChartFrame";
 import { ContextBar, StatusBar, useTitle } from "../slots";
@@ -162,6 +163,11 @@ export function TaskTrend() {
       {task.type === "spelling" && (
         <p className="trend-facts">
           <Link to={taskWordsAddress(task.name, report.view)}>Spelling words</Link>
+        </p>
+      )}
+      {task.type === "parts_of_speech" && (
+        <p className="trend-facts">
+          <Link to={taskConfusionsAddress(task.name, report.view)}>Parts of speech confusions</Link>
         </p>
       )}
       {!task.in_policy && trend !== null && <p className="task-gone">{task.label} is not in the policy.</p>}

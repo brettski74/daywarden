@@ -393,8 +393,8 @@ def test_an_approved_agent_initializes_and_lists_its_tools(service):
     assert status == 200
     assert json.loads(body)["result"]["serverInfo"]["name"] == "daywarden"
     assert tool_names(service, tokens["access_token"]) == [
-        "list_tasks", "get_task", "list_attempts", "get_task_trend", "get_arithmetic_facts", "get_spelling_words", "get_attempt", "get_usage",
-        "list_requests",
+        "list_tasks", "get_task", "list_attempts", "get_task_trend", "get_arithmetic_facts", "get_spelling_words",
+        "get_parts_of_speech_confusions", "get_attempt", "get_usage", "list_requests",
     ]
     assert [entry["outcome"] for entry in activity(service, cookie)] == ["approved"]
 
@@ -789,6 +789,42 @@ def test_get_spelling_words_gives_the_words_page_and_a_named_words_misspellings_
     ]
     nothing = tool_answer(service, tokens["access_token"], "get_spelling_words", {"client": "younger", "period": "past_week", "pool": []})
     assert nothing["words"] is None
+
+
+def test_get_parts_of_speech_confusions_gives_the_confusions_page_and_a_named_pair_or_word(service):
+    from policy.tasks import AttemptStore, TaskKey
+
+    now = datetime(2026, 11, 17, 18, 0, tzinfo=ZONE)
+    at(service, now)
+    words = [{"word": "The", "part": None}, {"word": "dog", "part": "noun"}, {"word": "ran", "part": "verb"}, {"word": "quickly", "part": None}]
+    tries = [{"placements": {"noun": [1], "verb": [2], "adjective": [3]}, "expired": False, "received_ms": 4000},
+             {"placements": {"noun": [1], "verb": [2]}, "expired": False, "received_ms": 8000}]
+    question = {"run": 1, "sentence": "The dog ran quickly.", "parts": ["noun", "verb", "adjective"], "words": words, "tries": tries,
+                "outcome": "correct", "correct_try": 2, "points": 0.5, "allowed_ms": 90_000}
+    with AttemptStore(service.state.database) as store:
+        started = now - timedelta(days=1)
+        detail = {"settings": {"parts_of_speech": ["noun", "verb", "adjective"], "pools": []}, "runs": [{"run": 1}], "questions": [question]}
+        store.record("younger", TaskKey("parts_of_speech", "pos"), "pass", started, started_at=started, detail=detail)
+    cookie = sign_in(service)
+    _client, tokens = connect(service, cookie)
+    found = tool_answer(service, tokens["access_token"], "get_parts_of_speech_confusions", {"client": "younger", "period": "past_week"})
+    _status, body, _headers = call(service, "GET", "/parent/api/attempts/parts-of-speech", query="client=younger&range=past-week", cookie=cookie)
+    page = json.loads(body)["confusions"]
+    assert found["confusions"]["rows"] == page["rows"]
+    assert {row["part"]: row["cells"] for row in page["rows"]}["no_part"] == [1, 0, 0, 3]
+    assert "asks" not in found["confusions"] and "asks" not in found["confusions"]["words"][0]
+    assert found["pair"] is None and found["word"] is None
+    named = tool_answer(
+        service, tokens["access_token"], "get_parts_of_speech_confusions",
+        {"client": "younger", "period": "past_week", "try": [1], "belongs": "no_part", "put": "adjective", "word": "Quickly"},
+    )
+    assert [(each["try"], each["sentence"]) for each in named["pair"]["placements"]] == [(1, "The dog ran [quickly].")]
+    assert named["word"] == [{"word": "quickly", "part": "no part", "sentences": [
+        {"attempt": named["word"][0]["sentences"][0]["attempt"], "started": "Monday 16 November 2026, 18:00", "task": "pos",
+         "sentence": "The dog ran [quickly].", "placed": ["adjective", "left out"]},
+    ]}]
+    attempt = tool_answer(service, tokens["access_token"], "get_attempt", {"id": named["word"][0]["sentences"][0]["attempt"]})
+    assert attempt["parts_of_speech"]["last"]["right_on_try"] == [0, 1, 0]
 
 
 def test_a_custom_period_is_from_and_to(service):

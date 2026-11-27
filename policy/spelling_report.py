@@ -83,20 +83,23 @@ class TaskPools:
         return [pool for pool in ALL_POOLS if pool in self.pools.get(word, ())]
 
 
-def offered_tasks(tasks: Sequence[Task], client: str, attempts: Sequence[Attempt], view: View, period: Period, today: date) -> list[dict]:
-    """Return the Task filter's choices: the spelling tasks assigned to the group, then any other it has chosen attempts at.
+def offered_tasks(
+    tasks: Sequence[Task], client: str, attempts: Sequence[Attempt], view: View, period: Period, today: date, task_type: str = SPELLING
+) -> list[dict]:
+    """Return the Task filter's choices: the group's tasks of a type, then any other of the type it has chosen attempts at.
 
     Each is its name and whether the policy has it. A spelling task in the
     policy but assigned only to other groups is offered when it has attempts,
-    and keeps its directories.
+    and, for spelling, keeps its directories. The parts of speech confusions
+    page offers its tasks the same way.
     """
-    in_policy = {task.name for task in tasks if task.type == SPELLING}
-    offered = [task.name for task in tasks if task.type == SPELLING and client in task.groups]
+    in_policy = {task.name for task in tasks if task.type == task_type}
+    offered = [task.name for task in tasks if task.type == task_type and client in task.groups]
     others = sorted(
         {
             attempt.task
             for attempt in attempts
-            if attempt.task_type == SPELLING and attempt.task not in offered and chosen(attempt, view, period, today)
+            if attempt.task_type == task_type and attempt.task not in offered and chosen(attempt, view, period, today)
         }
     )
     return [{"name": name, "in_policy": name in in_policy} for name in [*dict.fromkeys(offered), *others]]

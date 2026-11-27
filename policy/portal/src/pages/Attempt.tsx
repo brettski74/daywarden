@@ -4,6 +4,7 @@ import { ApiError, api, pageOf } from "../api";
 import { formatClock, formatPoints, formatSeconds, type Figures } from "../attempts";
 import { Fold } from "../components/Fold";
 import { Fields, StoredValue, type Stored } from "../components/StoredValue";
+import { confusionWordLink } from "../confusions";
 import { factLink } from "../facts";
 import { wordLink } from "../spellingWords";
 import { ContextBar, StatusBar, useTitle } from "../slots";
@@ -53,6 +54,23 @@ type CapSentence = {
 };
 type CapRun = { run: number; expired: string | null; figures: Figures | null; sentences: CapSentence[] };
 
+/** A parts of speech try (S035.3): each word's row, or left out, judged as the quiz judged it. */
+type PosMark = { label: string | null; right: boolean; belongs: string; link: string };
+type PosTry = { words: PosMark[]; timer: boolean; taken_ms: number };
+type PosSentence = {
+  text: string;
+  pieces: { text: string; word?: number }[];
+  words: string[];
+  outcome: "correct" | "incorrect" | "timeout" | null;
+  outcome_label: string;
+  points: number;
+  taken_ms: number | null;
+  allowed_ms: number;
+  no_try: boolean;
+  tries: PosTry[];
+};
+type PosRun = { run: number; expired: string | null; figures: Figures | null; right_on_try: number[]; sentences: PosSentence[] };
+
 /** A spelling attempt's question: the word, the pool it was asked from, and what happened. */
 type SpellQuestion = {
   key: string;
@@ -87,6 +105,7 @@ type AttemptReport = {
   reopened: { gave_up: string; came_back: string }[];
   arithmetic: { last: Run; expired: Run[]; practice: Walk[] } | null;
   capitalisation: { last: CapRun; expired: CapRun[] } | null;
+  parts_of_speech: { last: PosRun; expired: PosRun[] } | null;
   spelling: { last: SpellRun; earlier: SpellRun[] } | null;
   answers: Stored[] | null;
   record: { [key: string]: Stored } | null;
@@ -302,6 +321,126 @@ function CapitalisationRuns({ runs }: { runs: { last: CapRun; expired: CapRun[] 
   );
 }
 
+/** A parts of speech run's figures, as S035.1 works them out, with the sentences right on each try. */
+function PosSummary({ run }: { run: PosRun }) {
+  const f = run.figures;
+  if (f === null) return null;
+  const [first, second, third] = run.right_on_try;
+  const rows: [string, string][] = [
+    ["Points", `${formatPoints(f.points)} / ${f.pass_mark ?? "?"} points`],
+    ["Questions", `${f.questions}${f.maximum === null ? "" : ` / ${f.maximum}`}`],
+    ["Right on 1st try", String(first)],
+    ["Right on 2nd try", String(second)],
+    ["Right on 3rd try", String(third)],
+    ["Wrong", String(f.wrong)],
+    ["Timeouts", String(f.timeouts)],
+    ["Time answering", formatClock(f.time_ms / 1000)],
+    ["Average per right answer", f.average_ms === null ? "none" : formatSeconds(f.average_ms / 1000)],
+  ];
+  return (
+    <dl className="summary run-summary">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** One try: the sentence with every word labelled by the row he put it in, marked right or wrong. */
+function PosTryLine({ sentence, one, number, client }: { sentence: PosSentence; one: PosTry; number: number; client: string }) {
+  return (
+    <li className="pos-try" aria-label={`Try ${number}`}>
+      <span className="pos-try-head">
+        Try {number}
+        {one.timer && (
+          <span className="run-outcome" data-outcome="timeout">
+            <TimerOff aria-hidden="true" />
+            Timer ran out
+          </span>
+        )}
+        <span>{seconds(one.taken_ms)}</span>
+      </span>
+      <span className="pos-words">
+        {sentence.pieces.map((piece, index) => {
+          if (piece.word === undefined) return <span key={index}>{piece.text}</span>;
+          const mark = one.words[piece.word];
+          const word = sentence.words[piece.word];
+          return (
+            <span key={index} className="pos-word" data-right={mark.label === null ? undefined : String(mark.right)}>
+              <Link to={confusionWordLink(client, word, mark.link)}>{piece.text}</Link>
+              {mark.label !== null && " "}
+              {mark.label !== null && (
+                <span className="pos-label">
+                  {mark.label}
+                  <span className="pos-mark" role="img" aria-label={mark.right ? "right" : "wrong"}>
+                    {mark.right ? <Check aria-hidden="true" /> : <X aria-hidden="true" />}
+                  </span>
+                  {!mark.right && <span className="pos-belongs"> ({mark.belongs})</span>}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </span>
+    </li>
+  );
+}
+
+/** The sentences of a run in order, each with its outcome, points, and times, then each try. */
+function PosSentences({ run, client, label }: { run: PosRun; client: string; label: string }) {
+  if (run.sentences.length === 0) return <p>No sentences yet.</p>;
+  return (
+    <ol className="pos-sentences" aria-label={label}>
+      {run.sentences.map((sentence, index) => {
+        const Icon = sentence.outcome === null ? Hourglass : OUTCOME_ICONS[sentence.outcome];
+        return (
+          <li key={index} aria-label={`Sentence ${index + 1}`}>
+            <p className="pos-sentence-head">
+              <span className="run-outcome" data-outcome={sentence.outcome ?? "waiting"}>
+                <Icon aria-hidden="true" />
+                {sentence.outcome_label}
+              </span>
+              <span>{`${formatPoints(sentence.points)} ${sentence.points === 1 ? "point" : "points"}`}</span>
+              <span>Time taken {sentence.taken_ms === null ? "" : seconds(sentence.taken_ms)}</span>
+              <span>Time allowed {seconds(sentence.allowed_ms)}</span>
+            </p>
+            {sentence.no_try && <p>Timed out with no try: {sentence.text}</p>}
+            <ul className="pos-tries">
+              {sentence.tries.map((one, number) => (
+                <PosTryLine key={number} sentence={sentence} one={one} number={number + 1} client={client} />
+              ))}
+            </ul>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** A parts of speech attempt's last run, then each expired run. */
+function PartsOfSpeechRuns({ runs, client }: { runs: { last: PosRun; expired: PosRun[] }; client: string }) {
+  return (
+    <>
+      <h2>Last run</h2>
+      <PosSummary run={runs.last} />
+      <PosSentences run={runs.last} client={client} label="Last run's sentences" />
+      {runs.expired.map((run) => {
+        const heading = run.expired ? `Run ${run.run}, expired ${run.expired}` : `Run ${run.run}`;
+        return (
+          <section key={run.run} aria-label={heading}>
+            <h2>{heading}</h2>
+            <PosSummary run={run} />
+            <PosSentences run={run} client={client} label={`Run ${run.run}'s sentences`} />
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 /** A spelling run's figures, as S035.1 works them out. */
 function SpellSummary({ run }: { run: SpellRun }) {
   const f = run.figures;
@@ -449,6 +588,7 @@ export function Attempt() {
           </dl>
           {attempt.arithmetic && <ArithmeticRuns runs={attempt.arithmetic} client={attempt.client} />}
           {attempt.capitalisation && <CapitalisationRuns runs={attempt.capitalisation} />}
+          {attempt.parts_of_speech && <PartsOfSpeechRuns runs={attempt.parts_of_speech} client={attempt.client} />}
           {attempt.spelling && <SpellingRuns runs={attempt.spelling} client={attempt.client} />}
           {attempt.reopened.length > 0 && (
             <>
@@ -478,7 +618,7 @@ export function Attempt() {
             </>
           )}
           {attempt.record !== null &&
-            (attempt.arithmetic || attempt.capitalisation || attempt.spelling ? (
+            (attempt.arithmetic || attempt.capitalisation || attempt.parts_of_speech || attempt.spelling ? (
               <Fold title="Stored record">
                 <Fields value={attempt.record} />
               </Fold>

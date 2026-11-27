@@ -8,6 +8,7 @@ household's user service.
 
 import json
 import os
+import secrets
 import shutil
 import socket
 import ssl
@@ -126,14 +127,20 @@ class Daywarden:
             assert done.returncode == 0, done.stderr
         return done
 
-    def admin(self, username: str, password: str) -> None:
-        """Add an admin with this password, or give the account this password when an earlier test added it."""
+    def admin(self, username: str) -> str:
+        """Add an admin, or give the account a new password when an earlier test added it, and return the password.
+
+        The password is new each time, so the stack's password rules, its history of earlier passwords included,
+        always take it.
+        """
+        password = f"quiet-harbour-lantern-{secrets.token_hex(6)}"
         command = ("exec", "-T", "decisions", "python", "-m", "policy.accounts")
         added = self.compose(*command, "add", "--role", "admin", "--password", username, check=False, input_text=password + "\n")
         if "already exists" in added.stderr:
             self.compose(*command, "update", "--password", username, input_text=password + "\n")
         else:
             assert added.returncode == 0, added.stderr
+        return password
 
     def containers(self) -> dict[str, tuple[str, str]]:
         """Each service's container id and the time it started."""
@@ -294,8 +301,8 @@ def test_a_portal_save_commits_hand_edits_then_the_save_and_reloads_every_servic
             "timezone: Australia/Sydney\nproxy_configuration:\n  direct:\n    extra: ['*.portal.arpa']\n"
             "tasks:\n  spelling:\n    spelling:\n      group: younger\n",
         )
-        daywarden.admin("ada", "s3cret-pass")
-        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
+        password = daywarden.admin("ada")
+        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": password})
         assert status == 200
         cookie = headers["set-cookie"].split(";", 1)[0]
         status, page, _headers = _portal(daywarden, "GET", "/parent/api/tasks/spelling/spelling", cookie=cookie)
@@ -351,8 +358,8 @@ def test_a_browser_recording_is_cut_and_kept_by_the_decisions_container_as_the_h
     try:
         daywarden.edit("timezone: Australia/Sydney\n", "timezone: Australia/Sydney\ntasks:\n  spelling:\n    spelling:\n      group: younger\n")
         assert daywarden.dw("reload").returncode == 0
-        daywarden.admin("ada", "s3cret-pass")
-        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": "s3cret-pass"})
+        password = daywarden.admin("ada")
+        status, _body, headers = _portal(daywarden, "POST", "/parent/api/login", {"username": "ada", "password": password})
         assert status == 200
         cookie = headers["set-cookie"].split(";", 1)[0]
 

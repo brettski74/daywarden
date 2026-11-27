@@ -25,7 +25,9 @@ from policy.pac import SWITCHES
 from policy.policy_admin import PolicyChanges
 from policy.pool_admin import PoolAdmin
 from policy.portal import client_names
-from policy.review import NOT_STORED, attempt_report, attempts_report, facts_report, trend_report, words_report
+from policy.parts_of_speech_report import LEFT_OUT, NO_PART, NO_POOL, TRY_CHOICES, pair_placements, word_asks
+from policy.parts_of_speech import word_key
+from policy.review import NOT_STORED, attempt_report, attempts_report, confusions_report, facts_report, trend_report, words_report
 from policy.spelling_report import POOL_CHOICES
 from policy.task_admin import TaskAdmin
 from policy.task_create import TaskChanges
@@ -548,6 +550,59 @@ def get_spelling_words(sources: Sources, arguments: Mapping) -> dict:
     return found
 
 
+def _pools_root(sources: Sources):
+    return None if sources.pools is None else sources.pools.tasks.policy_file.parent
+
+
+def get_parts_of_speech_confusions(sources: Sources, arguments: Mapping) -> dict:
+    """The confusions page's grid, each part's Right, and the word list. A named pair or word adds its placements."""
+    now = sources.loaded()
+    policy = now.policy
+    pairs = _attempt_pairs(arguments) + _list_pairs(arguments, "task") + _list_pairs(arguments, "pool")
+    tries = arguments.get("try")
+    if tries is not None:
+        if not isinstance(tries, list) or not all(isinstance(item, int) and not isinstance(item, bool) for item in tries):
+            raise ToolProblem("try must be a list of try numbers, 1 to 3.")
+        pairs += [("try", str(item)) for item in tries] or [("try", "none")]
+    for name in ("task", "pool"):
+        if name in arguments and not _names(arguments, name):
+            pairs.append((name, "none"))
+    found = confusions_report(
+        sources.attempts,
+        client_names(policy),
+        now=now.clock.local(),
+        tasks=() if policy is None else policy.tasks,
+        timezone=None if policy is None else policy.timezone,
+        pairs=pairs,
+        root=_pools_root(sources),
+    )
+    belongs = _text(arguments, "belongs", required=False)
+    put = _text(arguments, "put", required=False)
+    word = word_key(_text(arguments, "word", required=False))
+    part = _text(arguments, "part", required=False)
+    if bool(belongs) != bool(put):
+        raise ToolProblem("Give both belongs and put to name a pair.")
+    if part and not word:
+        raise ToolProblem("Give word with part.")
+    data = found.get("confusions")
+    found["pair"] = None
+    found["word"] = None
+    if data is None:
+        return found
+    if belongs:
+        found["pair"] = {"belongs": belongs, "put": put, "placements": pair_placements(data, belongs.casefold(), put.casefold())}
+    if word:
+        matches = [row for row in data["words"] if row["word"] == word and (not part or row["part"] == part.casefold())]
+        if matches:
+            found["word"] = [{"word": row["word"], "part": row["part_label"], "sentences": word_asks(data, row)} for row in matches]
+        else:
+            found["notes"].append(f"{word} is not one of the words shown.")
+    for row in data["words"]:
+        del row["asks"]
+    del data["asks"]
+    return found
+
+
 def get_attempt(sources: Sources, arguments: Mapping) -> dict:
     now = sources.loaded()
     raw = arguments.get("id")
@@ -555,7 +610,11 @@ def get_attempt(sources: Sources, arguments: Mapping) -> dict:
     if not attempt_id:
         raise ToolProblem("Give id, the attempt's number.")
     found = attempt_report(
-        sources.attempts, attempt_id, now=now.clock.local(), timezone=None if now.policy is None else now.policy.timezone
+        sources.attempts,
+        attempt_id,
+        now=now.clock.local(),
+        timezone=None if now.policy is None else now.policy.timezone,
+        root=_pools_root(sources),
     )
     if found is None:
         raise ToolProblem(NOT_STORED)
@@ -685,7 +744,29 @@ READ_TOOLS: tuple[Tool, ...] = (
         ("client",), lambda arguments: str(arguments.get("client", "")),
     ),
     Tool(
-        "get_attempt", "attempts", "read", "One attempt's page: its summary, answers, and timings, with an arithmetic, capitalisation, or spelling attempt's runs.",
+        "get_parts_of_speech_confusions", "attempts", "read",
+        "A client group's parts of speech confusions, as the confusions page shows them: the grid of placements, with a row "
+        "for each part the words belong in and a column for each row they were put in, each row's right (a whole "
+        "percentage, null when the part was never a row), and the word list. A word the task's filter hid belongs in the "
+        "part its pool gives it now, or no_part. Name a pair with belongs and put to add its placements, or a word, with "
+        "part if you like, to add the sentences that asked it.",
+        get_parts_of_speech_confusions,
+        {
+            **_ATTEMPT_FILTERS,
+            "task": {"type": "array", "items": {"type": "string"}, "description": "Parts of speech task names. Every task offered when left out."},
+            "pool": {"type": "array", "items": {"type": "string"}, "description": f"Pool ids now, from list_sentence_pools, or {NO_POOL} for a sentence in none. All when left out."},
+            "try": {"type": "array", "items": {"type": "integer", "enum": list(TRY_CHOICES)}, "description": "Tries to count. All when left out."},
+            "belongs": {"type": "string", "description": f"A pair's part, such as adverb, or {NO_PART}."},
+            "put": {"type": "string", "description": f"A pair's row he put it in, such as adjective, or {LEFT_OUT}."},
+            "word": {"type": "string", "description": "A word, such as dry."},
+            "part": {"type": "string", "description": f"The part the word belongs in, such as verb, or {NO_PART}. Every part when left out."},
+        },
+        ("client",), lambda arguments: str(arguments.get("client", "")),
+    ),
+    Tool(
+        "get_attempt", "attempts", "read",
+        "One attempt's page: its summary, answers, and timings, with an arithmetic, capitalisation, parts of speech, or spelling "
+        "attempt's runs. A parts of speech try has each word's row, or left out, judged as the quiz judged it.",
         get_attempt, {"id": {"type": ["string", "integer"], "description": "The attempt's number."}}, ("id",),
         lambda arguments: str(arguments.get("id", "")),
     ),

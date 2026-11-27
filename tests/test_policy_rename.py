@@ -341,14 +341,16 @@ def test_a_quota_rename_keeps_the_days_used_so_the_balance_is_the_same(house):
     now = _now(house)
     with _usage(house) as usage:
         moment = now.replace(hour=1, minute=0, second=0, microsecond=0)
+        # Read the balance an hour after the usage, not at the real time, which may be before 01:00.
+        later = moment + timedelta(hours=1)
         for step in range(8):
             usage.file_observation("younger", "entertainment", moment + timedelta(minutes=5 * step), 100, ["entertainment"])
-        used = usage.ended_seconds("younger", "entertainment", now)
+        used = usage.ended_seconds("younger", "entertainment", later)
     assert used > 0
     assert _rename(house, "quotas", "entertainment", "fun")[0] == 200
     with _usage(house) as usage:
-        assert usage.ended_seconds("younger", "fun", now) == used
-        assert usage.ended_seconds("younger", "entertainment", now) == 0
+        assert usage.ended_seconds("younger", "fun", later) == used
+        assert usage.ended_seconds("younger", "entertainment", later) == 0
         assert usage.quota_clients("fun") == ["younger"]
     assert _rows(house, "SELECT DISTINCT quota FROM host_quota_buckets") == []
 
