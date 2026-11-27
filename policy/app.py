@@ -33,6 +33,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from policy.account_pages import install_account_pages
+from policy.config_history import ConfigHistory, install_config_history
 from policy.accounts import Accounts, session_limits
 from policy.check import household_zone, load_required, summary_lines
 from policy.child_page import FAVICON_FILE, FAVICON_PATH
@@ -313,6 +314,7 @@ def create_app() -> FastAPI:
         recordings=recordings,
     )
     gate = PortalGate(accounts, lambda: holder.loaded)
+    config_history = ConfigHistory(tasks)
     mcp = McpServer(
         policy_file=policy_file,
         loaded=lambda: holder.loaded,
@@ -327,12 +329,14 @@ def create_app() -> FastAPI:
             capitalisation_pools=PoolAdmin(tasks, CAPITALISATION),
             changes=TaskChanges(tasks, Weeks(tasks)),
             policy_changes=PolicyChanges(tasks),
+            history=config_history,
         ),
         names=parent_names(os.environ.get("PARENT_NAMES")),
     )
     mcp_box["server"] = mcp
     _announce([mcp_settings.summary_line(mcp.state), *mcp.state.problems])
     install_mcp(app, mcp, gate)
+    install_config_history(app, gate=gate, history=config_history)
     install_account_pages(
         app,
         gate=gate,

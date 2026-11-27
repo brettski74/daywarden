@@ -44,6 +44,9 @@ describe("a reviewer's portal", () => {
     "/parent/policy/rule-sets/entry",
     "/parent/settings/mcp",
     "/parent/settings/mcp/activity",
+    "/parent/settings/history",
+    "/parent/settings/history/3f2a9c1",
+    "/parent/settings/history/compare?from=3f2a9c1&to=current",
   ])("shows %s as a page for admins, in the frame, and loads nothing from it", async (address) => {
     const calls = asReviewer();
     renderPortal(address);

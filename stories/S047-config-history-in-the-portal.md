@@ -2,7 +2,7 @@ Ticket: S047
 Title: Config history in the portal and MCP
 Status: Refined
 Story Points: 13
-Last Updated: 2026-11-22 17:12:30
+Last Updated: 2026-11-27 00:30:00
 ---
 
 # User Voice
@@ -25,7 +25,9 @@ commit in the config history from S023.1.
   - Who: the commit's author, such as a parent's username, or the host login for `dw` and `install.sh`.
   - What: the commit message without its leading time and `<user>: `, so `2026-11-17 20:15 -0500 ada via Claude
     Code: saved task arithmetic/times-7` shows as `via Claude Code: saved task arithmetic/times-7`, by `ada`. A
-    message in any other form, such as one made with `git commit` by hand, is shown whole.
+    message in any other form, such as one made with `git commit` by hand, is shown whole. *Changed in
+    implementation:* a message with the leading time but no `<user>: `, such as `<time> hand edits found before a
+    portal save`, shows without the time, as `hand edits found before a portal save`.
   - Each row's time is a link to that revision's page.
 - [ ] Each file name in a row is a link to the list filtered to that file, `?file=tasks.d/spelling.yaml`, which shows
       only the revisions that changed it, with a way back to the whole list. A file that has since been removed can
@@ -95,6 +97,8 @@ these tools is a short or full id, and `current` means the newest revision.
       changes nothing. The commit names the approving parent and the agent, as the other write tools do in S036.2,
       such as `ada via Claude Code: reverted to 3f2a9c1 (2026-11-17 20:15)`, and the activity log shows the call as in
       S036.2.
+- [ ] *Added in implementation:* `revert_config` on the newest revision, or `current`, is refused with "This is the
+      newest version, so there is nothing to revert to.", as the portal offers no Revert there.
 - [ ] A reviewer's agent cannot use these tools, which answer "This needs an admin's approval.", as for any class
       outside the reviewer's in S043.
 - [ ] Where the config directory has no history of its own, each tool answers that there is no config history.
@@ -128,3 +132,86 @@ for roles.
   a `dw` command for reverting.
 - Sized at 13 against S036.3 (13): git log, show, and diff behind three portal pages and a diff view, one revert
   path shared by the portal and one MCP tool, and three thin read tools. The checks, reload, and commit already exist.
+
+# Implementation
+
+## Files Added
+
+- `policy/config_history.py`: `ConfigHistory`, which lists, shows, compares, previews, and reverts revisions, the diff
+  of two sets of files, the rename sentences, and the five data addresses under `/parent/api/settings/history`.
+- `policy/mcp_history.py`: the four `config_history` tools.
+- `policy/portal/src/configHistory.ts`: the pages' addresses and data types.
+- `policy/portal/src/pages/ConfigHistory.tsx`: the list, a revision's page with the revert dialog, and Compare.
+- `policy/portal/src/components/DiffView.tsx`: a diff, file by file, with line numbers and `+` and `-`.
+- `policy/portal/src/configHistory.test.tsx`: the three pages and the revert dialog.
+- `tests/test_config_history_pages.py`: the data addresses, revert, access, and the MCP tools, against a real git
+  history.
+
+## Files Changed
+
+- `policy/history.py`: reads for `History`: the newest commit, resolving an id, the log with files and paging, counts,
+  a commit's parent, subjects between two commits, and a commit's files through one `git cat-file --batch`.
+- `policy/task_admin.py`: `TaskAdmin.change` takes a `check`, used in place of loading the policy with `overrides`.
+- `policy/mcp_settings.py`: the `config_history` class, with read and update.
+- `policy/mcp_tools.py`, `policy/mcp_server.py`, `policy/app.py`: the history in the tools' sources, the new tools,
+  and the data addresses installed.
+- `policy/portal/src/routes.tsx`, `components/Sidebar.tsx`: the three admin-only routes and the Settings entry.
+- `policy/portal/src/mcp.ts`, `pages/Mcp.tsx`: the class's label, and its note on the MCP page.
+- `policy/portal/src/styles/theme.css`, `styles/layout.css`: the `--diff-*` role properties and the pages' styles.
+- `policy/portal/src/roles.test.tsx`: the history pages are among the pages a reviewer is not shown.
+- `docs/parent-portal.md`, `README.md`: the pages, their data addresses, the MCP class, and Revert beside the manual
+  `git checkout`.
+
+## Files Removed
+
+None.
+
+## Change Summary
+
+The pages and the tools read git through `History`, as the portal's commits already did: `git log` with `-z` and the
+files changed, `rev-list --count` for paging, `rev-parse --verify` for ids, which accepts only 4 to 40 hex digits so
+nothing else reaches git, and `ls-tree` with one `cat-file --batch` for a revision's files. A revision's files are
+cached by commit id, since a commit never changes. Diffs are made in Python with `difflib` from the two sets of files,
+not by `git diff`, so a revision's page, Compare, the revert preview, and a dry run make them the same way, and the
+first revision shows every file added with no special case. The service sends each file's hunks as lines for the page
+and the unified text for the tools.
+
+Revert is one path, `ConfigHistory.revert`, for the portal and `revert_config`. It writes the old revision's files and
+the current `mcp.yaml` into a temporary directory and runs `load_required` there, with the errors' paths put back to
+the config directory. It then calls `TaskAdmin.change` with one step per file written or removed, so hand edits,
+undo on failure, the reload, the agent's name and dry run, and a failed commit's warning work as for every other save.
+The portal sends the newest revision the dialog was opened on, which is compared before hand edits are committed.
+The MCP tool has no such argument, as the other write tools hold no version either.
+
+Renames are read from the subjects between the revision and the newest, after the time and the user, matching the
+kinds the portal writes. A client group's sentence names attempts and usage, a site group's and a quota's name usage,
+a task's names attempts, and a time window, a rule set, or a pool has no stored rows, so its sentence stops after the
+rename.
+
+## Suggested Acceptance Testing
+
+### Acceptance test cases for S047
+
+1. **List and filter.** On an installed machine, save the spelling task in the portal as `brett`, add a file to
+   `tasks.d` by hand and remove it with `git commit` by hand, and leave `policy.yaml` edited by hand. Open Settings,
+   Config History. Covers History list: the rows, 50 to a page with Newer and Older (commit 51 or more versions with a
+   shell loop), the file links including the removed file, and the hand edits note.
+2. **Revision pages and Compare.** From the list, open a revision by its time, then the first revision, then a short
+   and a full id typed in the address, and an unknown one. Choose From and To on the list and press Compare, and
+   compare a revision with itself. Covers Revision page and comparing.
+3. **Revert.** Save a few task and policy changes, change `mcp.yaml` on the MCP page, then revert to an early
+   revision. Cancel first, then Revert. Check the files, `git -C ~/daywarden/config log`, Compare from the revision to
+   the new one (only `mcp.yaml`), and that the proxy uses the old policy. Revert the revert. Covers the first,
+   second, fourth, and fifth checks of Revert.
+4. **Revert refusals.** Revert to a version whose spelling task names a directory, after removing that directory from
+   the data directory; with a broken hand edit, then a good one; with the dialog open in one tab while saving in
+   another; to a version that differs only in `mcp.yaml`; across a client group rename made in the portal; and with
+   `.git/index.lock` held for longer than 5 seconds. Covers the remaining Revert checks.
+5. **MCP tools.** Grant `config_history: read` and `update` on the MCP page and read its note. From an agent, call
+   `list_config_history` with `limit`, `before`, and `file`, `get_config_revision` with and without `file`,
+   `diff_config_revisions` with `from` and `to` and with `revision`, and `revert_config` with `dry_run` and then
+   without. Check the commit names the agent, and the activity log. Then take away `update`. Covers MCP tools.
+6. **Access and no history.** As a reviewer, look for the sidebar entry and open the pages and data addresses; signed
+   out, open a revision's page and sign in; POST the revert as form data. In a clone of the repository, run
+   `make up` and open Config History, and call the tools. Covers Access, and the no-history checks.
+

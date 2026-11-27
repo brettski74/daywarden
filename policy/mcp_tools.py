@@ -84,6 +84,8 @@ class Sources:
     capitalisation_pools: PoolAdmin | None = None
     changes: TaskChanges | None = None
     policy_changes: PolicyChanges | None = None
+    # The config history (S047), a ConfigHistory. Not typed here, as policy.config_history imports the portal.
+    history: object | None = None
 
 
 @dataclass(frozen=True)

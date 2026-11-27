@@ -66,6 +66,13 @@ export const CLASS_LABELS: Record<string, string> = {
   capitalisation_pools: "Capitalisation Pools",
   attempts: "Attempts",
   usage: "Usage",
+  config_history: "Config History",
+};
+
+/** What a class gives that its name does not say. */
+export const CLASS_NOTES: Record<string, string> = {
+  config_history:
+    "Read gives every file in the config directory, at every version, including the sections this agent has no read permission for. Update reverts to an earlier version; mcp.yaml is kept.",
 };
 
 export const DURATION_LABELS: Record<Duration | "activity_days", string> = {

@@ -1,6 +1,17 @@
 import { redirect, type RouteObject } from "react-router";
 import { Layout, layoutLoader } from "./components/Layout";
 import { Account, accountAction, accountLoader } from "./pages/Account";
+import {
+  CompareView,
+  ConfigHistory,
+  RevisionView,
+  compareLoader,
+  historyLoader,
+  historyShouldRevalidate,
+  revisionAction,
+  revisionLoader,
+  revisionShouldRevalidate,
+} from "./pages/ConfigHistory";
 import { Attempt, attemptLoader } from "./pages/Attempt";
 import { Attempts, attemptsAction, attemptsLoader } from "./pages/Attempts";
 import { Facts, factsLoader, factsShouldRevalidate } from "./pages/Facts";
@@ -103,6 +114,15 @@ export const routes: RouteObject[] = [
             ...policyRoutes(),
             { path: "settings/mcp", element: <Mcp />, loader: mcpLoader, action: mcpAction, shouldRevalidate: mcpShouldRevalidate },
             { path: "settings/mcp/activity", element: <McpActivity />, loader: mcpActivityLoader },
+            { path: "settings/history", element: <ConfigHistory />, loader: historyLoader, shouldRevalidate: historyShouldRevalidate },
+            { path: "settings/history/compare", element: <CompareView />, loader: compareLoader },
+            {
+              path: "settings/history/:revision",
+              element: <RevisionView />,
+              loader: revisionLoader,
+              action: revisionAction,
+              shouldRevalidate: revisionShouldRevalidate,
+            },
           ].map(adminOnly),
           // The consent page is open to reviewers: their agent is limited to what a reviewer may read.
           { path: "settings/mcp/connect", element: <McpConnect />, loader: mcpConnectLoader },

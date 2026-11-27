@@ -54,6 +54,7 @@ from policy.mcp_store import CHECKED, DONE, FAILED, REFUSED, REVOKED, Client, Mc
 from policy.mcp_tools import READ_TOOLS, Sources, Tool, ToolProblem, WriteFailed, WriteRefused, Writer, answer_text, visible
 from policy.mcp_policy_writes import POLICY_WRITE_TOOLS
 from policy.mcp_writes import WRITE_TOOLS
+from policy.mcp_history import HISTORY_TOOLS
 from policy.owned import make_directory, own_like
 from policy.portal import PortalGate
 from policy.selection import published_port, task_port
@@ -75,7 +76,7 @@ _NOTHING_FOR_REVIEWER = (
 )
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
-ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS + POLICY_WRITE_TOOLS
+ALL_TOOLS: tuple[Tool, ...] = READ_TOOLS + WRITE_TOOLS + POLICY_WRITE_TOOLS + HISTORY_TOOLS
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
 # Some hosts, claude.ai among them, refuse urllib's default Python-urllib user agent with 403.
 _USER_AGENT = "daywarden-mcp/1.0"

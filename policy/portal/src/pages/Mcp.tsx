@@ -19,6 +19,7 @@ import {
   MCP_ACTIVITY,
   MCP_DATA,
   PERMISSIONS,
+  CLASS_NOTES,
   classLabel,
   daysProblem,
   durationProblem,
@@ -272,6 +273,7 @@ function McpEditor({ data }: { data: McpPage }) {
             <tr key={kind}>
               <th scope="row" title={kind}>
                 {classLabel(kind)}
+                {CLASS_NOTES[kind] && <span className="mcp-class-note">{CLASS_NOTES[kind]}</span>}
               </th>
               {PERMISSIONS.map((name) => {
                 const ticked = granted(settings, kind, name);

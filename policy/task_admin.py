@@ -340,6 +340,7 @@ class TaskAdmin:
         moved_all: Callable[[], None] | None = None,
         removed: Sequence[Path] = (),
         after_reload: Callable[[], object] | None = None,
+        check: Callable[[], Answer | None] | None = None,
     ) -> Answer:
         """Check and make one change to the policy files and the data directory.
 
@@ -355,7 +356,10 @@ class TaskAdmin:
         the time and the parent, such as ``saved task spelling/spelling``.
         ``done`` begins the message, such as ``Saved spelling.``. ``key`` is
         the task changed, or None for a change to the rest of the policy, such
-        as a time window, which asks nothing about due dates.
+        as a time window, which asks nothing about due dates. ``check``, when
+        given, checks the change in place of loading the policy with
+        ``overrides``, as a revert checks a staging copy of the whole config
+        directory, and returns the refusal or None.
 
         For an agent's dry run (``acting``), the change is checked and the
         answer describes it, with a diff of ``overrides`` and the ``removed``
@@ -372,10 +376,10 @@ class TaskAdmin:
             problems = self._problems()
             if problems:
                 return Answer(400, {"error": HAND_EDITS_BROKEN, "errors": problems})
-        refused = self._check(moves, overrides)
+        refused = self._check(moves, overrides) if check is None else check()
         if refused is not None:
             return refused
-        checked = self._checked
+        checked = self._checked if check is None else None
         task = None if checked is None or key is None else checked.task(key)
         if task is not None and task.due_date is not None and not confirmed:
             passed = [group for group in task.groups if stored_passes(key, group, self.attempts.history(group))]

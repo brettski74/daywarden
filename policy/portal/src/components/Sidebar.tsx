@@ -19,6 +19,7 @@ import { forgetSession, type Session } from "../session";
 import { useExpander } from "../motion";
 import { CAPITALISATION_POOLS, PARTS_POOLS } from "../pools";
 import { MCP } from "../mcp";
+import { HISTORY } from "../configHistory";
 import { ACCOUNT } from "../pages/Account";
 import { ASSETS_KEY, KEY_STEP, POLICY_KEY, SETTINGS_KEY, TASKS_KEY, USAGE_KEY, useGroupList, useSidebar } from "../sidebar";
 import { POLICY, POLICY_PAGES, policyPath } from "../policy";
@@ -140,14 +141,17 @@ function PolicyGroup() {
   );
 }
 
-/** Settings: the MCP server. */
+/** Settings: the MCP server and the config history. */
 function SettingsGroup() {
   const { pathname } = useLocation();
-  const onSettingsPage = pathname === MCP || pathname.startsWith(`${MCP}/`);
+  const onSettingsPage = [MCP, HISTORY].some((page) => pathname === page || pathname.startsWith(`${page}/`));
   return (
     <NavGroup id="settings-list" label="Settings" icon={Settings} storageKey={SETTINGS_KEY} onItsPage={onSettingsPage} hint="The settings list stays open while a settings page is open">
       <li>
         <NavLink to={MCP}>MCP Server</NavLink>
+      </li>
+      <li>
+        <NavLink to={HISTORY}>Config History</NavLink>
       </li>
     </NavGroup>
   );

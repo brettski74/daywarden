@@ -49,6 +49,8 @@ CLASSES: dict[str, tuple[str, ...]] = {
     "capitalisation_pools": CRUD,
     "attempts": (READ,),
     "usage": (READ,),
+    # Read gives every file in the config directory, including sections with no read permission of their own (S047).
+    "config_history": (READ, UPDATE),
 }
 # The classes a reviewer's agent may use, and only to read (S043). mcp.yaml's grants are masked by this.
 REVIEWER_CLASSES = ("attempts", "usage")

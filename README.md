@@ -465,7 +465,7 @@ Upgrading to the version where a task is its type and its name (S012) needs two 
 
 After `dw reload`, `dw up`, or `dw restart` has applied the policy, any uncommitted change in the config directory is committed, and `dw` names the files, such as `Saved in the config history: policy.yaml.` The message is the time in the household's timezone, the user who ran it, and the command, such as `2026-11-08 21:15 -0500 blg: dw reload`. The author is that user at `daywarden.invalid`, and no git setup is needed: `dw` sets the name and email for each commit and changes nothing in `~/.gitconfig`. A policy with an error commits nothing, so a broken edit never becomes a version, and `dw check` never commits. If the commit fails, the reload still applies, and `dw` warns that the change is not in the history, and why.
 
-To get an old version back:
+To go back to an earlier version of the whole configuration, use Config History in the parent portal (Settings, Config History, admins only). It lists every version, compares any two, and Revert to this version puts every file back as it was, except `mcp.yaml`, checked first as `dw check` checks it, and committed as one new version. An agent with `config_history: update` can do the same with `revert_config`. To get one file back from an old version:
 
 ```sh
 cd ~/daywarden/config

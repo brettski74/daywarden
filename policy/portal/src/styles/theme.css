@@ -71,6 +71,14 @@
   --mark-right: var(--palette-blue);
   --mark-wrong: var(--palette-brick);
   --done-text: var(--palette-navy);
+  /* Config History's diffs: added and removed lines, and the head of each changed part. Each line also has + or -. */
+  --diff-added-bg: color-mix(in srgb, var(--palette-teal) 30%, var(--palette-white));
+  --diff-added-text: var(--palette-navy);
+  --diff-removed-bg: color-mix(in srgb, var(--palette-brick) 14%, var(--palette-white));
+  --diff-removed-text: var(--palette-navy);
+  --diff-context-bg: var(--palette-white);
+  --diff-hunk-bg: color-mix(in srgb, var(--palette-lavender) 18%, var(--palette-ivory));
+  --diff-hunk-text: var(--palette-navy);
 
   --changed-bg: color-mix(in srgb, var(--palette-gold) 35%, var(--palette-ivory));
   --divider: var(--palette-lavender);
