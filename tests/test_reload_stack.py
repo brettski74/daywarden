@@ -421,6 +421,8 @@ def test_reload_names_the_services_a_changed_env_would_change(daywarden):
 
 def test_restart_replaces_every_container_and_is_no_slower_than_down_and_up(daywarden):
     before = daywarden.containers()
+    # Whichever policy the earlier tests left, or the first one when this runs alone.
+    decision = daywarden.decide()
     started = time.monotonic()
     done = daywarden.dw("restart")
     restart_seconds = time.monotonic() - started
@@ -431,7 +433,7 @@ def test_restart_replaces_every_container_and_is_no_slower_than_down_and_up(dayw
     ]
     after = daywarden.containers()
     assert all(after[service][0] != before[service][0] for service in before)
-    assert daywarden.decide() == {"action": "allow"}
+    assert daywarden.decide() == decision
 
     started = time.monotonic()
     assert daywarden.dw("down").returncode == 0

@@ -1,6 +1,6 @@
 Ticket: S048
 Title: Deploy to an Environment
-Status: In Progress
+Status: Done
 Story Points: 5
 Last Updated: 2026-11-27 01:24:35
 ---

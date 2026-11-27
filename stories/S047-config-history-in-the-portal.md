@@ -1,6 +1,6 @@
 Ticket: S047
 Title: Config history in the portal and MCP
-Status: Refined
+Status: Done
 Story Points: 13
 Last Updated: 2026-11-27 00:30:00
 ---

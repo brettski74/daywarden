@@ -1,6 +1,6 @@
 Ticket: S046
 Title: Password Rules
-Status: Refined
+Status: Done
 Story Points: 13
 Last Updated: 2026-11-20 23:55:00
 ---

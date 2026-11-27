@@ -1,6 +1,6 @@
 Ticket: S045
 Title: Capitalisation help
-Status: Refined
+Status: Done
 Story Points: 5
 Last Updated: 2026-11-20 18:20:00
 ---

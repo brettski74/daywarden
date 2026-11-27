@@ -129,7 +129,7 @@ describe("the Config History list", () => {
     );
     await user.click(screen.getByRole("radio", { name: "From 2026-11-20 18:30" }));
     await user.click(screen.getByRole("radio", { name: "To 2026-11-17 20:15" }));
-    expect(shown(router)).toBe(`/parent/settings/history?from=${NEWEST.id}&to=${OLDER.id}`);
+    await waitFor(() => expect(shown(router)).toBe(`/parent/settings/history?from=${NEWEST.id}&to=${OLDER.id}`));
     await waitFor(() =>
       expect(screen.getByRole("link", { name: "Compare" })).toHaveAttribute(
         "href",
