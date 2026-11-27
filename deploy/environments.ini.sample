@@ -1,0 +1,19 @@
+# The environments make deploy can deploy to. Copy this file to
+# deploy/environments.ini, which git ignores, and set your own machines.
+
+[settings]
+# The environment for a make deploy with no ENV.
+default = uat
+# The user for every environment with no user of its own.
+user = daywarden
+
+[uat]
+# A host name, an address, or a Host alias from ~/.ssh/config.
+host = uat-host.example.net
+
+[prod]
+host = prod-host.example.net
+# user = daywarden
+# port = 22
+# How many version directories to keep there. 3 when left out.
+# keep = 3

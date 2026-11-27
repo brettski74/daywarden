@@ -345,6 +345,15 @@ input:disabled,
   color: var(--bar-link);
 }
 
+/* A link drawn as a button keeps the button's text colour, which the bar's link colour would otherwise win over. */
+.context-bar a.button {
+  color: var(--button-text);
+}
+
+.context-bar a.button-quiet {
+  color: var(--button-quiet-text);
+}
+
 .bar-title {
   margin: 0;
   font-size: 1.05rem;

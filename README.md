@@ -427,6 +427,48 @@ The installer checks everything first and changes nothing if something it needs 
 
 On a first install, `PARENT_NAMES` in the new `.env`, and the policy-server lines in `bypass.txt`, are this machine's hostname, each `<hostname>.<suffix>` for the search suffixes in `/etc/resolv.conf` that resolves to an address on this machine, `localhost`, and `127.0.0.1`. The summary lists each name it added, and each it skipped with the reason, such as `tundra.homenet.net: resolves to 192.168.12.5, not this machine`. Add other names or IP addresses for this machine to `PARENT_NAMES` by hand. The household database stays in the Compose volume `daywarden_policy-data`, which reinstalling, `dw down`, and `dw up` keep. The new machine starts with its own CA and no accounts: point the child computers at its configuration URL, or its proxy port, and give them `~/daywarden/ca/mitmproxy-ca-cert.pem`, as in [docs/child-computer.md](docs/child-computer.md).
 
+### Deploying with make deploy
+
+`make deploy` does the copying and installing above for a named environment: a machine, and the user on it, that daywarden is deployed to. Define them once in `deploy/environments.ini`, which git ignores and `make dist` does not package:
+
+```sh
+cp deploy/environments.ini.sample deploy/environments.ini
+```
+
+```ini
+[settings]
+default = uat
+user = daywarden
+
+[uat]
+host = uat-box
+
+[prod]
+host = prod-box
+user = admin
+port = 2222
+keep = 5
+```
+
+| Setting | In | Meaning |
+| --- | --- | --- |
+| `default` | `[settings]` | The environment `make deploy` uses with no `ENV` |
+| `host` | each environment | Required. A host name, an address, or a `Host` alias from `~/.ssh/config` |
+| `user` | `[settings]` or an environment | The user to install as. An environment's own wins. With neither, `ssh` chooses |
+| `port` | each environment | The ssh port, when it is not what `ssh` would use |
+| `keep` | each environment | How many version directories to keep there. 3 when left out |
+
+```sh
+make dist                                          # build the package once
+make deploy                                        # the newest package in dist/, to the default environment
+make deploy ENV=prod                               # to prod
+make deploy ENV=prod VERSION=20261105-184500       # an older package that is still in dist/
+```
+
+It asks for no confirmation. It signs in once, copies the package to the user's home, unpacks it to `~/daywarden-<version>/`, and runs `./install.sh` there at your terminal, so you answer its questions as usual. A version already unpacked by an earlier deploy is not copied again. If the install fails, or you answer no to the restart question, `make deploy` fails and removes nothing old. After a successful install it keeps the `keep` newest `~/daywarden-<version>/` directories and the installed version's, removes the others with any package copy left for them and their two Docker images, and shows `dw status`. It never runs `dw up` or `dw enable`. Installing an older version does not undo changes a newer one made to the database.
+
+Keys and other ssh settings belong in `~/.ssh/config`. The file holds no passwords. An application user needs what the installer checks for, such as membership of the `docker` group.
+
 ### Running it with dw
 
 ```sh

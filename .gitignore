@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 # make dist
 dist/
+# make deploy's machines. deploy/environments.ini.sample is the committed sample.
+deploy/environments.ini
 *.har
 *@*
 # The parent portal's npm packages and its build, made by make test and the image build.

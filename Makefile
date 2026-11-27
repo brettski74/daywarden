@@ -13,7 +13,7 @@ DIST_DIR := dist
 PORTAL := policy/portal
 PORTAL_INSTALLED := $(PORTAL)/node_modules/.package-lock.json
 
-.PHONY: settings up down reload restart check logs show-env venv portal-deps test dist help
+.PHONY: settings up down reload restart check logs show-env venv portal-deps test dist deploy help
 
 # make help lists each target that has a "## description" on its line.
 
@@ -74,6 +74,12 @@ test: venv portal-deps ## Run the tests, the portal's too. Pass pytest arguments
 # Builds and saves the images. Does not change make up or .env.
 dist: venv ## Package for another machine as dist/daywarden-<version>.tar.gz
 	$(VENV_PYTHON) -m deploy.build --out $(DIST_DIR)
+
+# ENV and VERSION count only from the command line: a shell may export either.
+given = $(if $(filter command line,$(origin $(1))),$($(1)))
+
+deploy: venv ## Install a package from dist/ on an environment, with ENV=<name> and VERSION=<version> if wanted
+	@$(VENV_PYTHON) -m deploy.push --env "$(call given,ENV)" --version "$(call given,VERSION)"
 
 help: ## List the targets and what they do
 	@awk -F ':[^#]*## ' '/^[a-z][a-z-]*:[^=]*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
